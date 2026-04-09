@@ -1,0 +1,18 @@
+.json-code-area {
+    -fx-font-family: "Menlo", "Monaco", "Consolas", monospace;
+    -fx-font-size: 12px;
+    -fx-background-color: #ffffff;
+}
+.json-code-area .json-key       { -fx-fill: #2563eb; -fx-font-weight: bold; }
+.json-code-area .json-string    { -fx-fill: #16a34a; }
+.json-code-area .json-number    { -fx-fill: #d97706; }
+.json-code-area .json-boolean   { -fx-fill: #9333ea; -fx-font-weight: bold; }
+.json-code-area .json-null      { -fx-fill: #6b7280; -fx-font-style: italic; }
+.json-code-area .json-punct     { -fx-fill: #374151; }
+
+.json-code-area .lineno {
+    -fx-background-color: #f3f4f6;
+    -fx-text-fill: #9ca3af;
+    -fx-padding: 0 8 0 8;
+}
+
