@@ -89,6 +89,7 @@ public class ExplorerView extends VBox {
         Thread.startVirtualThread(() -> {
             try {
                 var dbs = svc.listDatabaseNames();
+                dbs.sort(String.CASE_INSENSITIVE_ORDER);
                 Platform.runLater(() -> {
                     for (String d : dbs) {
                         TreeItem<Node> dbItem = new TreeItem<>(Node.db(d));
@@ -113,6 +114,7 @@ public class ExplorerView extends VBox {
         Thread.startVirtualThread(() -> {
             try {
                 var colls = svc.listCollectionNames(db);
+                colls.sort(String.CASE_INSENSITIVE_ORDER);
                 Platform.runLater(() -> {
                     dbItem.getChildren().clear();
                     for (String c : colls) {

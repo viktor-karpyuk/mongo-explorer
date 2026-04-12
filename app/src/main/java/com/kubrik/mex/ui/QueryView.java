@@ -63,6 +63,11 @@ public class QueryView extends VBox {
     private boolean lastHasMore = false;
     private int lastResultCount = 0;
 
+    private SplitPane resultsSplit;
+    private SplitPane mainSplit;
+    private double lastDetailDivider = 0.55;
+    private double lastResultsDivider = 0.42;
+
     public QueryView(ConnectionManager manager, HistoryStore history) {
         this.manager = manager;
         this.history = history;
@@ -208,7 +213,31 @@ public class QueryView extends VBox {
         HBox.setHgrow(rfsp, Priority.ALWAYS);
         pageInfo.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
 
-        HBox resultsFooter = new HBox(6, prevPageBtn, nextPageBtn, pageInfo, rfsp);
+        // Toggle button: hide/show the JSON detail panel
+        Button toggleDetail = UiHelpers.iconButton("fth-sidebar", "Toggle document detail panel");
+        toggleDetail.setOnAction(e -> {
+            if (resultsSplit.getItems().contains(detail)) {
+                lastDetailDivider = resultsSplit.getDividerPositions()[0];
+                resultsSplit.getItems().remove(detail);
+            } else {
+                resultsSplit.getItems().add(detail);
+                resultsSplit.setDividerPositions(lastDetailDivider);
+            }
+        });
+
+        // Toggle button: hide/show the results panel (collapse to query-only)
+        Button toggleResults = UiHelpers.iconButton("fth-minimize-2", "Toggle results panel");
+        toggleResults.setOnAction(e -> {
+            if (mainSplit.getItems().contains(resultsSplit)) {
+                lastResultsDivider = mainSplit.getDividerPositions()[0];
+                mainSplit.getItems().remove(resultsSplit);
+            } else {
+                mainSplit.getItems().add(resultsSplit);
+                mainSplit.setDividerPositions(lastResultsDivider);
+            }
+        });
+
+        HBox resultsFooter = new HBox(6, prevPageBtn, nextPageBtn, pageInfo, rfsp, toggleDetail, toggleResults);
         resultsFooter.setAlignment(Pos.CENTER_LEFT);
         resultsFooter.setPadding(new Insets(4, 8, 4, 8));
         resultsFooter.setStyle("-fx-background-color: #f9fafb; -fx-border-color: #e5e7eb; -fx-border-width: 1 0 0 0;");
@@ -216,11 +245,11 @@ public class QueryView extends VBox {
         VBox resultsBox = new VBox(results, resultsFooter);
         VBox.setVgrow(results, Priority.ALWAYS);
 
-        SplitPane resultsSplit = new SplitPane(resultsBox, detail);
+        resultsSplit = new SplitPane(resultsBox, detail);
         resultsSplit.setDividerPositions(0.55);
         VBox.setVgrow(resultsSplit, Priority.ALWAYS);
 
-        SplitPane mainSplit = new SplitPane();
+        mainSplit = new SplitPane();
         mainSplit.setOrientation(javafx.geometry.Orientation.VERTICAL);
         mainSplit.getItems().addAll(queryTabs, resultsSplit);
         mainSplit.setDividerPositions(0.42);

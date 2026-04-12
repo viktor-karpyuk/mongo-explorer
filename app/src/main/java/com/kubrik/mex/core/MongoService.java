@@ -46,6 +46,7 @@ public class MongoService implements AutoCloseable {
     public List<String> listCollectionNames(String db) {
         List<String> names = new ArrayList<>();
         client.getDatabase(db).listCollectionNames().forEach(names::add);
+        names.sort(String.CASE_INSENSITIVE_ORDER);
         return names;
     }
 

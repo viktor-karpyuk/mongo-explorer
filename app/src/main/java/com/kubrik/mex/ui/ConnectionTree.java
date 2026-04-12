@@ -22,6 +22,8 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import org.kordamp.ikonli.javafx.FontIcon;
 
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -53,12 +55,26 @@ public class ConnectionTree extends VBox {
         @Override public String toString() { return label; }
     }
 
+    public enum SortOrder {
+        AZ("A → Z", String.CASE_INSENSITIVE_ORDER),
+        ZA("Z → A", String.CASE_INSENSITIVE_ORDER.reversed());
+
+        final String label;
+        final Comparator<String> comparator;
+        SortOrder(String label, Comparator<String> comparator) {
+            this.label = label;
+            this.comparator = comparator;
+        }
+        SortOrder next() { return values()[(ordinal() + 1) % values().length]; }
+    }
+
     private final ConnectionManager manager;
     private final ConnectionStore store;
     private final EventBus events;
     private final TreeView<Node> tree = new TreeView<>();
     private OpenHandler openHandler;
     private final Map<String, TreeItem<Node>> connectionItems = new HashMap<>();
+    private SortOrder sortOrder = SortOrder.AZ;
 
     public ConnectionTree(ConnectionManager manager, ConnectionStore store, EventBus events) {
         this.manager = manager;
@@ -92,6 +108,18 @@ public class ConnectionTree extends VBox {
         logs.setStyle("-fx-background-color: transparent; -fx-padding: 4 8 4 8;");
         logs.setOnAction(e -> { if (openHandler != null) openHandler.openLogs(); });
 
+        FontIcon sortIcon = new FontIcon("fth-bar-chart-2");
+        sortIcon.setIconSize(14);
+        javafx.scene.control.Button sortBtn = new javafx.scene.control.Button();
+        sortBtn.setGraphic(sortIcon);
+        sortBtn.setTooltip(new javafx.scene.control.Tooltip("Sort: " + sortOrder.label));
+        sortBtn.setStyle("-fx-background-color: transparent; -fx-padding: 4 8 4 8;");
+        sortBtn.setOnAction(e -> {
+            sortOrder = sortOrder.next();
+            sortBtn.setTooltip(new javafx.scene.control.Tooltip("Sort: " + sortOrder.label));
+            resortAllCollections();
+        });
+
         FontIcon ref = new FontIcon("fth-refresh-cw");
         ref.setIconSize(14);
         javafx.scene.control.Button refresh = new javafx.scene.control.Button();
@@ -100,9 +128,13 @@ public class ConnectionTree extends VBox {
         refresh.setStyle("-fx-background-color: transparent; -fx-padding: 4 8 4 8;");
         refresh.setOnAction(e -> reloadAll());
 
+        for (javafx.scene.control.Button b : new javafx.scene.control.Button[]{add, manage, sortBtn, logs, refresh}) {
+            applyToolbarHover(b);
+        }
+
         Region sp = new Region();
         HBox.setHgrow(sp, Priority.ALWAYS);
-        HBox toolbar = new HBox(2, title, sp, add, manage, logs, refresh);
+        HBox toolbar = new HBox(2, title, sp, add, manage, sortBtn, logs, refresh);
         toolbar.setAlignment(Pos.CENTER_LEFT);
         toolbar.setStyle("-fx-background-color: #f9fafb; -fx-border-color: #e5e7eb; -fx-border-width: 0 0 1 0;");
 
@@ -158,6 +190,11 @@ public class ConnectionTree extends VBox {
         reloadAll();
     }
 
+    private static void applyToolbarHover(javafx.scene.control.Button btn) {
+        btn.setOnMouseEntered(e -> btn.setStyle("-fx-background-color: #e5e7eb; -fx-padding: 4 8 4 8; -fx-background-radius: 4; -fx-cursor: hand;"));
+        btn.setOnMouseExited(e -> btn.setStyle("-fx-background-color: transparent; -fx-padding: 4 8 4 8;"));
+    }
+
     public void setOpenHandler(OpenHandler h) { this.openHandler = h; }
 
     public void reloadAll() {
@@ -181,6 +218,7 @@ public class ConnectionTree extends VBox {
         Thread.startVirtualThread(() -> {
             try {
                 List<String> dbs = svc.listDatabaseNames();
+                dbs.sort(String.CASE_INSENSITIVE_ORDER);
                 Platform.runLater(() -> {
                     connItem.getChildren().clear();
                     for (String d : dbs) {
@@ -207,6 +245,7 @@ public class ConnectionTree extends VBox {
         Thread.startVirtualThread(() -> {
             try {
                 List<String> colls = svc.listCollectionNames(db);
+                colls.sort(sortOrder.comparator);
                 Platform.runLater(() -> {
                     dbItem.getChildren().clear();
                     for (String c : colls) dbItem.getChildren().add(new TreeItem<>(Node.coll(connectionId, db, c)));
@@ -215,6 +254,21 @@ public class ConnectionTree extends VBox {
                 Platform.runLater(() -> dbItem.getChildren().clear());
             }
         });
+    }
+
+    /** Re-sort collection nodes in-place under every expanded database node. */
+    private void resortAllCollections() {
+        TreeItem<Node> root = tree.getRoot();
+        if (root == null) return;
+        for (TreeItem<Node> connItem : root.getChildren()) {
+            for (TreeItem<Node> dbItem : connItem.getChildren()) {
+                if (!dbItem.isExpanded()) continue;
+                List<TreeItem<Node>> collItems = new java.util.ArrayList<>(dbItem.getChildren());
+                if (collItems.isEmpty() || !"coll".equals(collItems.get(0).getValue().type)) continue;
+                collItems.sort(Comparator.comparing(ti -> ti.getValue().label, sortOrder.comparator));
+                dbItem.getChildren().setAll(collItems);
+            }
+        }
     }
 
     // Cached menu items — created once, wired once, reused across context menu invocations.
@@ -450,11 +504,13 @@ public class ConnectionTree extends VBox {
             }
             String iconLit;
             javafx.scene.paint.Color color = javafx.scene.paint.Color.web("#374151");
+            boolean showStatusDot = false;
             switch (item.type) {
                 case "conn" -> {
                     ConnectionState s = manager.state(item.connectionId);
                     iconLit = "fth-server";
                     color = javafx.scene.paint.Color.web(UiHelpers.colorFor(s.status()));
+                    showStatusDot = s.status() == ConnectionState.Status.CONNECTED;
                 }
                 case "db" -> iconLit = "fth-database";
                 case "coll" -> iconLit = "fth-grid";
@@ -464,9 +520,20 @@ public class ConnectionTree extends VBox {
             FontIcon icon = new FontIcon(iconLit);
             icon.setIconSize(13);
             icon.setIconColor(color);
+            javafx.scene.Node graphic;
+            if (showStatusDot) {
+                javafx.scene.shape.Circle dot = new javafx.scene.shape.Circle(4);
+                dot.setFill(javafx.scene.paint.Color.web("#16a34a"));
+                javafx.scene.layout.StackPane iconWithDot = new javafx.scene.layout.StackPane(icon, dot);
+                javafx.scene.layout.StackPane.setAlignment(dot, Pos.BOTTOM_RIGHT);
+                iconWithDot.setPrefSize(16, 16);
+                graphic = iconWithDot;
+            } else {
+                graphic = icon;
+            }
             Label lbl = new Label(item.label);
             lbl.setMinWidth(Region.USE_PREF_SIZE);
-            HBox row = new HBox(6, icon, lbl);
+            HBox row = new HBox(6, graphic, lbl);
             row.setAlignment(Pos.CENTER_LEFT);
             row.setMinWidth(Region.USE_PREF_SIZE);
             setGraphic(row);
