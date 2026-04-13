@@ -15,10 +15,7 @@ import javafx.stage.Stage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.awt.*;
-import java.awt.image.BufferedImage;
 import java.util.Locale;
-import javax.imageio.ImageIO;
 
 public class Main extends Application {
 
@@ -42,7 +39,6 @@ public class Main extends Application {
 
     private Database db;
     private ConnectionManager connectionManager;
-    private TrayIcon trayIcon;
 
     @Override
     public void start(Stage stage) throws Exception {
@@ -64,72 +60,11 @@ public class Main extends Application {
         } catch (Exception ignored) {}
         stage.setScene(scene);
 
-        setupSystemTray(stage);
-
         stage.setOnCloseRequest(e -> {
             e.consume();
-            if (trayIcon != null) {
-                stage.hide();
-            } else {
-                requestQuit(stage);
-            }
+            requestQuit(stage);
         });
         stage.show();
-    }
-
-    private void setupSystemTray(Stage stage) {
-        if (!SystemTray.isSupported()) return;
-        try {
-            // Keep the JFX runtime alive when all windows are hidden
-            Platform.setImplicitExit(false);
-
-            // Load and scale the app icon for the menu bar (22px for macOS)
-            BufferedImage img = ImageIO.read(getClass().getResourceAsStream("/icons/app_1024.png"));
-            int size = 22;
-            BufferedImage scaled = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
-            java.awt.Graphics2D g = scaled.createGraphics();
-            g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
-                    java.awt.RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-            g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
-                    java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
-            g.drawImage(img, 0, 0, size, size, null);
-            g.dispose();
-
-            PopupMenu popup = new PopupMenu();
-
-            MenuItem showItem = new MenuItem("Show Mongo Explorer");
-            showItem.addActionListener(e -> Platform.runLater(() -> {
-                stage.show();
-                stage.toFront();
-            }));
-
-            MenuItem quitItem = new MenuItem("Quit");
-            quitItem.addActionListener(e -> Platform.runLater(() -> {
-                stage.show();
-                requestQuit(stage);
-            }));
-
-            popup.add(showItem);
-            popup.addSeparator();
-            popup.add(quitItem);
-
-            trayIcon = new TrayIcon(scaled, "Mongo Explorer", popup);
-            trayIcon.setImageAutoSize(false);
-            trayIcon.addActionListener(e -> Platform.runLater(() -> {
-                if (stage.isShowing()) {
-                    stage.toFront();
-                } else {
-                    stage.show();
-                    stage.toFront();
-                }
-            }));
-
-            SystemTray.getSystemTray().add(trayIcon);
-        } catch (Exception ex) {
-            log.warn("Could not set up system tray: {}", ex.getMessage());
-            trayIcon = null;
-            Platform.setImplicitExit(true);
-        }
     }
 
     private void requestQuit(Stage stage) {
@@ -170,19 +105,23 @@ public class Main extends Application {
 
         d.setResultConverter(bt -> bt == null ? null : bt.getText());
         d.showAndWait().ifPresent(r -> {
-            if ("Quit".equals(r)) javafx.application.Platform.exit();
+            if ("Quit".equals(r)) Platform.exit();
         });
     }
 
     @Override
-    public void stop() throws Exception {
+    public void stop() {
         log.info("shutting down");
-        if (trayIcon != null) {
-            SystemTray.getSystemTray().remove(trayIcon);
-        }
-        if (connectionManager != null) connectionManager.closeAll();
-        if (db != null) db.close();
-        System.exit(0);
+        // Halt immediately — cleanup happens in the background.
+        // MongoClient.close() and driver shutdown hooks can stall for seconds;
+        // halt(0) bypasses all of that so the app exits instantly.
+        Thread cleanup = new Thread(() -> {
+            try { if (connectionManager != null) connectionManager.closeAll(); } catch (Exception ignored) {}
+            try { if (db != null) db.close(); } catch (Exception ignored) {}
+        }, "shutdown-cleanup");
+        cleanup.setDaemon(true);
+        cleanup.start();
+        Runtime.getRuntime().halt(0);
     }
 
     public static void main(String[] args) { launch(args); }

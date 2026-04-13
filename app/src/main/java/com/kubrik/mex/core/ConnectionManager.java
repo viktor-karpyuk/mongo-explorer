@@ -62,7 +62,8 @@ public class ConnectionManager {
     public void disconnect(String id) {
         MongoService svc = active.remove(id);
         if (svc != null) {
-            try { svc.close(); } catch (Exception ignored) {}
+            // Close off the calling thread — MongoClient.close() can block
+            Thread.startVirtualThread(() -> { try { svc.close(); } catch (Exception ignored) {} });
         }
         publish(ConnectionState.disconnected(id));
     }

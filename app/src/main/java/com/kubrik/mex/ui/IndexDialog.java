@@ -142,19 +142,22 @@ public class IndexDialog extends Dialog<Void> {
         Button createBtn = new Button("Create index");
         createBtn.setStyle("-fx-background-color: #16a34a; -fx-text-fill: white; -fx-font-weight: bold;");
         createBtn.setOnAction(e -> {
-            try {
-                svc.createIndex(db, coll,
-                        keysField.getText(),
-                        uniqueCb.isSelected(),
-                        sparseCb.isSelected(),
-                        ttlSpinner.getValue(),
-                        nameField.getText(),
-                        partialField.getText(),
-                        bgCb.isSelected());
-                refresh();
-            } catch (Exception ex) {
-                UiHelpers.error(getDialogPane().getScene().getWindow(), ex.getMessage());
-            }
+            String keys = keysField.getText();
+            boolean unique = uniqueCb.isSelected(), sparse = sparseCb.isSelected(), bg = bgCb.isSelected();
+            int ttl = ttlSpinner.getValue();
+            String idxName = nameField.getText(), partial = partialField.getText();
+            createBtn.setDisable(true);
+            Thread.startVirtualThread(() -> {
+                try {
+                    svc.createIndex(db, coll, keys, unique, sparse, ttl, idxName, partial, bg);
+                    javafx.application.Platform.runLater(() -> { createBtn.setDisable(false); refresh(); });
+                } catch (Exception ex) {
+                    javafx.application.Platform.runLater(() -> {
+                        createBtn.setDisable(false);
+                        UiHelpers.error(getDialogPane().getScene().getWindow(), ex.getMessage());
+                    });
+                }
+            });
         });
 
         VBox createSection = new VBox(8, createTitle, createGrid, createBtn);
@@ -178,17 +181,26 @@ public class IndexDialog extends Dialog<Void> {
             return;
         }
         if (UiHelpers.confirmTyped(getDialogPane().getScene().getWindow(), name)) {
-            try { svc.dropIndex(db, coll, name); refresh(); }
-            catch (Exception ex) { UiHelpers.error(getDialogPane().getScene().getWindow(), ex.getMessage()); }
+            Thread.startVirtualThread(() -> {
+                try {
+                    svc.dropIndex(db, coll, name);
+                    javafx.application.Platform.runLater(this::refresh);
+                } catch (Exception ex) {
+                    javafx.application.Platform.runLater(() -> UiHelpers.error(getDialogPane().getScene().getWindow(), ex.getMessage()));
+                }
+            });
         }
     }
 
     private void refresh() {
-        try {
-            table.setItems(FXCollections.observableArrayList(svc.listIndexes(db, coll)));
-        } catch (Exception e) {
-            UiHelpers.error(getDialogPane().getScene().getWindow(), e.getMessage());
-        }
+        Thread.startVirtualThread(() -> {
+            try {
+                var indexes = svc.listIndexes(db, coll);
+                javafx.application.Platform.runLater(() -> table.setItems(FXCollections.observableArrayList(indexes)));
+            } catch (Exception e) {
+                javafx.application.Platform.runLater(() -> UiHelpers.error(getDialogPane().getScene().getWindow(), e.getMessage()));
+            }
+        });
     }
 
     private static String str(Document d, String key) {

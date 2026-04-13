@@ -178,12 +178,22 @@ public class ExplorerView extends VBox {
         });
         newColl.setOnAction(e -> {
             TreeItem<Node> s = tree.getSelectionModel().getSelectedItem();
-            TextInputDialog d = new TextInputDialog();
-            d.setTitle("New collection"); d.setHeaderText("Collection name");
-            d.initOwner(getScene().getWindow());
-            d.showAndWait().ifPresent(name -> {
-                try { manager.service(connectionId).createCollection(s.getValue().dbName, name); refresh(); }
-                catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
+            String db = s.getValue().dbName;
+            UiHelpers.styledInput(getScene().getWindow(),
+                    "New Collection",
+                    "Create a new collection in " + db,
+                    "Collection name", "").ifPresent(name -> {
+                Thread.startVirtualThread(() -> {
+                    try {
+                        manager.service(connectionId).createCollection(db, name);
+                        Platform.runLater(() -> {
+                            s.getChildren().add(new TreeItem<>(Node.coll(db, name)));
+                            s.setExpanded(true);
+                        });
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+                    }
+                });
             });
         });
         renameColl.setOnAction(e -> {
@@ -192,22 +202,43 @@ public class ExplorerView extends VBox {
             d.setTitle("Rename collection"); d.setHeaderText("New name");
             d.initOwner(getScene().getWindow());
             d.showAndWait().ifPresent(name -> {
-                try { manager.service(connectionId).renameCollection(s.getValue().dbName, s.getValue().collName, name); refresh(); }
-                catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
+                String dbName = s.getValue().dbName, oldName = s.getValue().collName;
+                Thread.startVirtualThread(() -> {
+                    try {
+                        manager.service(connectionId).renameCollection(dbName, oldName, name);
+                        Platform.runLater(this::refresh);
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+                    }
+                });
             });
         });
         dropColl.setOnAction(e -> {
             TreeItem<Node> s = tree.getSelectionModel().getSelectedItem();
             if (UiHelpers.confirmTyped(getScene().getWindow(), s.getValue().collName)) {
-                try { manager.service(connectionId).dropCollection(s.getValue().dbName, s.getValue().collName); refresh(); }
-                catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
+                String dbName = s.getValue().dbName, collName = s.getValue().collName;
+                Thread.startVirtualThread(() -> {
+                    try {
+                        manager.service(connectionId).dropCollection(dbName, collName);
+                        Platform.runLater(() -> s.getParent().getChildren().remove(s));
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+                    }
+                });
             }
         });
         dropDb.setOnAction(e -> {
             TreeItem<Node> s = tree.getSelectionModel().getSelectedItem();
             if (UiHelpers.confirmTyped(getScene().getWindow(), s.getValue().dbName)) {
-                try { manager.service(connectionId).dropDatabase(s.getValue().dbName); refresh(); }
-                catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
+                String dbName = s.getValue().dbName;
+                Thread.startVirtualThread(() -> {
+                    try {
+                        manager.service(connectionId).dropDatabase(dbName);
+                        Platform.runLater(this::refresh);
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+                    }
+                });
             }
         });
         indexes.setOnAction(e -> {
@@ -223,12 +254,16 @@ public class ExplorerView extends VBox {
             d.setHeaderText("Command JSON");
             d.initOwner(getScene().getWindow());
             d.showAndWait().ifPresent(cmd -> {
-                try {
-                    Document res = manager.service(connectionId).runCommand(s.getValue().dbName, cmd);
-                    UiHelpers.info(getScene().getWindow(), "Result", res.toJson(MongoService.JSON_RELAXED));
-                } catch (Exception ex) {
-                    UiHelpers.error(getScene().getWindow(), ex.getMessage());
-                }
+                String dbName = s.getValue().dbName;
+                Thread.startVirtualThread(() -> {
+                    try {
+                        Document res = manager.service(connectionId).runCommand(dbName, cmd);
+                        Platform.runLater(() -> UiHelpers.info(getScene().getWindow(), "Result",
+                                res.toJson(MongoService.JSON_RELAXED)));
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+                    }
+                });
             });
         });
 

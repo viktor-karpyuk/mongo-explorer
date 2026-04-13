@@ -383,27 +383,38 @@ public class ConnectionTree extends VBox {
                     ? new String[]{dbName.getText(), cName.getText()} : null);
             d.showAndWait().ifPresent(arr -> {
                 if (arr[0].isBlank() || arr[1].isBlank()) return;
-                try {
-                    manager.service(n.connectionId).createCollection(arr[0], arr[1]);
-                    reloadDbsFor(n.connectionId);
-                } catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
+                String connId = n.connectionId;
+                Thread.startVirtualThread(() -> {
+                    try {
+                        manager.service(connId).createCollection(arr[0], arr[1]);
+                        Platform.runLater(() -> reloadDbsFor(connId));
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+                    }
+                });
             });
         }));
         miServerInfo.setOnAction(e -> withSel(n -> {
-            try {
-                var doc = manager.service(n.connectionId).runCommand("admin", "{ \"serverStatus\": 1 }");
-                javafx.scene.control.TextArea ta = new javafx.scene.control.TextArea(
-                        doc.toJson(MongoService.JSON_RELAXED));
-                ta.setEditable(false);
-                ta.setStyle("-fx-font-family: 'Menlo','Monaco',monospace;");
-                ta.setPrefSize(720, 520);
-                javafx.scene.control.Dialog<Void> d = new javafx.scene.control.Dialog<>();
-                d.initOwner(getScene().getWindow());
-                d.setTitle("Server status · " + n.label);
-                d.getDialogPane().setContent(ta);
-                d.getDialogPane().getButtonTypes().add(javafx.scene.control.ButtonType.CLOSE);
-                d.showAndWait();
-            } catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
+            Thread.startVirtualThread(() -> {
+                try {
+                    var doc = manager.service(n.connectionId).runCommand("admin", "{ \"serverStatus\": 1 }");
+                    String json = doc.toJson(MongoService.JSON_RELAXED);
+                    Platform.runLater(() -> {
+                        javafx.scene.control.TextArea ta = new javafx.scene.control.TextArea(json);
+                        ta.setEditable(false);
+                        ta.setStyle("-fx-font-family: 'Menlo','Monaco',monospace;");
+                        ta.setPrefSize(720, 520);
+                        javafx.scene.control.Dialog<Void> d = new javafx.scene.control.Dialog<>();
+                        d.initOwner(getScene().getWindow());
+                        d.setTitle("Server status · " + n.label);
+                        d.getDialogPane().setContent(ta);
+                        d.getDialogPane().getButtonTypes().add(javafx.scene.control.ButtonType.CLOSE);
+                        d.showAndWait();
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+                }
+            });
         }));
         miCopyUri.setOnAction(e -> withSel(n -> {
             MongoConnection c = store.get(n.connectionId);
@@ -425,19 +436,41 @@ public class ConnectionTree extends VBox {
         miNewConn.setOnAction(e -> { if (openHandler != null) openHandler.openConnectionEditor(null); });
         miRefresh.setOnAction(e -> reloadAll());
 
-        miNewColl.setOnAction(e -> withSel(n -> {
-            TextInputDialog d = new TextInputDialog();
-            d.initOwner(getScene().getWindow());
-            d.setTitle("New collection"); d.setHeaderText("Collection name");
-            d.showAndWait().ifPresent(name -> {
-                try { manager.service(n.connectionId).createCollection(n.db, name); reloadAll(); }
-                catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
+        miNewColl.setOnAction(e -> {
+            TreeItem<Node> sel = tree.getSelectionModel().getSelectedItem();
+            if (sel == null) return;
+            Node n = sel.getValue();
+            TreeItem<Node> dbItem = "db".equals(n.type) ? sel : sel.getParent();
+            String db = n.db;
+            String connId = n.connectionId;
+            UiHelpers.styledInput(getScene().getWindow(),
+                    "New Collection",
+                    "Create a new collection in " + db,
+                    "Collection name", "").ifPresent(name -> {
+                Thread.startVirtualThread(() -> {
+                    try {
+                        manager.service(connId).createCollection(db, name);
+                        Platform.runLater(() -> {
+                            dbItem.getChildren().add(new TreeItem<>(Node.coll(connId, db, name)));
+                            dbItem.setExpanded(true);
+                        });
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+                    }
+                });
             });
-        }));
+        });
         miDropDb.setOnAction(e -> withSel(n -> {
             if (UiHelpers.confirmTyped(getScene().getWindow(), n.db)) {
-                try { manager.service(n.connectionId).dropDatabase(n.db); reloadAll(); }
-                catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
+                String connId = n.connectionId, db = n.db;
+                Thread.startVirtualThread(() -> {
+                    try {
+                        manager.service(connId).dropDatabase(db);
+                        Platform.runLater(this::reloadAll);
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+                    }
+                });
             }
         }));
         miUsers.setOnAction(e -> withSel(n -> {
@@ -450,10 +483,16 @@ public class ConnectionTree extends VBox {
             d.initOwner(getScene().getWindow());
             d.setTitle("Run command on " + n.db); d.setHeaderText("Command JSON");
             d.showAndWait().ifPresent(cmd -> {
-                try {
-                    var res = manager.service(n.connectionId).runCommand(n.db, cmd);
-                    UiHelpers.info(getScene().getWindow(), "Result", res.toJson(MongoService.JSON_RELAXED));
-                } catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
+                String connId = n.connectionId, db = n.db;
+                Thread.startVirtualThread(() -> {
+                    try {
+                        var res = manager.service(connId).runCommand(db, cmd);
+                        String json = res.toJson(MongoService.JSON_RELAXED);
+                        Platform.runLater(() -> UiHelpers.info(getScene().getWindow(), "Result", json));
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+                    }
+                });
             });
         }));
 
@@ -465,16 +504,33 @@ public class ConnectionTree extends VBox {
             d.initOwner(getScene().getWindow());
             d.setTitle("Rename collection"); d.setHeaderText("New name");
             d.showAndWait().ifPresent(name -> {
-                try { manager.service(n.connectionId).renameCollection(n.db, n.coll, name); reloadAll(); }
-                catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
+                String connId = n.connectionId, db = n.db, old = n.coll;
+                Thread.startVirtualThread(() -> {
+                    try {
+                        manager.service(connId).renameCollection(db, old, name);
+                        Platform.runLater(this::reloadAll);
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+                    }
+                });
             });
         }));
-        miDropColl.setOnAction(e -> withSel(n -> {
+        miDropColl.setOnAction(e -> {
+            TreeItem<Node> sel = tree.getSelectionModel().getSelectedItem();
+            if (sel == null) return;
+            Node n = sel.getValue();
             if (UiHelpers.confirmTyped(getScene().getWindow(), n.coll)) {
-                try { manager.service(n.connectionId).dropCollection(n.db, n.coll); reloadAll(); }
-                catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
+                String connId = n.connectionId, db = n.db, coll = n.coll;
+                Thread.startVirtualThread(() -> {
+                    try {
+                        manager.service(connId).dropCollection(db, coll);
+                        Platform.runLater(() -> sel.getParent().getChildren().remove(sel));
+                    } catch (Exception ex) {
+                        Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+                    }
+                });
             }
-        }));
+        });
         miIndexes.setOnAction(e -> withSel(n -> {
             IndexDialog d = new IndexDialog(manager.service(n.connectionId), n.db, n.coll);
             d.initOwner(getScene().getWindow());

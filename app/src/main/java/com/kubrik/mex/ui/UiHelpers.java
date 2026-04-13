@@ -105,6 +105,44 @@ public final class UiHelpers {
         return box;
     }
 
+    public static Optional<String> styledInput(Window owner, String title, String subtitle,
+                                                String fieldLabel, String initialValue) {
+        javafx.scene.control.Dialog<String> d = new javafx.scene.control.Dialog<>();
+        d.initOwner(owner);
+        d.setTitle(title);
+
+        Label header = new Label(title);
+        header.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
+        Label sub = new Label(subtitle);
+        sub.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 12px;");
+        sub.setWrapText(true);
+
+        Label lbl = new Label(fieldLabel);
+        lbl.setStyle("-fx-text-fill: #374151; -fx-font-size: 13px;");
+        TextField input = new TextField(initialValue == null ? "" : initialValue);
+        input.setPromptText(fieldLabel);
+        input.setStyle("-fx-font-size: 13px;");
+        HBox.setHgrow(input, Priority.ALWAYS);
+
+        javafx.scene.layout.VBox content = new javafx.scene.layout.VBox(12,
+                header, sub, new javafx.scene.control.Separator(), lbl, input);
+        content.setPadding(new javafx.geometry.Insets(16, 20, 12, 20));
+        content.setPrefWidth(400);
+
+        d.getDialogPane().setContent(content);
+        d.getDialogPane().getButtonTypes().addAll(
+                javafx.scene.control.ButtonType.CANCEL, javafx.scene.control.ButtonType.OK);
+        Button ok = (Button) d.getDialogPane().lookupButton(javafx.scene.control.ButtonType.OK);
+        ok.setText("Create");
+        ok.setStyle("-fx-base: #2563eb; -fx-text-fill: white; -fx-font-weight: bold;");
+        ok.setDisable(input.getText().isBlank());
+        input.textProperty().addListener((o, a, b) -> ok.setDisable(b.trim().isEmpty()));
+
+        javafx.application.Platform.runLater(input::requestFocus);
+        d.setResultConverter(bt -> bt == javafx.scene.control.ButtonType.OK ? input.getText().trim() : null);
+        return d.showAndWait();
+    }
+
     public static void info(Window owner, String title, String message) {
         Alert a = new Alert(Alert.AlertType.INFORMATION, message, ButtonType.OK);
         a.initOwner(owner);

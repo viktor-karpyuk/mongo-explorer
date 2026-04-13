@@ -172,10 +172,26 @@ public class UserManagementDialog extends Dialog<Void> {
                     UiHelpers.error(getDialogPane().getScene().getWindow(), "Select at least one role.");
                     return;
                 }
-                svc.createUser(db, newUsername.getText().trim(), newPassword.getText(), roles);
-                newUsername.clear();
-                newPassword.clear();
-                refresh();
+                String username = newUsername.getText().trim();
+                String password = newPassword.getText();
+                List<Document> finalRoles = List.copyOf(roles);
+                createBtn.setDisable(true);
+                Thread.startVirtualThread(() -> {
+                    try {
+                        svc.createUser(db, username, password, finalRoles);
+                        javafx.application.Platform.runLater(() -> {
+                            createBtn.setDisable(false);
+                            newUsername.clear();
+                            newPassword.clear();
+                            refresh();
+                        });
+                    } catch (Exception ex) {
+                        javafx.application.Platform.runLater(() -> {
+                            createBtn.setDisable(false);
+                            UiHelpers.error(getDialogPane().getScene().getWindow(), ex.getMessage());
+                        });
+                    }
+                });
             } catch (Exception ex) {
                 UiHelpers.error(getDialogPane().getScene().getWindow(), ex.getMessage());
             }
@@ -194,11 +210,14 @@ public class UserManagementDialog extends Dialog<Void> {
     }
 
     private void refresh() {
-        try {
-            table.setItems(FXCollections.observableArrayList(svc.listUsers(db)));
-        } catch (Exception e) {
-            UiHelpers.error(getDialogPane().getScene().getWindow(), e.getMessage());
-        }
+        Thread.startVirtualThread(() -> {
+            try {
+                var users = svc.listUsers(db);
+                javafx.application.Platform.runLater(() -> table.setItems(FXCollections.observableArrayList(users)));
+            } catch (Exception e) {
+                javafx.application.Platform.runLater(() -> UiHelpers.error(getDialogPane().getScene().getWindow(), e.getMessage()));
+            }
+        });
     }
 
     private String selectedUser() {
@@ -217,8 +236,14 @@ public class UserManagementDialog extends Dialog<Void> {
         d.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
         d.setResultConverter(bt -> bt == ButtonType.OK ? pf.getText() : null);
         d.showAndWait().ifPresent(pwd -> {
-            try { svc.updateUserPassword(db, user, pwd); refresh(); }
-            catch (Exception ex) { UiHelpers.error(getDialogPane().getScene().getWindow(), ex.getMessage()); }
+            Thread.startVirtualThread(() -> {
+                try {
+                    svc.updateUserPassword(db, user, pwd);
+                    javafx.application.Platform.runLater(this::refresh);
+                } catch (Exception ex) {
+                    javafx.application.Platform.runLater(() -> UiHelpers.error(getDialogPane().getScene().getWindow(), ex.getMessage()));
+                }
+            });
         });
     }
 
@@ -226,8 +251,14 @@ public class UserManagementDialog extends Dialog<Void> {
         String user = selectedUser();
         if (user == null) return;
         if (UiHelpers.confirmTyped(getDialogPane().getScene().getWindow(), user)) {
-            try { svc.dropUser(db, user); refresh(); }
-            catch (Exception ex) { UiHelpers.error(getDialogPane().getScene().getWindow(), ex.getMessage()); }
+            Thread.startVirtualThread(() -> {
+                try {
+                    svc.dropUser(db, user);
+                    javafx.application.Platform.runLater(this::refresh);
+                } catch (Exception ex) {
+                    javafx.application.Platform.runLater(() -> UiHelpers.error(getDialogPane().getScene().getWindow(), ex.getMessage()));
+                }
+            });
         }
     }
 
@@ -243,10 +274,14 @@ public class UserManagementDialog extends Dialog<Void> {
         d.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
         d.setResultConverter(bt -> bt == ButtonType.OK ? rolePicker.getValue() : null);
         d.showAndWait().ifPresent(role -> {
-            try {
-                svc.grantRoles(db, user, List.of(new Document("role", role).append("db", db)));
-                refresh();
-            } catch (Exception ex) { UiHelpers.error(getDialogPane().getScene().getWindow(), ex.getMessage()); }
+            Thread.startVirtualThread(() -> {
+                try {
+                    svc.grantRoles(db, user, List.of(new Document("role", role).append("db", db)));
+                    javafx.application.Platform.runLater(this::refresh);
+                } catch (Exception ex) {
+                    javafx.application.Platform.runLater(() -> UiHelpers.error(getDialogPane().getScene().getWindow(), ex.getMessage()));
+                }
+            });
         });
     }
 
@@ -270,10 +305,14 @@ public class UserManagementDialog extends Dialog<Void> {
         d.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
         d.setResultConverter(bt -> bt == ButtonType.OK ? rolePicker.getValue() : null);
         d.showAndWait().ifPresent(role -> {
-            try {
-                svc.revokeRoles(db, user, List.of(new Document("role", role).append("db", db)));
-                refresh();
-            } catch (Exception ex) { UiHelpers.error(getDialogPane().getScene().getWindow(), ex.getMessage()); }
+            Thread.startVirtualThread(() -> {
+                try {
+                    svc.revokeRoles(db, user, List.of(new Document("role", role).append("db", db)));
+                    javafx.application.Platform.runLater(this::refresh);
+                } catch (Exception ex) {
+                    javafx.application.Platform.runLater(() -> UiHelpers.error(getDialogPane().getScene().getWindow(), ex.getMessage()));
+                }
+            });
         });
     }
 

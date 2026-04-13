@@ -27,8 +27,12 @@ public class MongoService implements AutoCloseable {
         ConnectionString cs = new ConnectionString(uri);
         MongoClientSettings settings = MongoClientSettings.builder()
                 .applyConnectionString(cs)
-                .applyToSocketSettings(b -> b.connectTimeout(8000, java.util.concurrent.TimeUnit.MILLISECONDS))
+                .applyToSocketSettings(b -> {
+                    b.connectTimeout(8000, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    b.readTimeout(30000, java.util.concurrent.TimeUnit.MILLISECONDS);
+                })
                 .applyToClusterSettings(b -> b.serverSelectionTimeout(8000, java.util.concurrent.TimeUnit.MILLISECONDS))
+                .applyToConnectionPoolSettings(b -> b.maxWaitTime(10000, java.util.concurrent.TimeUnit.MILLISECONDS))
                 .build();
         this.client = MongoClients.create(settings);
         Document buildInfo = client.getDatabase("admin").runCommand(new Document("buildInfo", 1));

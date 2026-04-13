@@ -102,7 +102,7 @@ public class QueryView extends VBox {
         runBtn.setTooltip(new javafx.scene.control.Tooltip("Run query  (⌘↵)"));
         runBtn.setOnAction(e -> runActive());
 
-        Button refreshBtn = UiHelpers.iconButton("fth-refresh-cw", "Re-run last query");
+        Button refreshBtn = UiHelpers.iconButton("fth-rotate-cw", "Re-run last query");
         refreshBtn.setOnAction(e -> runActive());
 
         prevPageBtn = UiHelpers.iconButton("fth-chevron-left", "Previous page");
@@ -114,12 +114,22 @@ public class QueryView extends VBox {
 
         Button insert = UiHelpers.iconButton("fth-file-plus", "Insert new document");
         Button update = UiHelpers.iconButton("fth-edit-3", "Edit selected document");
+        Button copyDoc = UiHelpers.iconButton("fth-copy", "Copy document to clipboard");
         Button delete = UiHelpers.iconButton("fth-trash-2", "Delete selected document");
         Button export = UiHelpers.iconButton("fth-download", "Export results to JSON");
         delete.setOnMouseEntered(e -> delete.setStyle("-fx-background-color: #fee2e2; -fx-padding: 4 8 4 8; -fx-background-radius: 4;"));
         delete.setOnMouseExited(e -> delete.setStyle("-fx-background-color: transparent; -fx-padding: 4 8 4 8; -fx-background-radius: 4;"));
         update.setDisable(true);
+        copyDoc.setDisable(true);
         delete.setDisable(true);
+        copyDoc.setOnAction(e -> {
+            if (selectedDoc == null) return;
+            String json = selectedDoc.toJson(com.kubrik.mex.core.MongoService.JSON_RELAXED);
+            javafx.scene.input.ClipboardContent cc = new javafx.scene.input.ClipboardContent();
+            cc.putString(json);
+            javafx.scene.input.Clipboard.getSystemClipboard().setContent(cc);
+            statusLabel.setText("Document copied to clipboard");
+        });
 
         // Segmented view switcher (Table / Tree / JSON)
         javafx.scene.control.ToggleGroup viewGroup = new javafx.scene.control.ToggleGroup();
@@ -141,14 +151,30 @@ public class QueryView extends VBox {
 
         Region tsp = new Region();
         HBox.setHgrow(tsp, Priority.ALWAYS);
+        // Toggle button: hide/show the results panel (collapse to query-only)
+        Button toggleResults = UiHelpers.iconButton("fth-minimize-2", "Toggle results panel");
+        toggleResults.setOnAction(e -> {
+            org.kordamp.ikonli.javafx.FontIcon ico = (org.kordamp.ikonli.javafx.FontIcon) toggleResults.getGraphic();
+            if (mainSplit.getItems().contains(resultsSplit)) {
+                lastResultsDivider = mainSplit.getDividerPositions()[0];
+                mainSplit.getItems().remove(resultsSplit);
+                ico.setIconLiteral("fth-maximize-2");
+            } else {
+                mainSplit.getItems().add(resultsSplit);
+                mainSplit.setDividerPositions(lastResultsDivider);
+                ico.setIconLiteral("fth-minimize-2");
+            }
+        });
+
         HBox topToolbar = new HBox(8,
                 runBtn,
+                refreshBtn,
                 vsep(),
-                insert, update, delete, export,
+                insert,
                 tsp,
                 viewSwitcher,
                 vsep(),
-                refreshBtn);
+                toggleResults);
         topToolbar.setAlignment(Pos.CENTER_LEFT);
         topToolbar.setPadding(new Insets(8, 16, 8, 16));
         topToolbar.setStyle("-fx-background-color: white; -fx-border-color: #e5e7eb; -fx-border-width: 0 0 1 0;");
@@ -204,6 +230,7 @@ public class QueryView extends VBox {
             selectedDoc = d;
             detail.setText(d == null ? "" : d.toJson(com.kubrik.mex.core.MongoService.JSON_RELAXED));
             update.setDisable(d == null);
+            copyDoc.setDisable(d == null);
             delete.setDisable(d == null);
         });
         detail.setEditable(false);
@@ -225,19 +252,7 @@ public class QueryView extends VBox {
             }
         });
 
-        // Toggle button: hide/show the results panel (collapse to query-only)
-        Button toggleResults = UiHelpers.iconButton("fth-minimize-2", "Toggle results panel");
-        toggleResults.setOnAction(e -> {
-            if (mainSplit.getItems().contains(resultsSplit)) {
-                lastResultsDivider = mainSplit.getDividerPositions()[0];
-                mainSplit.getItems().remove(resultsSplit);
-            } else {
-                mainSplit.getItems().add(resultsSplit);
-                mainSplit.setDividerPositions(lastResultsDivider);
-            }
-        });
-
-        HBox resultsFooter = new HBox(6, prevPageBtn, nextPageBtn, pageInfo, rfsp, toggleDetail, toggleResults);
+        HBox resultsFooter = new HBox(6, prevPageBtn, nextPageBtn, pageInfo, rfsp, copyDoc, update, delete, export, vsep(), toggleDetail);
         resultsFooter.setAlignment(Pos.CENTER_LEFT);
         resultsFooter.setPadding(new Insets(4, 8, 4, 8));
         resultsFooter.setStyle("-fx-background-color: #f9fafb; -fx-border-color: #e5e7eb; -fx-border-width: 1 0 0 0;");
@@ -434,15 +449,24 @@ public class QueryView extends VBox {
     }
 
     private void doInsert() {
-        openJsonEditor("Insert document",
+        DocumentEditorDialog editor = new DocumentEditorDialog(
+                getScene().getWindow(),
+                "Insert document",
                 "Insert a new document into " + dbBox.getValue() + "." + collBox.getValue(),
-                "{\n  \n}",
-                json -> {
-                    try {
-                        runner().insert(dbBox.getValue(), collBox.getValue(), json);
-                        doFind();
-                    } catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
-                });
+                "{\n  \n}");
+        editor.showAndWait().ifPresent(json -> {
+            QueryRunner r = runner();
+            String db = dbBox.getValue(), coll = collBox.getValue();
+            statusLabel.setText("Inserting…");
+            Thread.startVirtualThread(() -> {
+                try {
+                    r.insert(db, coll, json);
+                    Platform.runLater(this::doFind);
+                } catch (Exception ex) {
+                    Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+                }
+            });
+        });
     }
 
     private void doUpdate() {
@@ -453,83 +477,26 @@ public class QueryView extends VBox {
             UiHelpers.error(getScene().getWindow(), "Selected document has no _id");
             return;
         }
-        openJsonEditor("Edit document",
+        DocumentEditorDialog editor = new DocumentEditorDialog(
+                getScene().getWindow(),
+                "Edit document",
                 "Replace document _id=" + doc.get("_id") + " in "
                         + dbBox.getValue() + "." + collBox.getValue(),
-                selJson,
-                json -> {
-                    try {
-                        org.bson.BsonDocument idFilter = new org.bson.BsonDocument("_id", doc.get("_id"));
-                        runner().replaceById(dbBox.getValue(), collBox.getValue(), idFilter, json);
-                        doFind();
-                    } catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
-                });
-    }
-
-    /** Resizable JSON editor with syntax highlighting + line numbers. */
-    private void openJsonEditor(String title, String subtitle, String initial,
-                                java.util.function.Consumer<String> onAccept) {
-        JsonCodeArea code = new JsonCodeArea(initial);
-        org.fxmisc.flowless.VirtualizedScrollPane<JsonCodeArea> editorScroll =
-                new org.fxmisc.flowless.VirtualizedScrollPane<>(code);
-        VBox.setVgrow(editorScroll, Priority.ALWAYS);
-
-        Label header = new Label(title);
-        header.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
-        Label sub = new Label(subtitle);
-        sub.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 12px;");
-        sub.setWrapText(true);
-
-        Label status = new Label("");
-        status.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
-        Runnable validate = () -> {
-            try {
-                org.bson.BsonDocument.parse(code.getText());
-                status.setStyle("-fx-text-fill: #16a34a; -fx-font-size: 11px;");
-                status.setText("✓ valid JSON");
-            } catch (Exception ex) {
-                status.setStyle("-fx-text-fill: #dc2626; -fx-font-size: 11px;");
-                status.setText("✗ " + ex.getMessage());
-            }
-        };
-        code.textProperty().addListener((o, a, b) -> validate.run());
-        validate.run();
-
-        Button format = new Button("Format");
-        format.setGraphic(new org.kordamp.ikonli.javafx.FontIcon("fth-align-left"));
-        format.setOnAction(e -> {
-            try {
-                org.bson.BsonDocument parsed = org.bson.BsonDocument.parse(code.getText());
-                org.bson.json.JsonWriterSettings ws = org.bson.json.JsonWriterSettings.builder()
-                        .outputMode(org.bson.json.JsonMode.RELAXED).indent(true).build();
-                code.replaceText(parsed.toJson(ws));
-                code.refreshHighlight();
-            } catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
+                selJson);
+        editor.showAndWait().ifPresent(json -> {
+            QueryRunner r = runner();
+            String db = dbBox.getValue(), coll = collBox.getValue();
+            org.bson.BsonDocument idFilter = new org.bson.BsonDocument("_id", doc.get("_id"));
+            statusLabel.setText("Updating…");
+            Thread.startVirtualThread(() -> {
+                try {
+                    r.replaceById(db, coll, idFilter, json);
+                    Platform.runLater(this::doFind);
+                } catch (Exception ex) {
+                    Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+                }
+            });
         });
-        Region sp = new Region();
-        HBox.setHgrow(sp, Priority.ALWAYS);
-        HBox toolbar = new HBox(8, format, sp, status);
-        toolbar.setAlignment(Pos.CENTER_LEFT);
-
-        VBox content = new VBox(10, header, sub, new javafx.scene.control.Separator(), editorScroll, toolbar);
-        content.setPadding(new Insets(16, 20, 12, 20));
-        content.setFillWidth(true);
-        VBox.setVgrow(content, Priority.ALWAYS);
-
-        javafx.scene.control.Dialog<String> d = new javafx.scene.control.Dialog<>();
-        d.initOwner(getScene().getWindow());
-        d.setTitle(title);
-        d.setResizable(true);
-        d.getDialogPane().setContent(content);
-        d.getDialogPane().setPrefSize(820, 560);
-        d.getDialogPane().setMinSize(480, 320);
-        d.getDialogPane().getStylesheets().add(getClass().getResource("/json-editor.css").toExternalForm());
-        d.getDialogPane().getButtonTypes().addAll(javafx.scene.control.ButtonType.CANCEL, javafx.scene.control.ButtonType.OK);
-        Button ok = (Button) d.getDialogPane().lookupButton(javafx.scene.control.ButtonType.OK);
-        ok.setText("Save");
-        ok.setStyle("-fx-base: #16a34a; -fx-text-fill: white; -fx-font-weight: bold;");
-        d.setResultConverter(bt -> bt == javafx.scene.control.ButtonType.OK ? code.getText() : null);
-        d.showAndWait().ifPresent(onAccept);
     }
 
     private void doDelete() {
@@ -538,11 +505,18 @@ public class QueryView extends VBox {
                 selectedDoc.toJson(com.kubrik.mex.core.MongoService.JSON_RELAXED));
         if (!doc.containsKey("_id")) { UiHelpers.error(getScene().getWindow(), "No _id"); return; }
         if (!UiHelpers.confirm(getScene().getWindow(), "Delete this document?")) return;
-        try {
-            org.bson.BsonDocument idFilter = new org.bson.BsonDocument("_id", doc.get("_id"));
-            runner().deleteById(dbBox.getValue(), collBox.getValue(), idFilter);
-            doFind();
-        } catch (Exception ex) { UiHelpers.error(getScene().getWindow(), ex.getMessage()); }
+        QueryRunner r = runner();
+        String db = dbBox.getValue(), coll = collBox.getValue();
+        org.bson.BsonDocument idFilter = new org.bson.BsonDocument("_id", doc.get("_id"));
+        statusLabel.setText("Deleting…");
+        Thread.startVirtualThread(() -> {
+            try {
+                r.deleteById(db, coll, idFilter);
+                Platform.runLater(this::doFind);
+            } catch (Exception ex) {
+                Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
+            }
+        });
     }
 
     private void doExport() {
