@@ -18,6 +18,8 @@ gradle-app.setting
 .classpath
 .settings/
 .vscode/
+.claude/
+docs/
 *.swp
 *~
 
