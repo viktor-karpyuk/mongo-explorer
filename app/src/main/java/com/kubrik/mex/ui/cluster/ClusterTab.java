@@ -103,6 +103,13 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         if (pre != null) applyKind(pre.clusterKind());
     }
 
+    /** v2.4 UI-OPS-8 — called by the {@code Cmd/Ctrl+Alt+O} accelerator to
+     *  focus the Ops sub-tab and preset the "secs ≥ 10" filter. */
+    public void focusOpsWithLongRunningPreset() {
+        tabPane.getSelectionModel().select(opsTab);
+        currentOpPane.presetMinSecs(10);
+    }
+
     @Override
     public void close() {
         try { topoSub.close(); } catch (Exception ignored) {}

@@ -243,7 +243,19 @@ public class MainView extends BorderPane {
                 item("Cluster view",
                         new KeyCodeCombination(KeyCode.C,
                                 KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
-                        this::openClusterTabForSelectedConnection));
+                        this::openClusterTabForSelectedConnection),
+                // v2.4 UI-OPS-8 — Cmd/Ctrl+Alt+O opens Cluster ▸ Ops with
+                // secs_running >= 10 pre-filtered (jump to long-running ops).
+                item("Long-running ops",
+                        new KeyCodeCombination(KeyCode.O,
+                                KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
+                        this::openLongRunningOpsView),
+                // v2.4 UI-OPS-8 — Cmd/Ctrl+Alt+L opens the Logs tab and
+                // filters to ops-audit rows.
+                item("Logs (audit only)",
+                        new KeyCodeCombination(KeyCode.L,
+                                KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
+                        this::openLogsFilteredToAudit));
 
         // ----- Help -----
         Menu help = new Menu("Help");
@@ -437,21 +449,49 @@ public class MainView extends BorderPane {
      *  context, falling back to the first connected one; if nothing is
      *  connected the status bar surfaces the reason instead of silently no-op'ing. */
     private void openClusterTabForSelectedConnection() {
+        String selected = resolveClusterContext();
+        if (selected == null) return;
+        openClusterTab(selected);
+    }
+
+    /** v2.4 UI-OPS-8 — Cmd/Ctrl+Alt+O opens the Cluster tab for the
+     *  connection in context and focuses the Ops sub-tab with a
+     *  {@code secs_running >= 10} preset so a DBA can jump straight to
+     *  long-running ops during an incident. */
+    private void openLongRunningOpsView() {
+        String selected = resolveClusterContext();
+        if (selected == null) return;
+        openClusterTab(selected);
+        Tab t = clusterTabs.get(selected);
+        if (t != null && t.getContent() instanceof com.kubrik.mex.ui.cluster.ClusterTab ct) {
+            ct.focusOpsWithLongRunningPreset();
+        }
+    }
+
+    /** v2.4 UI-OPS-8 — Cmd/Ctrl+Alt+L opens the Logs tab with the
+     *  "Audit only" toggle engaged so destructive-action rows are isolated
+     *  from connection noise. */
+    private void openLogsFilteredToAudit() {
+        openLogsTab();
+        if (logsView != null) logsView.filterToAudit();
+    }
+
+    /** Shared accelerator helper — returns the target connection id (tree
+     *  selection → first connected fallback) or {@code null} after pushing
+     *  the reason into the status bar. */
+    private String resolveClusterContext() {
         String selected = connTree.selectedConnectionId();
         if (selected == null) {
             for (var c : connectionStore.list()) {
                 if (manager.state(c.id()).status()
                         == com.kubrik.mex.model.ConnectionState.Status.CONNECTED) {
-                    selected = c.id();
-                    break;
+                    return c.id();
                 }
             }
-        }
-        if (selected == null) {
             statusConn.setText("Cluster view: no connected cluster — connect one first.");
-            return;
+            return null;
         }
-        openClusterTab(selected);
+        return selected;
     }
 
     private void openClusterTab(String connectionId) {

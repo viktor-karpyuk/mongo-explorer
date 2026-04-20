@@ -126,6 +126,14 @@ public final class CurrentOpPane extends BorderPane implements AutoCloseable {
         poller.stop();
     }
 
+    /** v2.4 UI-OPS-8 — preset the "secs ≥" filter and refresh the view. Used
+     *  by the {@code Cmd/Ctrl+Alt+O} accelerator to jump straight to the
+     *  "show long-running ops" view. */
+    public void presetMinSecs(long secs) {
+        secsField.setText(String.valueOf(secs));
+        reapplyFilter();
+    }
+
     /* ============================== UI ================================= */
 
     private Region buildFilterBar() {
