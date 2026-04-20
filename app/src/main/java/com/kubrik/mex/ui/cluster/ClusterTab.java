@@ -42,6 +42,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
     private final CurrentOpPane currentOpPane;
     private final LockInfoPane lockInfoPane;
     private final ConnPoolPane connPoolPane;
+    private final OplogPane oplogPane;
     private final EventBus.Subscription topoSub;
 
     public ClusterTab(String connectionId, EventBus bus, ConnectionManager connManager,
@@ -55,13 +56,14 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         this.currentOpPane = new CurrentOpPane(connectionId, connManager, killHandler);
         this.lockInfoPane = new LockInfoPane(connectionId, connManager);
         this.connPoolPane = new ConnPoolPane(connectionId, connManager);
+        this.oplogPane = new OplogPane(connectionId, connManager);
         SplitPane opsSplit = new SplitPane(currentOpPane, lockInfoPane);
         opsSplit.setOrientation(Orientation.VERTICAL);
         opsSplit.setDividerPositions(0.72);
         this.topologyTab = tab("Topology", topologyPane);
         this.opsTab      = tab("Ops",       opsSplit);
         this.balancerTab = tab("Balancer",  placeholder("Balancer controls land with Q2.4-G."));
-        this.oplogTab    = tab("Oplog",     placeholder("Oplog gauge + tail lands with Q2.4-E."));
+        this.oplogTab    = tab("Oplog",     oplogPane);
         this.auditTab    = tab("Audit",     placeholder("Audit pane lands with Q2.4-H."));
         this.poolsTab    = tab("Pools",     connPoolPane);
 
@@ -88,6 +90,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         try { currentOpPane.close(); } catch (Exception ignored) {}
         try { lockInfoPane.close(); } catch (Exception ignored) {}
         try { connPoolPane.close(); } catch (Exception ignored) {}
+        try { oplogPane.close(); } catch (Exception ignored) {}
     }
 
     /* =========================== internals ============================== */
