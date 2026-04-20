@@ -12,9 +12,15 @@ import com.kubrik.mex.events.EventBus;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.Tooltip;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.MouseButton;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -41,8 +47,21 @@ import java.util.List;
  */
 public final class TopologyPane extends VBox implements AutoCloseable {
 
+    /**
+     * Callback set used by member-card right-click menus. The owning
+     * {@code MainView} supplies an implementation wired to
+     * {@link com.kubrik.mex.cluster.service.OpsExecutor} + the role probe.
+     */
+    public interface RsAdminHandler {
+        boolean stepDownAllowed(String connectionId);
+        boolean freezeAllowed(String connectionId);
+        KillOpDialog.Result stepDown(javafx.stage.Window owner, String connectionId, String host);
+        KillOpDialog.Result freeze(javafx.stage.Window owner, String connectionId, String host);
+    }
+
     private final String connectionId;
     private final EventBus bus;
+    private final RsAdminHandler adminHandler;
     private final EventBus.Subscription sub;
 
     private final Label headline = new Label("Resolving topology…");
@@ -51,9 +70,10 @@ public final class TopologyPane extends VBox implements AutoCloseable {
     private final VBox warningBox = new VBox(4);
     private final VBox body = new VBox(12);
 
-    public TopologyPane(String connectionId, EventBus bus) {
+    public TopologyPane(String connectionId, EventBus bus, RsAdminHandler adminHandler) {
         this.connectionId = connectionId;
         this.bus = bus;
+        this.adminHandler = adminHandler;
 
         setSpacing(14);
         setPadding(new Insets(18, 22, 18, 22));
@@ -212,7 +232,7 @@ public final class TopologyPane extends VBox implements AutoCloseable {
 
     /* ============================ member card ============================ */
 
-    private static VBox shardBlock(Shard s) {
+    private VBox shardBlock(Shard s) {
         VBox outer = new VBox(6);
         Label name = new Label(s.id() + (s.draining() ? "  (draining)" : ""));
         name.setStyle("-fx-font-weight: 700; -fx-font-size: 13px; -fx-text-fill: #1f2937;");
@@ -230,7 +250,7 @@ public final class TopologyPane extends VBox implements AutoCloseable {
         return outer;
     }
 
-    private static HBox memberCard(Member m) {
+    private HBox memberCard(Member m) {
         FontIcon icon = stateIcon(m.state());
         Label host = new Label(m.host());
         host.setStyle("-fx-font-size: 13px; -fx-font-weight: 700; -fx-text-fill: #111827;");
@@ -255,7 +275,49 @@ public final class TopologyPane extends VBox implements AutoCloseable {
         card.setStyle("-fx-background-color: white; -fx-background-radius: 8; "
                 + "-fx-border-color: " + stateBorder(m.state()) + "; "
                 + "-fx-border-radius: 8; -fx-border-width: 1;");
+        attachMemberMenu(card, m);
         return card;
+    }
+
+    private void attachMemberMenu(HBox card, Member m) {
+        ContextMenu menu = new ContextMenu();
+        MenuItem copy = new MenuItem("Copy host:port");
+        copy.setOnAction(e -> {
+            ClipboardContent c = new ClipboardContent();
+            c.putString(m.host());
+            Clipboard.getSystemClipboard().setContent(c);
+        });
+        menu.getItems().add(copy);
+
+        if (adminHandler != null) {
+            if (m.isPrimary()) {
+                MenuItem step = new MenuItem("Step down…");
+                boolean allowed = adminHandler.stepDownAllowed(connectionId);
+                step.setDisable(!allowed);
+                if (!allowed) step.setText("Step down  (role-gated)");
+                step.setOnAction(e -> adminHandler.stepDown(
+                        card.getScene() == null ? null : card.getScene().getWindow(),
+                        connectionId, m.host()));
+                menu.getItems().add(new SeparatorMenuItem());
+                menu.getItems().add(step);
+            } else if (m.isSecondary()) {
+                MenuItem fr = new MenuItem("Freeze / unfreeze…");
+                boolean allowed = adminHandler.freezeAllowed(connectionId);
+                fr.setDisable(!allowed);
+                if (!allowed) fr.setText("Freeze / unfreeze  (role-gated)");
+                fr.setOnAction(e -> adminHandler.freeze(
+                        card.getScene() == null ? null : card.getScene().getWindow(),
+                        connectionId, m.host()));
+                menu.getItems().add(new SeparatorMenuItem());
+                menu.getItems().add(fr);
+            }
+        }
+
+        card.setOnMouseClicked(e -> {
+            if (e.getButton() == MouseButton.SECONDARY) {
+                menu.show(card, e.getScreenX(), e.getScreenY());
+            }
+        });
     }
 
     private static HBox mongosCard(Mongos m) {

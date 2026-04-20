@@ -14,7 +14,10 @@ import com.kubrik.mex.core.ConnectionManager;
 import com.kubrik.mex.core.Crypto;
 import com.kubrik.mex.events.EventBus;
 import com.kubrik.mex.ui.cluster.CurrentOpPane;
+import com.kubrik.mex.ui.cluster.FreezeDialog;
 import com.kubrik.mex.ui.cluster.KillOpDialog;
+import com.kubrik.mex.ui.cluster.StepDownDialog;
+import com.kubrik.mex.ui.cluster.TopologyPane;
 import com.kubrik.mex.migration.MigrationService;
 import com.kubrik.mex.migration.gate.PreconditionGate;
 import com.kubrik.mex.migration.schedule.MigrationScheduler;
@@ -157,8 +160,29 @@ public class Main extends Application {
             }
         };
 
+        TopologyPane.RsAdminHandler rsAdminHandler = new TopologyPane.RsAdminHandler() {
+            @Override public boolean stepDownAllowed(String connectionId) {
+                return roleProbeService.currentOrProbe(connectionId)
+                        .hasAny(java.util.List.of("clusterManager", "root"));
+            }
+            @Override public boolean freezeAllowed(String connectionId) {
+                return roleProbeService.currentOrProbe(connectionId)
+                        .hasAny(java.util.List.of("clusterManager", "root"));
+            }
+            @Override public KillOpDialog.Result stepDown(javafx.stage.Window owner,
+                                                          String connectionId, String host) {
+                return StepDownDialog.show(owner, connectionId, host, opsExecutor,
+                        finalCallerUser, finalCallerHost);
+            }
+            @Override public KillOpDialog.Result freeze(javafx.stage.Window owner,
+                                                        String connectionId, String host) {
+                return FreezeDialog.show(owner, connectionId, host, opsExecutor,
+                        finalCallerUser, finalCallerHost);
+            }
+        };
+
         MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
-                migrationService, monitoringService, db, killOpHandler);
+                migrationService, monitoringService, db, killOpHandler, rsAdminHandler);
 
         // If a previous session left unfinished migrations behind, surface the recovery panel
         // as soon as the UI is up. See docs/mvp-functional-spec.md §4.6.
