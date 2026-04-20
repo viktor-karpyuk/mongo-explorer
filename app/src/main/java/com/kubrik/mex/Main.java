@@ -2,6 +2,7 @@ package com.kubrik.mex;
 
 import atlantafx.base.theme.PrimerLight;
 import com.kubrik.mex.cluster.ClusterWiring;
+import com.kubrik.mex.cluster.audit.AuditJanitor;
 import com.kubrik.mex.cluster.safety.KillSwitch;
 import com.kubrik.mex.cluster.safety.RoleSet;
 import com.kubrik.mex.cluster.service.ClusterTopologyService;
@@ -75,6 +76,7 @@ public class Main extends Application {
     private RoleProbeService roleProbeService;
     private OpsExecutor opsExecutor;
     private KillSwitch killSwitch;
+    private AuditJanitor auditJanitor;
 
     @Override
     public void start(Stage stage) throws Exception {
@@ -140,6 +142,11 @@ public class Main extends Application {
         final OpsAuditDao opsAuditDao = new OpsAuditDao(db);
         opsExecutor = new OpsExecutor(connectionManager, opsAuditDao, eventBus,
                 killSwitch, roleProbeService, java.time.Clock.systemUTC());
+
+        // v2.4 AUD-RET — daily ops_audit purge, OK rows older than 180 days
+        // deleted, FAIL + root/clusterAdmin rows kept indefinitely.
+        auditJanitor = new AuditJanitor(db, java.time.Clock.systemDefaultZone(), 180);
+        auditJanitor.start();
 
         String callerUser = System.getProperty("user.name", "unknown");
         String callerHost;
@@ -256,6 +263,7 @@ public class Main extends Application {
             try { if (migrationScheduler != null) migrationScheduler.close(); } catch (Exception ignored) {}
             try { if (recordingCapture != null) recordingCapture.close(); } catch (Exception ignored) {}
             try { if (recordingService != null) recordingService.close(); } catch (Exception ignored) {}
+            try { if (auditJanitor != null) auditJanitor.close(); } catch (Exception ignored) {}
             try { if (clusterWiring != null) clusterWiring.close(); } catch (Exception ignored) {}
             try { if (clusterTopologyService != null) clusterTopologyService.close(); } catch (Exception ignored) {}
             try { if (monitoringWiring != null) monitoringWiring.close(); } catch (Exception ignored) {}
