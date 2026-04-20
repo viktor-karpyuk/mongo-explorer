@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.4.1 — Cluster polish + shard depth
+
+Patch release closing four concrete gaps left open in v2.4.0.
+
+### Closed gaps
+- **Per-shard `replSetGetStatus` probe** (`Q2.4-A` follow-up). Sharded topology no longer shows shard replset members as grey `UNKNOWN` cards. `ClusterTopologyService` now caches a short-lived `MongoClient` per shard (keyed by `connectionId || rsHostSpec`) and runs `replSetGetStatus` + `replSetGetConfig` against it each sharded tick. A failed probe falls back to the seed-host UNKNOWN members plus a warning banner entry; the stale client is rotated so the next tick retries. Lifecycle is tied to the topology service + per-connection stop, so shutdown closes every peer client cleanly. New `MongoService.openPeerClient(rsHostSpec, timeoutMs)` reuses the parent service's credentials + TLS settings; input-validation coverage in `OpenPeerClientTest`.
+- **Kill-switch top-bar UI toggle** (`SAFE-OPS-8`). `KillSwitchPill` in the status bar shows `kill-switch off` / `kill-switch ENGAGED` with a grey / red treatment, subscribes to `KillSwitch.onChange`, and routes engagement through a confirmation alert (per the spec's no-accidents rule); disengagement is one click.
+- **Keyboard matrix — `Cmd/Ctrl+Alt+O` + `Cmd/Ctrl+Alt+L`** (`UI-OPS-8`). `+O` opens the Cluster tab for the tree-selected connection, focuses the Ops sub-tab, and presets `secs_running ≥ 10` so a DBA jumps straight to long-running ops. `+L` opens the Logs tab with a new "Audit only" toggle engaged; `LogsView` now subscribes to `EventBus.onOpsAudit` and keeps an in-memory buffer so flipping the toggle off restores the full history.
+- **Repo hygiene**. `app/bin/` is now gitignored (was tracked on every IDE / Gradle rebuild); 484 stale `.class` files untracked via `git rm --cached -r app/bin`.
+
+### Still deferred
+- Bespoke dark-mode palette + focus-ring audit + colour-blind-safe screenshot matrix (`Q2.4-I` tail).
+- 72 h production-shape soak (`Q2.4-J` tail).
+- `rs.reconfig` execution is still preview-only (by design — lands with v2.7 guided reconfig).
+
 ## v2.4.0 — Cluster operations & topology
 
 v2.4 turns Mongo Explorer into a first-class surface for MongoDB DBAs. Every destructive action flows through a three-gate safety model (role probe → dry-run preview → typed confirmation) and leaves an audit trail.
