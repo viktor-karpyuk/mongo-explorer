@@ -209,7 +209,7 @@ public class Main extends Application {
 
         MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
                 migrationService, monitoringService, db, killOpHandler, rsAdminHandler,
-                opsAuditDao, opsExecutor, balancerHandler, zonesHandler);
+                opsAuditDao, opsExecutor, balancerHandler, zonesHandler, killSwitch);
 
         // If a previous session left unfinished migrations behind, surface the recovery panel
         // as soon as the UI is up. See docs/mvp-functional-spec.md §4.6.

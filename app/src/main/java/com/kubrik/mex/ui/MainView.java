@@ -1,5 +1,6 @@
 package com.kubrik.mex.ui;
 
+import com.kubrik.mex.cluster.safety.KillSwitch;
 import com.kubrik.mex.cluster.service.OpsExecutor;
 import com.kubrik.mex.cluster.store.OpsAuditDao;
 import com.kubrik.mex.core.ConnectionManager;
@@ -12,6 +13,7 @@ import com.kubrik.mex.store.HistoryStore;
 import com.kubrik.mex.ui.cluster.BalancerPane;
 import com.kubrik.mex.ui.cluster.ClusterTab;
 import com.kubrik.mex.ui.cluster.CurrentOpPane;
+import com.kubrik.mex.ui.cluster.KillSwitchPill;
 import com.kubrik.mex.ui.cluster.TopologyPane;
 import com.kubrik.mex.ui.cluster.ZonesPane;
 import com.kubrik.mex.ui.migration.MigrationsTab;
@@ -62,6 +64,7 @@ public class MainView extends BorderPane {
     private final OpsExecutor opsExecutor;
     private final BalancerPane.BalancerHandler balancerHandler;
     private final ZonesPane.ZonesHandler zonesHandler;
+    private final KillSwitch killSwitch;
 
     private final ConnectionTree connTree;
     private final TabPane tabs = new TabPane();
@@ -91,7 +94,8 @@ public class MainView extends BorderPane {
                     OpsAuditDao opsAuditDao,
                     OpsExecutor opsExecutor,
                     BalancerPane.BalancerHandler balancerHandler,
-                    ZonesPane.ZonesHandler zonesHandler) {
+                    ZonesPane.ZonesHandler zonesHandler,
+                    KillSwitch killSwitch) {
         this.manager = manager;
         this.connectionStore = connectionStore;
         this.historyStore = historyStore;
@@ -105,6 +109,7 @@ public class MainView extends BorderPane {
         this.opsExecutor = opsExecutor;
         this.balancerHandler = balancerHandler;
         this.zonesHandler = zonesHandler;
+        this.killSwitch = killSwitch;
 
         this.connTree = new ConnectionTree(manager, connectionStore, events);
         this.connTree.setOpenHandler(new ConnectionTree.OpenHandler() {
@@ -160,7 +165,9 @@ public class MainView extends BorderPane {
                         });
         javafx.scene.layout.Region spacer = new javafx.scene.layout.Region();
         HBox.setHgrow(spacer, javafx.scene.layout.Priority.ALWAYS);
-        HBox status = new HBox(12, statusConn, new Label("·"), statusServer, spacer, runningJobsPill);
+        KillSwitchPill killSwitchPill = new KillSwitchPill(killSwitch);
+        HBox status = new HBox(12, statusConn, new Label("·"), statusServer, spacer,
+                runningJobsPill, killSwitchPill);
         status.setPadding(new Insets(6, 12, 6, 12));
         status.setStyle("-fx-background-color: #f3f4f6; -fx-border-color: #e5e7eb; -fx-border-width: 1 0 0 0;");
         statusServer.setStyle("-fx-text-fill: #6b7280;");
