@@ -422,6 +422,42 @@ public class Database implements AutoCloseable {
                     probed_at     INTEGER NOT NULL
                 )
                 """);
+
+            // v2.5 Q2.5-A — storage sinks + backup policies. Cloud sinks
+            // (S3/GCS/Azure/SFTP) land in Q2.5-H and will write credentials_enc
+            // through Crypto; LocalFsTarget leaves credentials_enc null.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS storage_sinks (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind            TEXT    NOT NULL,
+                    name            TEXT    NOT NULL UNIQUE,
+                    root_path       TEXT    NOT NULL,
+                    credentials_enc BLOB,
+                    extras_json     TEXT,
+                    created_at      INTEGER NOT NULL,
+                    updated_at      INTEGER NOT NULL
+                )
+                """);
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS backup_policies (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    name            TEXT    NOT NULL,
+                    enabled         INTEGER NOT NULL DEFAULT 1,
+                    schedule_cron   TEXT,
+                    scope_json      TEXT    NOT NULL,
+                    archive_json    TEXT    NOT NULL,
+                    retention_json  TEXT    NOT NULL,
+                    sink_id         INTEGER NOT NULL,
+                    include_oplog   INTEGER NOT NULL DEFAULT 1,
+                    created_at      INTEGER NOT NULL,
+                    updated_at      INTEGER NOT NULL,
+                    UNIQUE (connection_id, name)
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_backup_policies_conn " +
+                    "ON backup_policies(connection_id, enabled)");
         }
     }
 
