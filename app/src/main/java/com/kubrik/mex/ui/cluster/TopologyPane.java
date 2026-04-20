@@ -332,6 +332,26 @@ public final class TopologyPane extends VBox implements AutoCloseable {
             }
         }
 
+        // Preview-only priority/votes editor — available on every replset member,
+        // no role gate (nothing gets dispatched in v2.4; Execute is disabled in
+        // the dialog and lands with v2.7 guided reconfig).
+        if (connManager != null && m.state() != com.kubrik.mex.cluster.model.MemberState.UNKNOWN
+                && !m.isArbiter()) {
+            MenuItem edit = new MenuItem("Edit priority / votes…  (preview)");
+            edit.setOnAction(e -> {
+                MongoService svc = connManager.service(connectionId);
+                if (svc == null) return;
+                ReconfigPreviewDialog.show(
+                        card.getScene() == null ? null : card.getScene().getWindow(),
+                        connectionId, m, svc);
+            });
+            if (menu.getItems().isEmpty() || !(menu.getItems().get(menu.getItems().size() - 1)
+                    instanceof SeparatorMenuItem)) {
+                menu.getItems().add(new SeparatorMenuItem());
+            }
+            menu.getItems().add(edit);
+        }
+
         card.setOnMouseClicked(e -> {
             if (e.getButton() == MouseButton.SECONDARY) {
                 menu.show(card, e.getScreenX(), e.getScreenY());
