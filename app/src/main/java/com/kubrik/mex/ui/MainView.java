@@ -7,6 +7,7 @@ import com.kubrik.mex.model.MongoConnection;
 import com.kubrik.mex.monitoring.MonitoringService;
 import com.kubrik.mex.store.ConnectionStore;
 import com.kubrik.mex.store.HistoryStore;
+import com.kubrik.mex.ui.cluster.ClusterTab;
 import com.kubrik.mex.ui.migration.MigrationsTab;
 import com.kubrik.mex.ui.migration.MigrationWizard;
 import com.kubrik.mex.monitoring.model.MetricId;
@@ -95,6 +96,9 @@ public class MainView extends BorderPane {
             }
             @Override public void openMonitoring(String connectionId) {
                 openMonitoringTab();
+            }
+            @Override public void openCluster(String connectionId) {
+                openClusterTab(connectionId);
             }
         });
 
@@ -389,6 +393,30 @@ public class MainView extends BorderPane {
             focusMonitoringTabIfLastExpand();
         });
         instanceMonitoringTabs.put(connectionId, t);
+        tabs.getTabs().add(t);
+        tabs.getSelectionModel().select(t);
+    }
+
+    /** Per-connection Cluster tab (v2.4 UI-OPS-1) — one Tab per connection id,
+     *  re-selected on duplicate open. Body is closed on tab dispose to release
+     *  the bus subscriptions held by {@code TopologyPane} / {@code ClusterTab}. */
+    private final java.util.Map<String, Tab> clusterTabs = new java.util.HashMap<>();
+
+    private void openClusterTab(String connectionId) {
+        Tab existing = clusterTabs.get(connectionId);
+        if (existing != null && tabs.getTabs().contains(existing)) {
+            tabs.getSelectionModel().select(existing);
+            return;
+        }
+        ClusterTab body = new ClusterTab(connectionId, events);
+        MongoConnection conn = connectionStore.get(connectionId);
+        String title = "Cluster · " + (conn != null ? conn.name() : connectionId);
+        Tab t = new Tab(title, body);
+        t.setOnClosed(e -> {
+            body.close();
+            clusterTabs.remove(connectionId);
+        });
+        clusterTabs.put(connectionId, t);
         tabs.getTabs().add(t);
         tabs.getSelectionModel().select(t);
     }

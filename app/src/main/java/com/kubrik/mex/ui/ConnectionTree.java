@@ -56,6 +56,8 @@ public class ConnectionTree extends VBox {
         default void openMigrate(String connectionId, String db, String coll) {}
         /** Opens the Monitoring tab. v2.1.0 — see docs/v2/v2.1/functional-spec.md §3.2. */
         default void openMonitoring(String connectionId) {}
+        /** Opens the Cluster tab for the selected connection. v2.4.0 UI-OPS-1. */
+        default void openCluster(String connectionId) {}
     }
 
     public record Node(String type, String connectionId, String db, String coll, String label) {
@@ -361,6 +363,7 @@ public class ConnectionTree extends VBox {
     private final MenuItem miIndexes = new MenuItem("Indexes…");
     private final MenuItem miMigrate = new MenuItem("Migrate…");
     private final MenuItem miMonitor = new MenuItem("Monitor this connection");
+    private final MenuItem miCluster = new MenuItem("Open cluster view…");
 
     private void rebuildContextMenuItems(ContextMenu m) {
         TreeItem<Node> sel = tree.getSelectionModel().getSelectedItem();
@@ -381,6 +384,7 @@ public class ConnectionTree extends VBox {
                 items.add(miServerInfo);
                 items.add(miMigrate);
                 items.add(miMonitor);
+                items.add(miCluster);
             }
             items.add(new SeparatorMenuItem());
             items.add(miEdit);
@@ -563,6 +567,9 @@ public class ConnectionTree extends VBox {
         }));
         miMonitor.setOnAction(e -> withSel(n -> {
             if (openHandler != null) openHandler.openMonitoring(n.connectionId);
+        }));
+        miCluster.setOnAction(e -> withSel(n -> {
+            if (openHandler != null) openHandler.openCluster(n.connectionId);
         }));
         miRenameColl.setOnAction(e -> withSel(n -> {
             TextInputDialog d = new TextInputDialog(n.coll);

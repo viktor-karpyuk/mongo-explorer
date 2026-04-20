@@ -1,5 +1,8 @@
 package com.kubrik.mex.ui.monitoring;
 
+import com.kubrik.mex.cluster.model.HealthScore;
+import com.kubrik.mex.cluster.model.TopologySnapshot;
+import com.kubrik.mex.cluster.service.HealthScorer;
 import com.kubrik.mex.core.ConnectionManager;
 import com.kubrik.mex.core.MongoService;
 import com.kubrik.mex.events.EventBus;
@@ -49,6 +52,7 @@ public final class ConnectionCard extends HBox implements AutoCloseable {
     private final Label statusDot = new Label("●");
     private final Label statusText = new Label("—");
     private final Label summary = new Label("Probing…");
+    private final Label healthPill = new Label();
     private final Button openBtn;
     private final Button clusterBtn;
     private final Button profilingBtn;
@@ -79,8 +83,11 @@ public final class ConnectionCard extends HBox implements AutoCloseable {
         statusText.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 12px;");
         alertDot.setStyle("-fx-text-fill: #16a34a; -fx-font-size: 14px;");
         Tooltip.install(alertDot, new Tooltip("No active alerts"));
-        HBox statusRow = new HBox(4, statusDot, statusText,
-                new Label("·"), new Label("alerts"), alertDot);
+        healthPill.setVisible(false);
+        healthPill.managedProperty().bind(healthPill.visibleProperty());
+        HBox statusRow = new HBox(6, statusDot, statusText,
+                new Label("·"), new Label("alerts"), alertDot,
+                new Label("·"), healthPill);
         statusRow.setAlignment(Pos.CENTER_LEFT);
 
         insertPill.setText("— /s");
@@ -127,6 +134,11 @@ public final class ConnectionCard extends HBox implements AutoCloseable {
         }));
         subs.add(bus.onAlertFired(e -> { if (connectionId.equals(e.connectionId())) refreshAlertDot(); }));
         subs.add(bus.onAlertCleared(e -> { if (connectionId.equals(e.connectionId())) refreshAlertDot(); }));
+        subs.add(bus.onTopology((id, snap) -> {
+            if (connectionId.equals(id) && snap != null) {
+                Platform.runLater(() -> applyHealth(HealthScorer.score(snap)));
+            }
+        }));
 
         applyState();
         refreshAlertDot();
@@ -162,6 +174,7 @@ public final class ConnectionCard extends HBox implements AutoCloseable {
 
         if (!connected) {
             summary.setText("Connect to this cluster to see live topology + metrics.");
+            healthPill.setVisible(false);
             return;
         }
         // Only probe when transitioning into CONNECTED — avoids a redundant hello() on every sample batch.
@@ -171,6 +184,29 @@ public final class ConnectionCard extends HBox implements AutoCloseable {
                 Platform.runLater(() -> summary.setText(text));
             });
         }
+    }
+
+    private void applyHealth(HealthScore score) {
+        if (score == null) {
+            healthPill.setVisible(false);
+            return;
+        }
+        healthPill.setText("health " + score.score());
+        healthPill.setVisible(true);
+        String bg, fg;
+        switch (score.band()) {
+            case GREEN -> { bg = "#dcfce7"; fg = "#166534"; }
+            case AMBER -> { bg = "#fef3c7"; fg = "#92400e"; }
+            case RED   -> { bg = "#fee2e2"; fg = "#991b1b"; }
+            default    -> { bg = "#f3f4f6"; fg = "#374151"; }
+        }
+        healthPill.setStyle("-fx-background-color: " + bg + "; -fx-text-fill: " + fg + "; "
+                + "-fx-font-size: 10px; -fx-font-weight: 700; "
+                + "-fx-padding: 2 8 2 8; -fx-background-radius: 10;");
+        String tip = score.negatives().isEmpty()
+                ? "Cluster health nominal."
+                : "Contributing issues:\n• " + String.join("\n• ", score.negatives());
+        Tooltip.install(healthPill, new Tooltip(tip));
     }
 
     private void refreshAlertDot() {
