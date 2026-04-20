@@ -408,7 +408,7 @@ public class MainView extends BorderPane {
             tabs.getSelectionModel().select(existing);
             return;
         }
-        ClusterTab body = new ClusterTab(connectionId, events);
+        ClusterTab body = new ClusterTab(connectionId, events, manager);
         MongoConnection conn = connectionStore.get(connectionId);
         String title = "Cluster · " + (conn != null ? conn.name() : connectionId);
         Tab t = new Tab(title, body);

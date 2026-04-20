@@ -2,6 +2,7 @@ package com.kubrik.mex.ui.cluster;
 
 import com.kubrik.mex.cluster.model.ClusterKind;
 import com.kubrik.mex.cluster.model.TopologySnapshot;
+import com.kubrik.mex.core.ConnectionManager;
 import com.kubrik.mex.events.EventBus;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -25,6 +26,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
 
     private final String connectionId;
     private final EventBus bus;
+    private final ConnectionManager connManager;
 
     private final TabPane tabPane = new TabPane();
     private final Tab topologyTab;
@@ -35,15 +37,18 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
     private final Tab poolsTab;
 
     private final TopologyPane topologyPane;
+    private final CurrentOpPane currentOpPane;
     private final EventBus.Subscription topoSub;
 
-    public ClusterTab(String connectionId, EventBus bus) {
+    public ClusterTab(String connectionId, EventBus bus, ConnectionManager connManager) {
         this.connectionId = connectionId;
         this.bus = bus;
+        this.connManager = connManager;
 
         this.topologyPane = new TopologyPane(connectionId, bus);
+        this.currentOpPane = new CurrentOpPane(connectionId, connManager);
         this.topologyTab = tab("Topology", topologyPane);
-        this.opsTab      = tab("Ops",       placeholder("Live ops viewer lands with Q2.4-D."));
+        this.opsTab      = tab("Ops",       currentOpPane);
         this.balancerTab = tab("Balancer",  placeholder("Balancer controls land with Q2.4-G."));
         this.oplogTab    = tab("Oplog",     placeholder("Oplog gauge + tail lands with Q2.4-E."));
         this.auditTab    = tab("Audit",     placeholder("Audit pane lands with Q2.4-H."));
@@ -69,6 +74,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
     public void close() {
         try { topoSub.close(); } catch (Exception ignored) {}
         try { topologyPane.close(); } catch (Exception ignored) {}
+        try { currentOpPane.close(); } catch (Exception ignored) {}
     }
 
     /* =========================== internals ============================== */
