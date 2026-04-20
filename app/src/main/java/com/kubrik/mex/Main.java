@@ -2,11 +2,19 @@ package com.kubrik.mex;
 
 import atlantafx.base.theme.PrimerLight;
 import com.kubrik.mex.cluster.ClusterWiring;
+import com.kubrik.mex.cluster.safety.KillSwitch;
+import com.kubrik.mex.cluster.safety.RoleSet;
 import com.kubrik.mex.cluster.service.ClusterTopologyService;
+import com.kubrik.mex.cluster.service.OpsExecutor;
+import com.kubrik.mex.cluster.service.RoleProbeService;
+import com.kubrik.mex.cluster.store.OpsAuditDao;
+import com.kubrik.mex.cluster.store.RoleCacheDao;
 import com.kubrik.mex.cluster.store.TopologySnapshotDao;
 import com.kubrik.mex.core.ConnectionManager;
 import com.kubrik.mex.core.Crypto;
 import com.kubrik.mex.events.EventBus;
+import com.kubrik.mex.ui.cluster.CurrentOpPane;
+import com.kubrik.mex.ui.cluster.KillOpDialog;
 import com.kubrik.mex.migration.MigrationService;
 import com.kubrik.mex.migration.gate.PreconditionGate;
 import com.kubrik.mex.migration.schedule.MigrationScheduler;
@@ -61,6 +69,9 @@ public class Main extends Application {
     private RecordingCaptureSubscriber recordingCapture;
     private ClusterTopologyService clusterTopologyService;
     private ClusterWiring clusterWiring;
+    private RoleProbeService roleProbeService;
+    private OpsExecutor opsExecutor;
+    private KillSwitch killSwitch;
 
     @Override
     public void start(Stage stage) throws Exception {
@@ -117,8 +128,37 @@ public class Main extends Application {
                 java.time.Clock.systemUTC());
         clusterWiring = new ClusterWiring(clusterTopologyService, connectionManager, eventBus);
 
+        // v2.4 destructive-ops stack — kill-switch is process-wide, role probe
+        // caches per-connection (5 min freshness), OpsExecutor dispatches +
+        // audits every destructive command.
+        killSwitch = new KillSwitch();
+        roleProbeService = new RoleProbeService(
+                connectionManager::service, new RoleCacheDao(db), java.time.Clock.systemUTC());
+        OpsAuditDao opsAuditDao = new OpsAuditDao(db);
+        opsExecutor = new OpsExecutor(connectionManager, opsAuditDao, eventBus,
+                killSwitch, roleProbeService, java.time.Clock.systemUTC());
+
+        String callerUser = System.getProperty("user.name", "unknown");
+        String callerHost;
+        try { callerHost = java.net.InetAddress.getLocalHost().getHostName(); }
+        catch (Exception ignored) { callerHost = "unknown"; }
+        String finalCallerUser = callerUser;
+        String finalCallerHost = callerHost;
+        CurrentOpPane.KillOpHandler killOpHandler = new CurrentOpPane.KillOpHandler() {
+            @Override public boolean allowed(String connectionId) {
+                RoleSet roles = roleProbeService.currentOrProbe(connectionId);
+                return roles.hasAny(java.util.List.of("killAnyCursor", "root"));
+            }
+            @Override public KillOpDialog.Result handle(javafx.stage.Window owner,
+                                                       String connectionId,
+                                                       com.kubrik.mex.cluster.ops.CurrentOpRow row) {
+                return KillOpDialog.show(owner, connectionId, row, opsExecutor,
+                        finalCallerUser, finalCallerHost);
+            }
+        };
+
         MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
-                migrationService, monitoringService, db);
+                migrationService, monitoringService, db, killOpHandler);
 
         // If a previous session left unfinished migrations behind, surface the recovery panel
         // as soon as the UI is up. See docs/mvp-functional-spec.md §4.6.

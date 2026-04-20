@@ -8,6 +8,7 @@ import com.kubrik.mex.monitoring.MonitoringService;
 import com.kubrik.mex.store.ConnectionStore;
 import com.kubrik.mex.store.HistoryStore;
 import com.kubrik.mex.ui.cluster.ClusterTab;
+import com.kubrik.mex.ui.cluster.CurrentOpPane;
 import com.kubrik.mex.ui.migration.MigrationsTab;
 import com.kubrik.mex.ui.migration.MigrationWizard;
 import com.kubrik.mex.monitoring.model.MetricId;
@@ -50,6 +51,7 @@ public class MainView extends BorderPane {
     private final MigrationService migrationService;
     private final MonitoringService monitoringService;
     private final com.kubrik.mex.store.Database database;
+    private final CurrentOpPane.KillOpHandler killOpHandler;
 
     private final ConnectionTree connTree;
     private final TabPane tabs = new TabPane();
@@ -73,7 +75,8 @@ public class MainView extends BorderPane {
                     EventBus events,
                     MigrationService migrationService,
                     MonitoringService monitoringService,
-                    com.kubrik.mex.store.Database database) {
+                    com.kubrik.mex.store.Database database,
+                    CurrentOpPane.KillOpHandler killOpHandler) {
         this.manager = manager;
         this.connectionStore = connectionStore;
         this.historyStore = historyStore;
@@ -81,6 +84,7 @@ public class MainView extends BorderPane {
         this.migrationService = migrationService;
         this.monitoringService = monitoringService;
         this.database = database;
+        this.killOpHandler = killOpHandler;
 
         this.connTree = new ConnectionTree(manager, connectionStore, events);
         this.connTree.setOpenHandler(new ConnectionTree.OpenHandler() {
@@ -408,7 +412,7 @@ public class MainView extends BorderPane {
             tabs.getSelectionModel().select(existing);
             return;
         }
-        ClusterTab body = new ClusterTab(connectionId, events, manager);
+        ClusterTab body = new ClusterTab(connectionId, events, manager, killOpHandler);
         MongoConnection conn = connectionStore.get(connectionId);
         String title = "Cluster · " + (conn != null ? conn.name() : connectionId);
         Tab t = new Tab(title, body);

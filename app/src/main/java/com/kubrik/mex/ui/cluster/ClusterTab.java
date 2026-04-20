@@ -44,13 +44,14 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
     private final ConnPoolPane connPoolPane;
     private final EventBus.Subscription topoSub;
 
-    public ClusterTab(String connectionId, EventBus bus, ConnectionManager connManager) {
+    public ClusterTab(String connectionId, EventBus bus, ConnectionManager connManager,
+                      CurrentOpPane.KillOpHandler killHandler) {
         this.connectionId = connectionId;
         this.bus = bus;
         this.connManager = connManager;
 
         this.topologyPane = new TopologyPane(connectionId, bus);
-        this.currentOpPane = new CurrentOpPane(connectionId, connManager);
+        this.currentOpPane = new CurrentOpPane(connectionId, connManager, killHandler);
         this.lockInfoPane = new LockInfoPane(connectionId, connManager);
         this.connPoolPane = new ConnPoolPane(connectionId, connManager);
         SplitPane opsSplit = new SplitPane(currentOpPane, lockInfoPane);

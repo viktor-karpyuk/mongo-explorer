@@ -1,5 +1,6 @@
 package com.kubrik.mex.ui.cluster;
 
+import com.kubrik.mex.cluster.audit.Outcome;
 import com.kubrik.mex.cluster.ops.CurrentOpRow;
 import com.kubrik.mex.cluster.service.CurrentOpService;
 import com.kubrik.mex.core.ConnectionManager;
@@ -18,13 +19,17 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.Tooltip;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -54,8 +59,22 @@ public final class CurrentOpPane extends BorderPane implements AutoCloseable {
             List.of("query", "update", "command", "getmore", "insert", "remove", "none");
     private static final Duration POLL_INTERVAL = Duration.seconds(2);
 
+    /**
+     * Callback used by the pane to drive the {@code killOp} kebab action. The
+     * UI owner ({@code MainView}) supplies an implementation wired to the
+     * shared {@link com.kubrik.mex.cluster.service.OpsExecutor}; the pane
+     * itself stays decoupled from audit / role / dispatch wiring.
+     */
+    public interface KillOpHandler {
+        /** {@code true} when the connected user holds a role allowing killOp. */
+        boolean allowed(String connectionId);
+        /** Present the confirm flow + dispatch the kill. */
+        KillOpDialog.Result handle(javafx.stage.Window owner, String connectionId, CurrentOpRow row);
+    }
+
     private final String connectionId;
     private final ConnectionManager connManager;
+    private final KillOpHandler killHandler;
 
     private final ObservableList<CurrentOpRow> rows = FXCollections.observableArrayList();
     private final FilteredList<CurrentOpRow> filtered = new FilteredList<>(rows, r -> true);
@@ -75,9 +94,10 @@ public final class CurrentOpPane extends BorderPane implements AutoCloseable {
     private final Timeline poller;
     private volatile boolean closed = false;
 
-    public CurrentOpPane(String connectionId, ConnectionManager connManager) {
+    public CurrentOpPane(String connectionId, ConnectionManager connManager, KillOpHandler killHandler) {
         this.connectionId = connectionId;
         this.connManager = connManager;
+        this.killHandler = killHandler;
 
         setStyle("-fx-background-color: white;");
         setPadding(new Insets(14, 16, 14, 16));
@@ -167,6 +187,10 @@ public final class CurrentOpPane extends BorderPane implements AutoCloseable {
             var row = new javafx.scene.control.TableRow<CurrentOpRow>();
             row.setOnMouseClicked(e -> {
                 if (e.getClickCount() == 2 && !row.isEmpty()) openDetail(row.getItem());
+            });
+            row.itemProperty().addListener((obs, oldItem, newItem) -> {
+                if (newItem == null) { row.setContextMenu(null); return; }
+                row.setContextMenu(buildRowMenu(newItem));
             });
             return row;
         });
@@ -271,6 +295,41 @@ public final class CurrentOpPane extends BorderPane implements AutoCloseable {
 
     private void updateFooter() {
         footer.setText(rows.size() + " ops total · " + filtered.size() + " visible");
+    }
+
+    /* ============================ row actions ========================== */
+
+    private ContextMenu buildRowMenu(CurrentOpRow row) {
+        ContextMenu m = new ContextMenu();
+        MenuItem copyOpid = new MenuItem("Copy opid");
+        copyOpid.setOnAction(e -> copy(String.valueOf(row.opid())));
+        MenuItem copyKillOp = new MenuItem("Copy as killOp command");
+        copyKillOp.setOnAction(e -> copy("db.adminCommand({ killOp: 1, op: " + row.opid() + " })"));
+        MenuItem kill = new MenuItem("Kill op");
+        boolean canKill = killHandler != null && killHandler.allowed(connectionId);
+        if (!canKill) {
+            kill.setDisable(true);
+            Tooltip tip = new Tooltip("Requires role: killAnyCursor or root.");
+            kill.setGraphic(new Label(""));  // required for Tooltip on MenuItem in some versions
+            kill.textProperty().set("Kill op  (role-gated)");
+            Tooltip.install(kill.getGraphic(), tip);
+        }
+        kill.setOnAction(e -> {
+            if (killHandler == null) return;
+            javafx.stage.Window win = getScene() == null ? null : getScene().getWindow();
+            KillOpDialog.Result r = killHandler.handle(win, connectionId, row);
+            if (r != null && r.outcome() == Outcome.OK) {
+                tick();  // refresh immediately so the row disappears from the table
+            }
+        });
+        m.getItems().addAll(copyOpid, copyKillOp, kill);
+        return m;
+    }
+
+    private static void copy(String text) {
+        ClipboardContent c = new ClipboardContent();
+        c.putString(text);
+        Clipboard.getSystemClipboard().setContent(c);
     }
 
     /* ============================ detail drawer ======================== */
