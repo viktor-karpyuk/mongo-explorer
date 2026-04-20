@@ -83,7 +83,8 @@ public final class ConnPoolPane extends BorderPane implements AutoCloseable {
     }
 
     private TableView<ConnPoolStats.Row> buildTable() {
-        table.setPlaceholder(new Label("No pool activity yet."));
+        table.setPlaceholder(new Label(
+                "Waiting for the first connPoolStats tick — usually arrives within 10 seconds."));
         table.getColumns().setAll(
                 textCol("host", 240, ConnPoolStats.Row::host),
                 numCol("pool", 70, ConnPoolStats.Row::poolSize),

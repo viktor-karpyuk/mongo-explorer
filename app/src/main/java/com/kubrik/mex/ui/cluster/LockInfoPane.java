@@ -156,7 +156,7 @@ public final class LockInfoPane extends BorderPane implements AutoCloseable {
     }
 
     private static Region emptyCard() {
-        Label l = new Label("No contended locks right now.");
+        Label l = new Label("No contended locks right now. This is the healthy steady state.");
         l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 12px;");
         VBox v = new VBox(l);
         v.setAlignment(Pos.CENTER);

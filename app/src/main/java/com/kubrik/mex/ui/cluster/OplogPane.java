@@ -206,7 +206,8 @@ public final class OplogPane extends BorderPane implements AutoCloseable {
     /* ============================== table =============================== */
 
     private Region buildTable() {
-        table.setPlaceholder(new Label("No oplog entries match the filter."));
+        table.setPlaceholder(new Label(
+                "No oplog entries match this filter. Loosen the namespace regex or op-type chips above."));
         table.getSelectionModel().setSelectionMode(
                 javafx.scene.control.SelectionMode.MULTIPLE);
         TableColumn<OplogEntry, String> tsCol = textCol("ts", 180,

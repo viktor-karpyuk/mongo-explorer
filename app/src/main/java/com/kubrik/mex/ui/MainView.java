@@ -236,7 +236,14 @@ public class MainView extends BorderPane {
                 new SeparatorMenuItem(),
                 // NAV-1 — Cmd/Ctrl+M opens Monitoring (creates or focuses the tab).
                 item("Monitoring", new KeyCodeCombination(KeyCode.M, KeyCombination.SHORTCUT_DOWN),
-                        this::openMonitoringTab));
+                        this::openMonitoringTab),
+                // v2.4 UI-OPS-8 — Cmd/Ctrl+Alt+C opens the Cluster tab for the
+                // connection selected in the tree (falls back to the first
+                // connected one).
+                item("Cluster view",
+                        new KeyCodeCombination(KeyCode.C,
+                                KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
+                        this::openClusterTabForSelectedConnection));
 
         // ----- Help -----
         Menu help = new Menu("Help");
@@ -425,6 +432,27 @@ public class MainView extends BorderPane {
      *  re-selected on duplicate open. Body is closed on tab dispose to release
      *  the bus subscriptions held by {@code TopologyPane} / {@code ClusterTab}. */
     private final java.util.Map<String, Tab> clusterTabs = new java.util.HashMap<>();
+
+    /** Keyboard-accelerator entry point. Picks the tree's current connection
+     *  context, falling back to the first connected one; if nothing is
+     *  connected the status bar surfaces the reason instead of silently no-op'ing. */
+    private void openClusterTabForSelectedConnection() {
+        String selected = connTree.selectedConnectionId();
+        if (selected == null) {
+            for (var c : connectionStore.list()) {
+                if (manager.state(c.id()).status()
+                        == com.kubrik.mex.model.ConnectionState.Status.CONNECTED) {
+                    selected = c.id();
+                    break;
+                }
+            }
+        }
+        if (selected == null) {
+            statusConn.setText("Cluster view: no connected cluster — connect one first.");
+            return;
+        }
+        openClusterTab(selected);
+    }
 
     private void openClusterTab(String connectionId) {
         Tab existing = clusterTabs.get(connectionId);

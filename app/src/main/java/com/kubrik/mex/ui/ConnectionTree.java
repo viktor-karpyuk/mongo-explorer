@@ -266,6 +266,16 @@ public class ConnectionTree extends VBox {
 
     public void setOpenHandler(OpenHandler h) { this.openHandler = h; }
 
+    /** Returns the connection id currently selected in the tree (either a
+     *  connection row or any of its descendants), or {@code null} if no
+     *  connection context is selected. */
+    public String selectedConnectionId() {
+        TreeItem<Node> sel = tree.getSelectionModel().getSelectedItem();
+        if (sel == null) return null;
+        Node n = sel.getValue();
+        return n == null ? null : n.connectionId;
+    }
+
     public void reloadAll() {
         TreeItem<Node> root = new TreeItem<>(Node.connection("root", "root"));
         connectionItems.clear();

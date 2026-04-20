@@ -115,7 +115,8 @@ public final class ZonesPane extends BorderPane implements AutoCloseable {
     }
 
     private Region buildTable() {
-        table.setPlaceholder(new Label("No tag ranges defined."));
+        table.setPlaceholder(new Label(
+                "No tag ranges defined. Use \"Add tag range…\" above to constrain documents to a zone."));
         table.getColumns().setAll(
                 textCol("namespace", 200, TagRange::ns),
                 textCol("zone", 120, TagRange::tag),

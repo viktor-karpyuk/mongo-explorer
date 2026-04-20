@@ -182,7 +182,8 @@ public final class CurrentOpPane extends BorderPane implements AutoCloseable {
     }
 
     private Region buildTable() {
-        table.setPlaceholder(new Label("No ops running."));
+        table.setPlaceholder(new Label(
+                "No active operations right now. A running query will appear here within 2 seconds."));
         table.setRowFactory(tv -> {
             var row = new javafx.scene.control.TableRow<CurrentOpRow>();
             row.setOnMouseClicked(e -> {

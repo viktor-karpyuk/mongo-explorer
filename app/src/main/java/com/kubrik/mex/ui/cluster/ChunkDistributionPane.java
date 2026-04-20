@@ -105,7 +105,8 @@ public final class ChunkDistributionPane extends BorderPane implements AutoClose
     /* ============================= table ============================== */
 
     private Region buildTable() {
-        table.setPlaceholder(new Label("No sharded collections reported."));
+        table.setPlaceholder(new Label(
+                "No sharded collections reported. Run sh.shardCollection(\"db.coll\", ...) on one to see it here."));
 
         TableColumn<ChunkSummary, String> nsCol = new TableColumn<>("namespace");
         nsCol.setPrefWidth(260);
