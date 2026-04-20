@@ -1,5 +1,6 @@
 package com.kubrik.mex.ui.cluster;
 
+import com.kubrik.mex.cluster.audit.AuditExporter;
 import com.kubrik.mex.cluster.audit.OpsAuditRecord;
 import com.kubrik.mex.cluster.audit.Outcome;
 import com.kubrik.mex.cluster.store.OpsAuditDao;
@@ -15,6 +16,7 @@ import javafx.collections.transformation.SortedList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
+import javafx.scene.control.Button;
 import javafx.scene.control.ChoiceBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
@@ -28,8 +30,11 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -131,11 +136,46 @@ public final class AuditPane extends BorderPane implements AutoCloseable {
 
         Region grow = new Region();
         HBox.setHgrow(grow, Priority.ALWAYS);
+        Button jsonBtn = new Button("Export JSON…");
+        jsonBtn.setOnAction(e -> exportRows(true));
+        Button csvBtn = new Button("Export CSV…");
+        csvBtn.setOnAction(e -> exportRows(false));
         HBox row = new HBox(10, small("command"), commandFilter, small("outcome"),
-                outcomeFilter, small("search"), search, grow);
+                outcomeFilter, small("search"), search, grow, jsonBtn, csvBtn);
         row.setAlignment(Pos.CENTER_LEFT);
         row.setPadding(new Insets(0, 0, 10, 0));
         return row;
+    }
+
+    private void exportRows(boolean asJson) {
+        List<OpsAuditRecord> toExport = table.getSelectionModel().getSelectedItems().isEmpty()
+                ? new java.util.ArrayList<>(filtered)
+                : new java.util.ArrayList<>(table.getSelectionModel().getSelectedItems());
+        if (toExport.isEmpty()) {
+            footer.setText("Nothing to export.");
+            return;
+        }
+        FileChooser fc = new FileChooser();
+        fc.setTitle("Export audit rows");
+        String suggested = "ops-audit-" + Instant.now().getEpochSecond() + (asJson ? ".json" : ".csv");
+        fc.setInitialFileName(suggested);
+        fc.getExtensionFilters().add(asJson
+                ? new FileChooser.ExtensionFilter("JSON bundle", "*.json")
+                : new FileChooser.ExtensionFilter("CSV", "*.csv"));
+        java.io.File out = fc.showSaveDialog(getScene() == null ? null : getScene().getWindow());
+        if (out == null) return;
+        Path target = Path.of(out.getAbsolutePath());
+        Thread.startVirtualThread(() -> {
+            try {
+                if (asJson) AuditExporter.writeJson(target, toExport);
+                else        AuditExporter.writeCsv(target, toExport);
+                Platform.runLater(() -> footer.setText(
+                        "Exported " + toExport.size() + " rows → " + out.getName()));
+            } catch (IOException ex) {
+                Platform.runLater(() -> footer.setText(
+                        "Export failed: " + ex.getClass().getSimpleName() + " — " + ex.getMessage()));
+            }
+        });
     }
 
     private void reapplyFilter() {
