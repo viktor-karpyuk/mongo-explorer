@@ -5,6 +5,10 @@
 gradle-app.setting
 .gradletasknamecache
 
+# Eclipse/IDE-style build output (kept out of version control)
+**/bin/
+!**/src/**/bin/
+
 # Gradle wrapper (keep)
 !gradle-wrapper.jar
 !gradle-wrapper.properties
