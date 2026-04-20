@@ -50,7 +50,11 @@ public final class BalancerPane extends BorderPane implements AutoCloseable {
     private final Label windowLbl = new Label();
     private final Button startBtn = new Button("Start balancer…");
     private final Button stopBtn = new Button("Stop balancer…");
+    private final Button windowBtn = new Button("Set window…");
+    private final Button moveChunkBtn = new Button("Move chunk…");
     private final Label note = new Label("");
+    private volatile String currentWindowStart;
+    private volatile String currentWindowStop;
 
     private final Timeline poller;
     private volatile boolean closed = false;
@@ -111,10 +115,14 @@ public final class BalancerPane extends BorderPane implements AutoCloseable {
 
         startBtn.setDisable(true);
         stopBtn.setDisable(true);
+        windowBtn.setDisable(true);
+        moveChunkBtn.setDisable(true);
         startBtn.setOnAction(e -> dispatch(true));
         stopBtn.setOnAction(e -> dispatch(false));
+        windowBtn.setOnAction(e -> openWindowEditor());
+        moveChunkBtn.setOnAction(e -> openMoveChunk());
 
-        HBox buttons = new HBox(8, startBtn, stopBtn);
+        HBox buttons = new HBox(8, startBtn, stopBtn, windowBtn, moveChunkBtn);
         buttons.setAlignment(Pos.CENTER_LEFT);
 
         VBox body = new VBox(10, counters, windowLbl, buttons, note);
@@ -152,6 +160,8 @@ public final class BalancerPane extends BorderPane implements AutoCloseable {
         counters.setText(s.activeMigrations() + " active migrations  ·  "
                 + s.chunksMovedLast24h() + " chunks moved in last 24 h  ·  "
                 + s.rounds() + " balancer rounds");
+        currentWindowStart = s.windowStart();
+        currentWindowStop  = s.windowStop();
         windowLbl.setText(s.hasWindow()
                 ? "Window: " + s.windowStart() + " → " + s.windowStop() + " UTC"
                 : "No active window — balancer runs continuously.");
@@ -159,10 +169,38 @@ public final class BalancerPane extends BorderPane implements AutoCloseable {
         boolean role = handler != null && handler.allowed(connectionId);
         startBtn.setDisable(!role || s.enabled());
         stopBtn.setDisable(!role || !s.enabled());
+        windowBtn.setDisable(!role);
+        moveChunkBtn.setDisable(!role);
         if (!role) {
             Tooltip.install(startBtn, new Tooltip("Requires clusterManager or root."));
             Tooltip.install(stopBtn, new Tooltip("Requires clusterManager or root."));
+            Tooltip.install(windowBtn, new Tooltip("Requires clusterManager or root."));
+            Tooltip.install(moveChunkBtn, new Tooltip("Requires clusterManager or root."));
         }
+    }
+
+    private void openMoveChunk() {
+        if (executor == null || handler == null) return;
+        KillOpDialog.Result r = MoveChunkDialog.show(
+                getScene() == null ? null : getScene().getWindow(),
+                connectionId, connManager, executor,
+                handler.callerUser(), handler.callerHost());
+        note.setText(r.outcome() == Outcome.OK
+                ? "moveChunk accepted."
+                : "Dispatch " + r.outcome() + (r.message() == null ? "" : ": " + r.message()));
+        tick();
+    }
+
+    private void openWindowEditor() {
+        if (executor == null || handler == null) return;
+        KillOpDialog.Result r = BalancerWindowDialog.show(
+                getScene() == null ? null : getScene().getWindow(),
+                connectionId, currentWindowStart, currentWindowStop,
+                executor, handler.callerUser(), handler.callerHost());
+        note.setText(r.outcome() == Outcome.OK
+                ? "Window updated."
+                : "Dispatch " + r.outcome() + (r.message() == null ? "" : ": " + r.message()));
+        tick();
     }
 
     /* =========================== dispatch ============================= */

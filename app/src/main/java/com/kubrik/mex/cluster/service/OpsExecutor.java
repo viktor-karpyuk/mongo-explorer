@@ -126,10 +126,27 @@ public final class OpsExecutor {
             case Command.StepDown s      -> svc.database("admin").runCommand(preview.commandBson());
             case Command.BalancerStart b -> svc.database("admin").runCommand(preview.commandBson());
             case Command.BalancerStop  b -> svc.database("admin").runCommand(preview.commandBson());
+            case Command.BalancerWindow w -> dispatchBalancerWindow(svc, w);
             case Command.MoveChunk m     -> svc.database("admin").runCommand(preview.commandBson());
             default -> throw new UnsupportedOperationException(
                     "Dispatch for " + cmd.name() + " lands with a later Q2.4 phase.");
         };
+    }
+
+    /** Balancer window is an upsert on {@code config.settings}, not an admin
+     *  command — {@code sh.updateBalancerWindow()} under the hood. The return
+     *  document mirrors the driver's UpdateResult so the audit trail carries
+     *  the modified / upserted counts instead of a terse "ok". */
+    private static Document dispatchBalancerWindow(MongoService svc, Command.BalancerWindow w) {
+        Document filter = new Document("_id", "balancer");
+        Document update = new Document("$set", new Document("activeWindow",
+                new Document("start", w.startHhmm()).append("stop", w.stopHhmm())));
+        com.mongodb.client.result.UpdateResult res = svc.database("config")
+                .getCollection("settings").updateOne(filter, update,
+                        new com.mongodb.client.model.UpdateOptions().upsert(true));
+        return new Document("matched", res.getMatchedCount())
+                .append("modified", res.getModifiedCount())
+                .append("upsertedId", res.getUpsertedId());
     }
 
     private Result recordAndReturn(String connectionId, Command cmd, DryRunResult preview,

@@ -47,6 +47,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
     private final OplogPane oplogPane;
     private final AuditPane auditPane;
     private final BalancerPane balancerPane;
+    private final ChunkDistributionPane chunkPane;
     private final EventBus.Subscription topoSub;
 
     public ClusterTab(String connectionId, EventBus bus, ConnectionManager connManager,
@@ -65,12 +66,16 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         this.oplogPane = new OplogPane(connectionId, connManager);
         this.auditPane = new AuditPane(connectionId, auditDao, bus);
         this.balancerPane = new BalancerPane(connectionId, connManager, opsExecutor, balancerHandler);
+        this.chunkPane = new ChunkDistributionPane(connectionId, connManager);
+        SplitPane balancerSplit = new SplitPane(balancerPane, chunkPane);
+        balancerSplit.setOrientation(Orientation.VERTICAL);
+        balancerSplit.setDividerPositions(0.35);
         SplitPane opsSplit = new SplitPane(currentOpPane, lockInfoPane);
         opsSplit.setOrientation(Orientation.VERTICAL);
         opsSplit.setDividerPositions(0.72);
         this.topologyTab = tab("Topology", topologyPane);
         this.opsTab      = tab("Ops",       opsSplit);
-        this.balancerTab = tab("Balancer",  balancerPane);
+        this.balancerTab = tab("Balancer",  balancerSplit);
         this.oplogTab    = tab("Oplog",     oplogPane);
         this.auditTab    = tab("Audit",     auditPane);
         this.poolsTab    = tab("Pools",     connPoolPane);
@@ -101,6 +106,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         try { oplogPane.close(); } catch (Exception ignored) {}
         try { auditPane.close(); } catch (Exception ignored) {}
         try { balancerPane.close(); } catch (Exception ignored) {}
+        try { chunkPane.close(); } catch (Exception ignored) {}
     }
 
     /* =========================== internals ============================== */
