@@ -10,6 +10,8 @@ import com.kubrik.mex.cluster.store.TopologySnapshotDao;
 import com.kubrik.mex.core.MongoService;
 import com.kubrik.mex.events.EventBus;
 import com.mongodb.MongoCommandException;
+import com.mongodb.client.MongoClient;
+import com.mongodb.client.MongoDatabase;
 import org.bson.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,6 +58,11 @@ public final class ClusterTopologyService implements AutoCloseable {
     private final Clock clock;
 
     private final ConcurrentMap<String, State> states = new ConcurrentHashMap<>();
+    /** Per-shard MongoClient cache, keyed by {@code connectionId + "||" + rsHostSpec}.
+     *  Clients are opened lazily on the first sharded sample and closed when the
+     *  service shuts down or a connection stops; changing shard topology (new seed
+     *  list) swaps the entry atomically. */
+    private final ConcurrentMap<String, MongoClient> shardClients = new ConcurrentHashMap<>();
     private volatile boolean closed = false;
 
     public ClusterTopologyService(Function<String, MongoService> serviceLookup,
@@ -76,6 +83,7 @@ public final class ClusterTopologyService implements AutoCloseable {
     public void stop(String connectionId) {
         State s = states.remove(connectionId);
         if (s != null) s.close();
+        closeShardClientsFor(connectionId);
     }
 
     /** Force one immediate sample, bypassing back-off. */
@@ -96,6 +104,19 @@ public final class ClusterTopologyService implements AutoCloseable {
         closed = true;
         for (State s : states.values()) s.close();
         states.clear();
+        for (MongoClient c : shardClients.values()) {
+            try { c.close(); } catch (Exception ignored) {}
+        }
+        shardClients.clear();
+    }
+
+    private void closeShardClientsFor(String connectionId) {
+        String prefix = connectionId + "||";
+        shardClients.entrySet().removeIf(e -> {
+            if (!e.getKey().startsWith(prefix)) return false;
+            try { e.getValue().close(); } catch (Exception ignored) {}
+            return true;
+        });
     }
 
     /* ================================================================== */
@@ -147,7 +168,7 @@ public final class ClusterTopologyService implements AutoCloseable {
             }
             TopologySnapshot snap;
             try {
-                snap = sample(svc, now);
+                snap = sample(connectionId, svc, now);
                 consecutiveFailures = 0;
                 backoffDelay = BACKOFF_INITIAL_MS;
                 backoffUntil = 0L;
@@ -181,7 +202,7 @@ public final class ClusterTopologyService implements AutoCloseable {
 
     /* ==================== command orchestration ======================== */
 
-    private TopologySnapshot sample(MongoService svc, long capturedAt) {
+    private TopologySnapshot sample(String connectionId, MongoService svc, long capturedAt) {
         Document hello = runAdmin(svc, new Document("hello", 1));
         ClusterKind kind = detectKind(hello);
         String version = svc.serverVersion();
@@ -191,7 +212,7 @@ public final class ClusterTopologyService implements AutoCloseable {
                     List.of(Member.unknownAt(hostOf(hello, "me"))),
                     List.of(), List.of(), List.of(), List.of());
             case REPLSET   -> sampleReplica(svc, capturedAt, version);
-            case SHARDED   -> sampleSharded(svc, capturedAt, version);
+            case SHARDED   -> sampleSharded(connectionId, svc, capturedAt, version);
         };
     }
 
@@ -203,7 +224,8 @@ public final class ClusterTopologyService implements AutoCloseable {
                 members, List.of(), List.of(), List.of(), List.of());
     }
 
-    private TopologySnapshot sampleSharded(MongoService svc, long capturedAt, String version) {
+    private TopologySnapshot sampleSharded(String connectionId, MongoService svc,
+                                           long capturedAt, String version) {
         List<String> warnings = new ArrayList<>();
         Document shardsCmd = safeRunAdmin(svc, new Document("listShards", 1));
         if (shardsCmd == null) warnings.add("listShards unavailable");
@@ -212,13 +234,59 @@ public final class ClusterTopologyService implements AutoCloseable {
         List<Member> configServers = buildConfigServers(shardMap);
         if (configServers.isEmpty()) warnings.add("config-server topology unavailable");
         List<Mongos> mongos = buildMongos(svc);
-        // Per-shard replSetGetStatus requires a dedicated MongoClient to each shard's
-        // seed list; the topology service currently only holds the mongos handle, so
-        // shard members are populated as host-only UNKNOWN entries parsed from
-        // listShards.host. Filling them in with live state is scheduled with the
-        // Q2.4-G sharding workstream (dedicated ClusterMemberProbe).
+
+        // Probe each shard directly for live member state (Q2.4-A follow-up:
+        // without this, shard members render as UNKNOWN grey cards). A failure
+        // for one shard surfaces as a warning; other shards still render.
+        List<Shard> probed = new ArrayList<>(shards.size());
+        for (Shard s : shards) {
+            probed.add(probeShardMembers(connectionId, svc, s, warnings));
+        }
         return new TopologySnapshot(ClusterKind.SHARDED, capturedAt, version,
-                List.of(), shards, mongos, configServers, warnings);
+                List.of(), probed, mongos, configServers, warnings);
+    }
+
+    /** Runs {@code replSetGetStatus} / {@code replSetGetConfig} against the
+     *  shard's dedicated client, returning a new {@link Shard} with live
+     *  members. Falls back to the seed-host UNKNOWN members on any failure
+     *  and records a warning so the UI's warnings banner surfaces it. */
+    private Shard probeShardMembers(String connectionId, MongoService svc,
+                                    Shard shard, List<String> warnings) {
+        String rsHostSpec = shard.rsHost();
+        if (rsHostSpec == null || rsHostSpec.isBlank()) return shard;
+        String key = connectionId + "||" + rsHostSpec;
+        MongoClient peer = shardClients.computeIfAbsent(key, k -> {
+            try { return svc.openPeerClient(rsHostSpec, COMMAND_TIMEOUT_MS); }
+            catch (Exception e) {
+                log.debug("openPeerClient failed for shard {}: {}", shard.id(), e.getMessage());
+                return null;
+            }
+        });
+        if (peer == null) {
+            warnings.add("shard " + shard.id() + " unreachable");
+            return shard;
+        }
+        try {
+            MongoDatabase admin = peer.getDatabase("admin");
+            Document cmd = new Document("replSetGetStatus", 1)
+                    .append("maxTimeMS", COMMAND_TIMEOUT_MS);
+            Document status = admin.runCommand(cmd);
+            Document configReply = null;
+            try {
+                configReply = admin.runCommand(new Document("replSetGetConfig", 1)
+                        .append("maxTimeMS", COMMAND_TIMEOUT_MS));
+            } catch (Exception ignored) { /* config is optional for lag calc */ }
+            List<Member> liveMembers = buildMembers(status, configReply);
+            return new Shard(shard.id(), shard.rsHost(), shard.draining(),
+                    shard.tags(), liveMembers);
+        } catch (Exception e) {
+            log.debug("probe shard {} failed: {}", shard.id(), e.getMessage());
+            warnings.add("shard " + shard.id() + " probe failed: " + e.getClass().getSimpleName());
+            // Rotate the cached client — next tick will re-open.
+            MongoClient stale = shardClients.remove(key);
+            if (stale != null) try { stale.close(); } catch (Exception ignored) {}
+            return shard;
+        }
     }
 
     /* ==================== parsing helpers ============================== */
