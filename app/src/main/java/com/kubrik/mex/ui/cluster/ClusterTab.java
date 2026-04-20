@@ -7,7 +7,9 @@ import com.kubrik.mex.events.EventBus;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.geometry.Orientation;
 import javafx.scene.control.Label;
+import javafx.scene.control.SplitPane;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.scene.layout.BorderPane;
@@ -38,6 +40,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
 
     private final TopologyPane topologyPane;
     private final CurrentOpPane currentOpPane;
+    private final LockInfoPane lockInfoPane;
     private final EventBus.Subscription topoSub;
 
     public ClusterTab(String connectionId, EventBus bus, ConnectionManager connManager) {
@@ -47,8 +50,12 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
 
         this.topologyPane = new TopologyPane(connectionId, bus);
         this.currentOpPane = new CurrentOpPane(connectionId, connManager);
+        this.lockInfoPane = new LockInfoPane(connectionId, connManager);
+        SplitPane opsSplit = new SplitPane(currentOpPane, lockInfoPane);
+        opsSplit.setOrientation(Orientation.VERTICAL);
+        opsSplit.setDividerPositions(0.72);
         this.topologyTab = tab("Topology", topologyPane);
-        this.opsTab      = tab("Ops",       currentOpPane);
+        this.opsTab      = tab("Ops",       opsSplit);
         this.balancerTab = tab("Balancer",  placeholder("Balancer controls land with Q2.4-G."));
         this.oplogTab    = tab("Oplog",     placeholder("Oplog gauge + tail lands with Q2.4-E."));
         this.auditTab    = tab("Audit",     placeholder("Audit pane lands with Q2.4-H."));
@@ -75,6 +82,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         try { topoSub.close(); } catch (Exception ignored) {}
         try { topologyPane.close(); } catch (Exception ignored) {}
         try { currentOpPane.close(); } catch (Exception ignored) {}
+        try { lockInfoPane.close(); } catch (Exception ignored) {}
     }
 
     /* =========================== internals ============================== */
