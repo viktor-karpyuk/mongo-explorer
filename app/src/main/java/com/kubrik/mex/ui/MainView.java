@@ -1,5 +1,6 @@
 package com.kubrik.mex.ui;
 
+import com.kubrik.mex.cluster.store.OpsAuditDao;
 import com.kubrik.mex.core.ConnectionManager;
 import com.kubrik.mex.events.EventBus;
 import com.kubrik.mex.migration.MigrationService;
@@ -54,6 +55,7 @@ public class MainView extends BorderPane {
     private final com.kubrik.mex.store.Database database;
     private final CurrentOpPane.KillOpHandler killOpHandler;
     private final TopologyPane.RsAdminHandler rsAdminHandler;
+    private final OpsAuditDao opsAuditDao;
 
     private final ConnectionTree connTree;
     private final TabPane tabs = new TabPane();
@@ -79,7 +81,8 @@ public class MainView extends BorderPane {
                     MonitoringService monitoringService,
                     com.kubrik.mex.store.Database database,
                     CurrentOpPane.KillOpHandler killOpHandler,
-                    TopologyPane.RsAdminHandler rsAdminHandler) {
+                    TopologyPane.RsAdminHandler rsAdminHandler,
+                    OpsAuditDao opsAuditDao) {
         this.manager = manager;
         this.connectionStore = connectionStore;
         this.historyStore = historyStore;
@@ -89,6 +92,7 @@ public class MainView extends BorderPane {
         this.database = database;
         this.killOpHandler = killOpHandler;
         this.rsAdminHandler = rsAdminHandler;
+        this.opsAuditDao = opsAuditDao;
 
         this.connTree = new ConnectionTree(manager, connectionStore, events);
         this.connTree.setOpenHandler(new ConnectionTree.OpenHandler() {
@@ -416,7 +420,8 @@ public class MainView extends BorderPane {
             tabs.getSelectionModel().select(existing);
             return;
         }
-        ClusterTab body = new ClusterTab(connectionId, events, manager, killOpHandler, rsAdminHandler);
+        ClusterTab body = new ClusterTab(connectionId, events, manager, opsAuditDao,
+                killOpHandler, rsAdminHandler);
         MongoConnection conn = connectionStore.get(connectionId);
         String title = "Cluster · " + (conn != null ? conn.name() : connectionId);
         Tab t = new Tab(title, body);

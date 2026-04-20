@@ -137,7 +137,7 @@ public class Main extends Application {
         killSwitch = new KillSwitch();
         roleProbeService = new RoleProbeService(
                 connectionManager::service, new RoleCacheDao(db), java.time.Clock.systemUTC());
-        OpsAuditDao opsAuditDao = new OpsAuditDao(db);
+        final OpsAuditDao opsAuditDao = new OpsAuditDao(db);
         opsExecutor = new OpsExecutor(connectionManager, opsAuditDao, eventBus,
                 killSwitch, roleProbeService, java.time.Clock.systemUTC());
 
@@ -182,7 +182,7 @@ public class Main extends Application {
         };
 
         MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
-                migrationService, monitoringService, db, killOpHandler, rsAdminHandler);
+                migrationService, monitoringService, db, killOpHandler, rsAdminHandler, opsAuditDao);
 
         // If a previous session left unfinished migrations behind, surface the recovery panel
         // as soon as the UI is up. See docs/mvp-functional-spec.md §4.6.

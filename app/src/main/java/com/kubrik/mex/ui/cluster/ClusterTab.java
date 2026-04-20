@@ -2,6 +2,7 @@ package com.kubrik.mex.ui.cluster;
 
 import com.kubrik.mex.cluster.model.ClusterKind;
 import com.kubrik.mex.cluster.model.TopologySnapshot;
+import com.kubrik.mex.cluster.store.OpsAuditDao;
 import com.kubrik.mex.core.ConnectionManager;
 import com.kubrik.mex.events.EventBus;
 import javafx.application.Platform;
@@ -43,9 +44,11 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
     private final LockInfoPane lockInfoPane;
     private final ConnPoolPane connPoolPane;
     private final OplogPane oplogPane;
+    private final AuditPane auditPane;
     private final EventBus.Subscription topoSub;
 
     public ClusterTab(String connectionId, EventBus bus, ConnectionManager connManager,
+                      OpsAuditDao auditDao,
                       CurrentOpPane.KillOpHandler killHandler,
                       TopologyPane.RsAdminHandler adminHandler) {
         this.connectionId = connectionId;
@@ -57,6 +60,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         this.lockInfoPane = new LockInfoPane(connectionId, connManager);
         this.connPoolPane = new ConnPoolPane(connectionId, connManager);
         this.oplogPane = new OplogPane(connectionId, connManager);
+        this.auditPane = new AuditPane(connectionId, auditDao, bus);
         SplitPane opsSplit = new SplitPane(currentOpPane, lockInfoPane);
         opsSplit.setOrientation(Orientation.VERTICAL);
         opsSplit.setDividerPositions(0.72);
@@ -64,7 +68,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         this.opsTab      = tab("Ops",       opsSplit);
         this.balancerTab = tab("Balancer",  placeholder("Balancer controls land with Q2.4-G."));
         this.oplogTab    = tab("Oplog",     oplogPane);
-        this.auditTab    = tab("Audit",     placeholder("Audit pane lands with Q2.4-H."));
+        this.auditTab    = tab("Audit",     auditPane);
         this.poolsTab    = tab("Pools",     connPoolPane);
 
         tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
@@ -91,6 +95,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         try { lockInfoPane.close(); } catch (Exception ignored) {}
         try { connPoolPane.close(); } catch (Exception ignored) {}
         try { oplogPane.close(); } catch (Exception ignored) {}
+        try { auditPane.close(); } catch (Exception ignored) {}
     }
 
     /* =========================== internals ============================== */
