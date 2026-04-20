@@ -1,5 +1,6 @@
 package com.kubrik.mex.ui;
 
+import com.kubrik.mex.cluster.service.OpsExecutor;
 import com.kubrik.mex.cluster.store.OpsAuditDao;
 import com.kubrik.mex.core.ConnectionManager;
 import com.kubrik.mex.events.EventBus;
@@ -8,6 +9,7 @@ import com.kubrik.mex.model.MongoConnection;
 import com.kubrik.mex.monitoring.MonitoringService;
 import com.kubrik.mex.store.ConnectionStore;
 import com.kubrik.mex.store.HistoryStore;
+import com.kubrik.mex.ui.cluster.BalancerPane;
 import com.kubrik.mex.ui.cluster.ClusterTab;
 import com.kubrik.mex.ui.cluster.CurrentOpPane;
 import com.kubrik.mex.ui.cluster.TopologyPane;
@@ -56,6 +58,8 @@ public class MainView extends BorderPane {
     private final CurrentOpPane.KillOpHandler killOpHandler;
     private final TopologyPane.RsAdminHandler rsAdminHandler;
     private final OpsAuditDao opsAuditDao;
+    private final OpsExecutor opsExecutor;
+    private final BalancerPane.BalancerHandler balancerHandler;
 
     private final ConnectionTree connTree;
     private final TabPane tabs = new TabPane();
@@ -82,7 +86,9 @@ public class MainView extends BorderPane {
                     com.kubrik.mex.store.Database database,
                     CurrentOpPane.KillOpHandler killOpHandler,
                     TopologyPane.RsAdminHandler rsAdminHandler,
-                    OpsAuditDao opsAuditDao) {
+                    OpsAuditDao opsAuditDao,
+                    OpsExecutor opsExecutor,
+                    BalancerPane.BalancerHandler balancerHandler) {
         this.manager = manager;
         this.connectionStore = connectionStore;
         this.historyStore = historyStore;
@@ -93,6 +99,8 @@ public class MainView extends BorderPane {
         this.killOpHandler = killOpHandler;
         this.rsAdminHandler = rsAdminHandler;
         this.opsAuditDao = opsAuditDao;
+        this.opsExecutor = opsExecutor;
+        this.balancerHandler = balancerHandler;
 
         this.connTree = new ConnectionTree(manager, connectionStore, events);
         this.connTree.setOpenHandler(new ConnectionTree.OpenHandler() {
@@ -421,7 +429,7 @@ public class MainView extends BorderPane {
             return;
         }
         ClusterTab body = new ClusterTab(connectionId, events, manager, opsAuditDao,
-                killOpHandler, rsAdminHandler);
+                opsExecutor, balancerHandler, killOpHandler, rsAdminHandler);
         MongoConnection conn = connectionStore.get(connectionId);
         String title = "Cluster · " + (conn != null ? conn.name() : connectionId);
         Tab t = new Tab(title, body);

@@ -88,8 +88,10 @@ public final class DryRunRenderer {
     }
 
     private static DryRunResult renderBalancer(String clusterName, boolean starting) {
+        // Real wire commands: {balancerStart: 1} / {balancerStop: 1} on admin (4.4+).
+        // Using them in the preview means OpsExecutor can forward commandBson() as-is.
         Map<String, Object> body = ordered();
-        body.put("balancer", starting ? "start" : "stop");
+        body.put(starting ? "balancerStart" : "balancerStop", 1);
         String summary = starting
                 ? String.format("Start balancer on %s.", clusterName)
                 : String.format("Stop balancer on %s.", clusterName);

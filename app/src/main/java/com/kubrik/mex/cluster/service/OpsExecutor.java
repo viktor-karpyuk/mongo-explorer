@@ -117,14 +117,16 @@ public final class OpsExecutor {
         }
     }
 
-    /** Subset of {@link Command} currently wired through to MongoDB. Other
-     *  variants are introduced with their respective workstreams (Q2.4-F for
-     *  rs.*, Q2.4-G for balancer / moveChunk). */
+    /** Subset of {@link Command} currently wired through to MongoDB. Tag-range
+     *  variants land with Q2.4-G part 3 once the zones pane is in place. */
     private static Document dispatch(MongoService svc, Command cmd, DryRunResult preview) {
         return switch (cmd) {
-            case Command.KillOp k -> svc.database("admin").runCommand(preview.commandBson());
-            case Command.Freeze f -> svc.database("admin").runCommand(preview.commandBson());
-            case Command.StepDown s -> svc.database("admin").runCommand(preview.commandBson());
+            case Command.KillOp k        -> svc.database("admin").runCommand(preview.commandBson());
+            case Command.Freeze f        -> svc.database("admin").runCommand(preview.commandBson());
+            case Command.StepDown s      -> svc.database("admin").runCommand(preview.commandBson());
+            case Command.BalancerStart b -> svc.database("admin").runCommand(preview.commandBson());
+            case Command.BalancerStop  b -> svc.database("admin").runCommand(preview.commandBson());
+            case Command.MoveChunk m     -> svc.database("admin").runCommand(preview.commandBson());
             default -> throw new UnsupportedOperationException(
                     "Dispatch for " + cmd.name() + " lands with a later Q2.4 phase.");
         };

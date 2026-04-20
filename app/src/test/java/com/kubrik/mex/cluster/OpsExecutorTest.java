@@ -113,4 +113,25 @@ class OpsExecutorTest {
         assertEquals(Outcome.FAIL, r.outcome());
         assertEquals("not_connected", r.serverMessage());
     }
+
+    @Test
+    void balancer_start_and_stop_pass_the_role_gate() {
+        // Give the connection the needed role, so the gate passes. The command
+        // still fails at dispatch (no live driver), but the point is that the
+        // gate-reached-dispatch path works for the balancer variants.
+        roleCache.upsert("cx-b", new RoleSet(java.util.Set.of("clusterManager")),
+                System.currentTimeMillis());
+        Command.BalancerStart start = new Command.BalancerStart("cx-b");
+        DryRunResult preview = DryRunRenderer.render(start);
+        OpsExecutor.Result r = executor.execute("cx-b", start, preview, false, "u", "h");
+        assertEquals(Outcome.FAIL, r.outcome());
+        assertEquals("not_connected", r.serverMessage(),
+                "balancer commands must reach the dispatch step (not be rejected earlier)");
+
+        Command.BalancerStop stop = new Command.BalancerStop("cx-b");
+        DryRunResult preview2 = DryRunRenderer.render(stop);
+        OpsExecutor.Result r2 = executor.execute("cx-b", stop, preview2, false, "u", "h");
+        assertEquals(Outcome.FAIL, r2.outcome());
+        assertEquals("not_connected", r2.serverMessage());
+    }
 }

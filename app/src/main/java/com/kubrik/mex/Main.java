@@ -14,6 +14,7 @@ import com.kubrik.mex.cluster.store.TopologySnapshotDao;
 import com.kubrik.mex.core.ConnectionManager;
 import com.kubrik.mex.core.Crypto;
 import com.kubrik.mex.events.EventBus;
+import com.kubrik.mex.ui.cluster.BalancerPane;
 import com.kubrik.mex.ui.cluster.CurrentOpPane;
 import com.kubrik.mex.ui.cluster.FreezeDialog;
 import com.kubrik.mex.ui.cluster.KillOpDialog;
@@ -188,8 +189,18 @@ public class Main extends Application {
             }
         };
 
+        BalancerPane.BalancerHandler balancerHandler = new BalancerPane.BalancerHandler() {
+            @Override public boolean allowed(String connectionId) {
+                return roleProbeService.currentOrProbe(connectionId)
+                        .hasAny(java.util.List.of("clusterManager", "root"));
+            }
+            @Override public String callerUser() { return finalCallerUser; }
+            @Override public String callerHost() { return finalCallerHost; }
+        };
+
         MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
-                migrationService, monitoringService, db, killOpHandler, rsAdminHandler, opsAuditDao);
+                migrationService, monitoringService, db, killOpHandler, rsAdminHandler,
+                opsAuditDao, opsExecutor, balancerHandler);
 
         // If a previous session left unfinished migrations behind, surface the recovery panel
         // as soon as the UI is up. See docs/mvp-functional-spec.md §4.6.
