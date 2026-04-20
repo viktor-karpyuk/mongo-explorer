@@ -1,9 +1,23 @@
 package com.kubrik.mex;
 
 import atlantafx.base.theme.PrimerLight;
+import com.kubrik.mex.cluster.ClusterWiring;
+import com.kubrik.mex.cluster.service.ClusterTopologyService;
+import com.kubrik.mex.cluster.store.TopologySnapshotDao;
 import com.kubrik.mex.core.ConnectionManager;
 import com.kubrik.mex.core.Crypto;
 import com.kubrik.mex.events.EventBus;
+import com.kubrik.mex.migration.MigrationService;
+import com.kubrik.mex.migration.gate.PreconditionGate;
+import com.kubrik.mex.migration.schedule.MigrationScheduler;
+import com.kubrik.mex.migration.sink.PluginLoader;
+import com.kubrik.mex.store.AppPaths;
+import com.kubrik.mex.monitoring.MonitoringService;
+import com.kubrik.mex.monitoring.MonitoringWiring;
+import com.kubrik.mex.monitoring.recording.RecordingCaptureSubscriber;
+import com.kubrik.mex.monitoring.recording.RecordingService;
+import com.kubrik.mex.monitoring.recording.store.RecordingProfileSampleDao;
+import com.kubrik.mex.monitoring.recording.store.RecordingSampleDao;
 import com.kubrik.mex.store.ConnectionStore;
 import com.kubrik.mex.store.Database;
 import com.kubrik.mex.store.HistoryStore;
@@ -39,19 +53,78 @@ public class Main extends Application {
 
     private Database db;
     private ConnectionManager connectionManager;
+    private MigrationService migrationService;
+    private MigrationScheduler migrationScheduler;
+    private MonitoringService monitoringService;
+    private MonitoringWiring monitoringWiring;
+    private RecordingService recordingService;
+    private RecordingCaptureSubscriber recordingCapture;
+    private ClusterTopologyService clusterTopologyService;
+    private ClusterWiring clusterWiring;
 
     @Override
     public void start(Stage stage) throws Exception {
         Application.setUserAgentStylesheet(new PrimerLight().getUserAgentStylesheet());
 
         db = new Database();
+
+        // EXT-1 — load sink plugins once, before anything touches the sink registry.
+        // Missing plugins dir is a no-op; loader failures are logged, not fatal.
+        PluginLoader.loadFrom(AppPaths.pluginsDir());
+
         ConnectionStore connectionStore = new ConnectionStore(db);
         HistoryStore historyStore = new HistoryStore(db);
         EventBus eventBus = new EventBus();
         Crypto crypto = new Crypto();
         connectionManager = new ConnectionManager(connectionStore, eventBus, crypto);
 
-        MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus);
+        PreconditionGate preconditionGate = new PreconditionGate(connectionStore, connectionManager);
+        migrationService = new MigrationService(connectionManager, connectionStore, db, eventBus, preconditionGate);
+
+        // UX-7 — local scheduler. Wakes every 30s, dispatches due profiles via
+        // MigrationService.start. Local-only — the app must be running for schedules to fire.
+        migrationScheduler = new MigrationScheduler(
+                migrationService.schedules(), migrationService.profiles(),
+                spec -> migrationService.start(spec));
+        migrationScheduler.start();
+
+        // v2.1.0 — monitoring subsystem. Lifecycle is managed here so samplers stop
+        // cleanly before the Mongo client / Database close in stop().
+        monitoringService = new MonitoringService(db, eventBus);
+        monitoringService.startBackgroundWorkers();
+        monitoringWiring = new MonitoringWiring(monitoringService, connectionManager, eventBus);
+
+        // v2.3.0 — recording subsystem. RecordingService owns lifecycle + auto-stop tick;
+        // RecordingCaptureSubscriber double-writes EventBus metric/profiler samples into
+        // the recording tables for any active recording. Auto-stop on disconnect uses the
+        // ConnectionManager so REC-AUTO-2 fires accurately in production.
+        recordingService = new RecordingService(db, eventBus, java.time.Clock.systemUTC(),
+                id -> connectionManager.service(id) != null,
+                () -> RecordingService.DEFAULT_STORAGE_CAP_BYTES);
+        recordingService.init();
+        recordingCapture = new RecordingCaptureSubscriber(
+                new RecordingSampleDao(db.connection()),
+                new RecordingProfileSampleDao(db.connection()),
+                eventBus);
+
+        // v2.4 — cluster topology sampler. Lives outside MonitoringWiring because
+        // its cadence (300 ms heartbeat / 2 s visible) and consumers (Cluster tab,
+        // connection card health pill) are orthogonal to monitoring samplers.
+        clusterTopologyService = new ClusterTopologyService(
+                connectionManager::service,
+                new TopologySnapshotDao(db),
+                eventBus,
+                java.time.Clock.systemUTC());
+        clusterWiring = new ClusterWiring(clusterTopologyService, connectionManager, eventBus);
+
+        MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
+                migrationService, monitoringService, db);
+
+        // If a previous session left unfinished migrations behind, surface the recovery panel
+        // as soon as the UI is up. See docs/mvp-functional-spec.md §4.6.
+        if (!migrationService.unfinishedOnStartup().isEmpty()) {
+            Platform.runLater(root::openMigrationsTabPublic);
+        }
         Scene scene = new Scene(root, 1200, 750);
         stage.setTitle("Mongo Explorer");
         try {
@@ -116,6 +189,13 @@ public class Main extends Application {
         // MongoClient.close() and driver shutdown hooks can stall for seconds;
         // halt(0) bypasses all of that so the app exits instantly.
         Thread cleanup = new Thread(() -> {
+            try { if (migrationScheduler != null) migrationScheduler.close(); } catch (Exception ignored) {}
+            try { if (recordingCapture != null) recordingCapture.close(); } catch (Exception ignored) {}
+            try { if (recordingService != null) recordingService.close(); } catch (Exception ignored) {}
+            try { if (clusterWiring != null) clusterWiring.close(); } catch (Exception ignored) {}
+            try { if (clusterTopologyService != null) clusterTopologyService.close(); } catch (Exception ignored) {}
+            try { if (monitoringWiring != null) monitoringWiring.close(); } catch (Exception ignored) {}
+            try { if (monitoringService != null) monitoringService.close(); } catch (Exception ignored) {}
             try { if (connectionManager != null) connectionManager.closeAll(); } catch (Exception ignored) {}
             try { if (db != null) db.close(); } catch (Exception ignored) {}
         }, "shutdown-cleanup");

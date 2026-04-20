@@ -2,9 +2,24 @@ package com.kubrik.mex.ui;
 
 import com.kubrik.mex.core.ConnectionManager;
 import com.kubrik.mex.events.EventBus;
+import com.kubrik.mex.migration.MigrationService;
 import com.kubrik.mex.model.MongoConnection;
+import com.kubrik.mex.monitoring.MonitoringService;
 import com.kubrik.mex.store.ConnectionStore;
 import com.kubrik.mex.store.HistoryStore;
+import com.kubrik.mex.ui.migration.MigrationsTab;
+import com.kubrik.mex.ui.migration.MigrationWizard;
+import com.kubrik.mex.monitoring.model.MetricId;
+import com.kubrik.mex.monitoring.store.ProfileSampleRecord;
+import com.kubrik.mex.ui.monitoring.ExpandedMetricView;
+import com.kubrik.mex.ui.monitoring.IndexDetailView;
+import com.kubrik.mex.ui.monitoring.MaximizedSectionTab;
+import com.kubrik.mex.ui.monitoring.MemberDetailView;
+import com.kubrik.mex.ui.monitoring.MetricExpander;
+import com.kubrik.mex.ui.monitoring.MonitoringTab;
+import com.kubrik.mex.ui.monitoring.NamespaceDetailView;
+import com.kubrik.mex.ui.monitoring.RowExpandOpener;
+import com.kubrik.mex.ui.monitoring.SlowQueryDetailView;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.control.Label;
@@ -31,6 +46,9 @@ public class MainView extends BorderPane {
     private final ConnectionStore connectionStore;
     private final HistoryStore historyStore;
     private final EventBus events;
+    private final MigrationService migrationService;
+    private final MonitoringService monitoringService;
+    private final com.kubrik.mex.store.Database database;
 
     private final ConnectionTree connTree;
     private final TabPane tabs = new TabPane();
@@ -38,6 +56,10 @@ public class MainView extends BorderPane {
     private Tab manageTab;
     private Tab historyTab;
     private Tab logsTab;
+    private Tab migrationsTab;
+    private Tab monitoringTab;
+    private MigrationsTab migrationsView;
+    private MonitoringTab monitoringView;
     private LogsView logsView;
     private WelcomeView welcomeView;
 
@@ -47,11 +69,17 @@ public class MainView extends BorderPane {
     public MainView(ConnectionManager manager,
                     ConnectionStore connectionStore,
                     HistoryStore historyStore,
-                    EventBus events) {
+                    EventBus events,
+                    MigrationService migrationService,
+                    MonitoringService monitoringService,
+                    com.kubrik.mex.store.Database database) {
         this.manager = manager;
         this.connectionStore = connectionStore;
         this.historyStore = historyStore;
         this.events = events;
+        this.migrationService = migrationService;
+        this.monitoringService = monitoringService;
+        this.database = database;
 
         this.connTree = new ConnectionTree(manager, connectionStore, events);
         this.connTree.setOpenHandler(new ConnectionTree.OpenHandler() {
@@ -61,6 +89,13 @@ public class MainView extends BorderPane {
             @Override public void openManageConnections() { openManageTab(); }
             @Override public void openConnectionEditor(MongoConnection existing) { openEditor(existing); }
             @Override public void openLogs() { openLogsTab(); }
+            @Override public void openMigrate(String connectionId, String db, String coll) {
+                MigrationWizard.openSeeded(getScene().getWindow(), migrationService,
+                        connectionStore, manager, events, connectionId, db, coll);
+            }
+            @Override public void openMonitoring(String connectionId) {
+                openMonitoringTab();
+            }
         });
 
         // Shared LogsView so it captures everything from app start.
@@ -75,6 +110,7 @@ public class MainView extends BorderPane {
                 () -> openEditor(null),
                 this::openManageTab,
                 this::openLogsTab,
+                this::openMonitoringTab,
                 c -> {
                     if (manager.state(c.id()).status() != com.kubrik.mex.model.ConnectionState.Status.CONNECTED) {
                         manager.connect(c.id());
@@ -86,8 +122,17 @@ public class MainView extends BorderPane {
         welcome.setClosable(false);
         tabs.getTabs().add(welcome);
 
-        // Status bar
-        HBox status = new HBox(12, statusConn, new Label("·"), statusServer);
+        // Status bar (UX-13 pill anchored at the right, hidden when no live migration jobs)
+        com.kubrik.mex.ui.migration.StatusBarRunningJobsPill runningJobsPill =
+                new com.kubrik.mex.ui.migration.StatusBarRunningJobsPill(
+                        migrationService, events,
+                        id -> {
+                            openMigrationsTab();
+                            if (migrationsView != null) migrationsView.openJob(id);
+                        });
+        javafx.scene.layout.Region spacer = new javafx.scene.layout.Region();
+        HBox.setHgrow(spacer, javafx.scene.layout.Priority.ALWAYS);
+        HBox status = new HBox(12, statusConn, new Label("·"), statusServer, spacer, runningJobsPill);
         status.setPadding(new Insets(6, 12, 6, 12));
         status.setStyle("-fx-background-color: #f3f4f6; -fx-border-color: #e5e7eb; -fx-border-width: 1 0 0 0;");
         statusServer.setStyle("-fx-text-fill: #6b7280;");
@@ -113,7 +158,9 @@ public class MainView extends BorderPane {
         Menu file = new Menu("File");
         MenuItem newConn = item("New Connection…", new KeyCodeCombination(KeyCode.N, KeyCombination.SHORTCUT_DOWN),
                 () -> openEditor(null));
-        MenuItem manageConns = item("Manage Connections", new KeyCodeCombination(KeyCode.M, KeyCombination.SHORTCUT_DOWN),
+        // NAV-1 claims Cmd/Ctrl+M for Monitoring; Manage Connections moves to shift-modifier.
+        MenuItem manageConns = item("Manage Connections",
+                new KeyCodeCombination(KeyCode.M, KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN),
                 this::openManageTab);
         MenuItem closeTab = item("Close Tab", new KeyCodeCombination(KeyCode.W, KeyCombination.SHORTCUT_DOWN),
                 this::closeCurrentTab);
@@ -153,14 +200,228 @@ public class MainView extends BorderPane {
                     connTree.reloadAll();
                 }));
 
+        // ----- Tools -----
+        Menu tools = new Menu("Tools");
+        tools.getItems().addAll(
+                item("Migrate…", null, this::openMigrationWizard),
+                item("Migrations tab", null, this::openMigrationsTab),
+                new SeparatorMenuItem(),
+                // NAV-1 — Cmd/Ctrl+M opens Monitoring (creates or focuses the tab).
+                item("Monitoring", new KeyCodeCombination(KeyCode.M, KeyCombination.SHORTCUT_DOWN),
+                        this::openMonitoringTab));
+
         // ----- Help -----
         Menu help = new Menu("Help");
         help.getItems().add(item("About Mongo Explorer", null, () ->
                 UiHelpers.info(getScene().getWindow(), "Mongo Explorer",
                         "A simple MongoDB explorer.\nBuilt with JavaFX + AtlantaFX.")));
 
-        bar.getMenus().addAll(file, edit, view, connection, help);
+        bar.getMenus().addAll(file, edit, view, connection, tools, help);
         return bar;
+    }
+
+    private void openMigrationWizard() {
+        new MigrationWizard(getScene().getWindow(), migrationService,
+                connectionStore, manager, events).show();
+    }
+
+    public void openMigrationsTabPublic() { openMigrationsTab(); }
+
+    public void openMonitoringTabPublic() { openMonitoringTab(); }
+
+    /** Open a maximized view of a single Monitoring section in its own tab, scoped
+     *  to a specific connection id (v2.2.0 — ROUTE-4). */
+    private void openMonitoringSectionTab(String sectionId, String connectionId) {
+        MaximizedSectionTab body = new MaximizedSectionTab(sectionId, connectionId,
+                events, monitoringService, manager, this::openExpandedMetric, rowExpandOpener);
+        Tab t = new Tab(MaximizedSectionTab.tabTitle(sectionId, connectionId), body);
+        t.setOnClosed(e -> body.close());
+        tabs.getTabs().add(t);
+        tabs.getSelectionModel().select(t);
+    }
+
+    /** Per-(metric, connection) expand views re-select rather than duplicate when re-opened. */
+    private final java.util.Map<String, Tab> metricExpandTabs = new java.util.HashMap<>();
+    private final java.util.Map<String, Tab> rowExpandTabs = new java.util.HashMap<>();
+
+    /** ROW-EXPAND-* — open a row-detail view as a modal or as an app-level tab. */
+    private final RowExpandOpener rowExpandOpener = new RowExpandOpener() {
+        @Override public void openSlowQuery(ProfileSampleRecord r, String connectionId,
+                                            MetricExpander.Mode mode) {
+            String name = displayName(connectionId);
+            hostRow("Slow query · " + r.ns() + " · " + name,
+                    "slow|" + connectionId + "|" + r.tsMs() + "|" + r.queryHash(),
+                    new SlowQueryDetailView(r, name), mode);
+        }
+        @Override public void openIndex(String db, String coll, String index,
+                                        long sizeBytes, double opsPerSec, String flags,
+                                        String connectionId, MetricExpander.Mode mode) {
+            String name = displayName(connectionId);
+            hostRow("Index · " + db + "." + coll + "." + index + " · " + name,
+                    "idx|" + connectionId + "|" + db + "." + coll + "." + index,
+                    new IndexDetailView(db, coll, index, sizeBytes, opsPerSec, flags,
+                            connectionId, name, events),
+                    mode);
+        }
+        @Override public void openNamespace(String db, String coll,
+                                            double readMsPerSec, double writeMsPerSec, double totalMsPerSec,
+                                            double readOpsPerSec, double writeOpsPerSec,
+                                            String connectionId, MetricExpander.Mode mode) {
+            String name = displayName(connectionId);
+            hostRow("Namespace · " + db + "." + coll + " · " + name,
+                    "ns|" + connectionId + "|" + db + "." + coll,
+                    new NamespaceDetailView(db, coll, readMsPerSec, writeMsPerSec, totalMsPerSec,
+                            readOpsPerSec, writeOpsPerSec, connectionId, name, events),
+                    mode);
+        }
+        @Override public void openMember(String member, String state, String health, String uptime,
+                                         String ping, String lag, String lastHeartbeat,
+                                         String connectionId, MetricExpander.Mode mode) {
+            String name = displayName(connectionId);
+            hostRow("Member · " + member + " · " + name,
+                    "mbr|" + connectionId + "|" + member,
+                    new MemberDetailView(member, state, health, uptime, ping, lag, lastHeartbeat,
+                            connectionId, name, events),
+                    mode);
+        }
+    };
+
+    private String displayName(String connectionId) {
+        MongoConnection c = connectionStore.get(connectionId);
+        return c != null ? c.name() : connectionId;
+    }
+
+    /** NAV-4 — if no per-instance / metric-expand / row-expand tab remains, focus the main Monitoring tab. */
+    private void focusMonitoringTabIfLastExpand() {
+        if (!instanceMonitoringTabs.isEmpty()) return;
+        if (!metricExpandTabs.isEmpty()) return;
+        if (!rowExpandTabs.isEmpty()) return;
+        if (monitoringTab != null && tabs.getTabs().contains(monitoringTab)) {
+            tabs.getSelectionModel().select(monitoringTab);
+        }
+    }
+
+    private void hostRow(String title, String key, javafx.scene.Node body, MetricExpander.Mode mode) {
+        if (mode == MetricExpander.Mode.TAB) {
+            Tab existing = rowExpandTabs.get(key);
+            if (existing != null && tabs.getTabs().contains(existing)) {
+                tabs.getSelectionModel().select(existing); return;
+            }
+            Tab t = new Tab(title, body);
+            t.setOnClosed(e -> {
+                closeIfAutoCloseable(body);
+                rowExpandTabs.remove(key);
+                focusMonitoringTabIfLastExpand();
+            });
+            rowExpandTabs.put(key, t);
+            tabs.getTabs().add(t);
+            tabs.getSelectionModel().select(t);
+        } else {
+            javafx.stage.Stage s = new javafx.stage.Stage();
+            s.setTitle(title);
+            s.setScene(new javafx.scene.Scene(new javafx.scene.control.ScrollPane(body), 720, 520));
+            if (getScene() != null && getScene().getWindow() != null) s.initOwner(getScene().getWindow());
+            s.setOnHidden(e -> closeIfAutoCloseable(body));
+            s.show();
+        }
+    }
+
+    private static void closeIfAutoCloseable(Object body) {
+        if (body instanceof AutoCloseable a) {
+            try { a.close(); } catch (Throwable ignored) {}
+        }
+    }
+
+    /** GRAPH-EXPAND-3/4: open the expand view in a modal stage or a dedicated tab. */
+    public void openExpandedMetric(MetricId metric, String connectionId, MetricExpander.Mode mode) {
+        if (metric == null || connectionId == null) return;
+        MongoConnection conn = connectionStore.get(connectionId);
+        String displayName = conn != null ? conn.name() : connectionId;
+        if (mode == MetricExpander.Mode.TAB) {
+            String key = connectionId + "|" + metric.name();
+            Tab existing = metricExpandTabs.get(key);
+            if (existing != null && tabs.getTabs().contains(existing)) {
+                tabs.getSelectionModel().select(existing);
+                return;
+            }
+            ExpandedMetricView body = new ExpandedMetricView(connectionId, metric, displayName,
+                    events, monitoringService);
+            Tab t = new Tab("Metric · " + metric.metricName() + " · " + displayName, body);
+            t.setOnClosed(e -> {
+                body.close();
+                metricExpandTabs.remove(key);
+                focusMonitoringTabIfLastExpand();
+            });
+            metricExpandTabs.put(key, t);
+            tabs.getTabs().add(t);
+            tabs.getSelectionModel().select(t);
+        } else {
+            ExpandedMetricView body = new ExpandedMetricView(connectionId, metric, displayName,
+                    events, monitoringService);
+            javafx.stage.Stage s = new javafx.stage.Stage();
+            s.setTitle(metric.metricName() + " · " + displayName);
+            s.setScene(new javafx.scene.Scene(new javafx.scene.control.ScrollPane(body), 960, 560));
+            if (getScene() != null && getScene().getWindow() != null) s.initOwner(getScene().getWindow());
+            s.setOnHidden(e -> body.close());
+            s.show();
+        }
+    }
+
+    /** Per-instance monitoring tab — one Tab per connection id, re-selected on duplicate open. */
+    private final java.util.Map<String, Tab> instanceMonitoringTabs = new java.util.HashMap<>();
+
+    private void openInstanceMonitoringTab(String connectionId) {
+        Tab existing = instanceMonitoringTabs.get(connectionId);
+        if (existing != null && tabs.getTabs().contains(existing)) {
+            tabs.getSelectionModel().select(existing);
+            return;
+        }
+        com.kubrik.mex.ui.monitoring.InstanceMonitoringTab body =
+                new com.kubrik.mex.ui.monitoring.InstanceMonitoringTab(
+                        connectionId, events, monitoringService, manager, connectionStore,
+                        this::openMonitoringSectionTab, this::openExpandedMetric, rowExpandOpener);
+        com.kubrik.mex.model.MongoConnection conn = connectionStore.get(connectionId);
+        String title = "Monitoring · " + (conn != null ? conn.name() : connectionId);
+        Tab t = new Tab(title, body);
+        t.setOnClosed(e -> {
+            body.close();
+            instanceMonitoringTabs.remove(connectionId);
+            focusMonitoringTabIfLastExpand();
+        });
+        instanceMonitoringTabs.put(connectionId, t);
+        tabs.getTabs().add(t);
+        tabs.getSelectionModel().select(t);
+    }
+
+    private void openMonitoringTab() {
+        if (monitoringTab != null && tabs.getTabs().contains(monitoringTab)) {
+            tabs.getSelectionModel().select(monitoringTab);
+            return;
+        }
+        if (monitoringView == null) {
+            monitoringView = new MonitoringTab(events, monitoringService, manager, connectionStore,
+                    database, this::openExpandedMetric, rowExpandOpener);
+            monitoringView.onMaximize(this::openMonitoringSectionTab);
+            monitoringView.onOpenInstanceTab(this::openInstanceMonitoringTab);
+        }
+        monitoringTab = new Tab("Monitoring", monitoringView);
+        monitoringTab.setOnClosed(e -> monitoringTab = null);
+        tabs.getTabs().add(monitoringTab);
+        tabs.getSelectionModel().select(monitoringTab);
+    }
+
+    private void openMigrationsTab() {
+        if (migrationsTab != null && tabs.getTabs().contains(migrationsTab)) {
+            tabs.getSelectionModel().select(migrationsTab);
+            return;
+        }
+        if (migrationsView == null) {
+            migrationsView = new MigrationsTab(migrationService, connectionStore, manager, events);
+        }
+        migrationsTab = new Tab("Migrations", migrationsView);
+        migrationsTab.setOnClosed(e -> migrationsTab = null);
+        tabs.getTabs().add(migrationsTab);
+        tabs.getSelectionModel().select(migrationsTab);
     }
 
     private static MenuItem item(String text, KeyCombination accel, Runnable action) {

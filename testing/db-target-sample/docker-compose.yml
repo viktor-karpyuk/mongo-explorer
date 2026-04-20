@@ -1,0 +1,21 @@
+services:
+  mongo-target:
+    image: mongo:8
+    container_name: mex-mongo-target-sample
+    ports:
+      - "28000:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: testing-db-replication
+    volumes:
+      - mex-source-data:/data/db
+      - ./init:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "-u", "root", "-p", "testing-db-replication", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mex-source-data:

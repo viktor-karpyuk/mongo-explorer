@@ -8,6 +8,7 @@ import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import org.bson.BsonDocument;
 import org.bson.Document;
+import org.bson.RawBsonDocument;
 import org.bson.json.JsonMode;
 import org.bson.json.JsonWriterSettings;
 
@@ -22,6 +23,7 @@ public class MongoService implements AutoCloseable {
 
     private final MongoClient client;
     private final String serverVersion;
+    private volatile Document cachedHello;
 
     public MongoService(String uri) {
         ConnectionString cs = new ConnectionString(uri);
@@ -52,6 +54,18 @@ public class MongoService implements AutoCloseable {
         client.getDatabase(db).listCollectionNames().forEach(names::add);
         names.sort(String.CASE_INSENSITIVE_ORDER);
         return names;
+    }
+
+    /** Full {@code listCollections} entry for a single namespace — used by SCOPE-5 (options)
+     *  and SCOPE-6 (views) which need both the {@code options} sub-document and the
+     *  {@code type} field ({@code "collection"} vs {@code "view"}). Returns an empty Document
+     *  when the collection doesn't exist. */
+    public Document collectionInfo(String db, String coll) {
+        for (Document d : client.getDatabase(db).listCollections()
+                .filter(new Document("name", coll))) {
+            return d;
+        }
+        return new Document();
     }
 
     public Document dbStats(String db) {
@@ -144,6 +158,25 @@ public class MongoService implements AutoCloseable {
     public MongoDatabase database(String db) { return client.getDatabase(db); }
     public MongoCollection<Document> collection(String db, String coll) {
         return client.getDatabase(db).getCollection(coll);
+    }
+
+    /** RawBson view of a collection — used by the migration engine to preserve BSON fidelity
+     *  (see docs/mvp-technical-spec.md §15.2). */
+    public MongoCollection<RawBsonDocument> rawCollection(String db, String coll) {
+        return client.getDatabase(db).getCollection(coll, RawBsonDocument.class);
+    }
+
+    /** Cached `hello` output — used by preflight to determine topology and version without
+     *  hammering the cluster when the wizard navigates between steps. */
+    public Document hello() {
+        Document h = cachedHello;
+        if (h != null) return h;
+        synchronized (this) {
+            if (cachedHello == null) {
+                cachedHello = client.getDatabase("admin").runCommand(new Document("hello", 1));
+            }
+            return cachedHello;
+        }
     }
 
     @Override

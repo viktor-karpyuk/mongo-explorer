@@ -36,6 +36,15 @@ A lightweight, native MongoDB GUI client built with Java 21 and JavaFX. Inspired
 - **Create users** with built-in role checkboxes (read, readWrite, dbAdmin, root, etc.) or custom role JSON
 - **Change password, grant/revoke roles, drop users**
 
+### Data Migration (v1.2.0)
+- **Multi-database scope** — one job can target N ≥ 1 source databases; Step 3 picks them with a checkbox list
+- **Cross-database collection selection** — each row in the collection picker is `db.coll`, spanning every ticked DB
+- **Opt-in Migrate Users** — copies non-built-in users + roles to the matching target DB after documents and indexes (passwords need to be re-set post-migration — public `createUser` can't carry hashes)
+- **Migrations tab** — colored status pill, resolved source/target names, Started + Duration columns with wall/active/paused tooltip, double-click to open a details view with live progress, log tail, and Resume
+- **Status-bar pill** — always visible while any migration is running; clicking it reopens the job's live view
+- **Real-time progress** — fixed 200 ms publish cadence with per-batch counters and a UI frame-coalescing drain so counters tick smoothly on large copies
+- **Crash recovery** — jobs orphaned by a killed JVM are reconciled to FAILED on startup; heartbeat-based detection catches PID reuse after a reboot
+
 ### UX
 - **Welcome screen** with connection cards, quick actions (new connection, manage, logs)
 - **Native menu bar** (File, Edit, View, Connection, Help) with keyboard shortcuts

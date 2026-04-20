@@ -1,0 +1,400 @@
+package com.kubrik.mex.cluster.service;
+
+import com.kubrik.mex.cluster.model.ClusterKind;
+import com.kubrik.mex.cluster.model.Member;
+import com.kubrik.mex.cluster.model.MemberState;
+import com.kubrik.mex.cluster.model.Mongos;
+import com.kubrik.mex.cluster.model.Shard;
+import com.kubrik.mex.cluster.model.TopologySnapshot;
+import com.kubrik.mex.cluster.store.TopologySnapshotDao;
+import com.kubrik.mex.core.MongoService;
+import com.kubrik.mex.events.EventBus;
+import com.mongodb.MongoCommandException;
+import org.bson.Document;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.time.Clock;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+
+/**
+ * v2.4 TOPO-* — per-connection cluster topology sampler.
+ *
+ * <p>Each started connection runs on a single-threaded scheduled executor
+ * that ticks at 300 ms, coalesces into a 2 s visible cadence, enforces a
+ * 5 s {@code maxTimeMS} per command, and backs off exponentially on failure
+ * (2 → 4 → 8 → 16 s cap). Snapshots are persisted every 60 s if their
+ * {@code sha256} differs from the most recent row; emission to the bus
+ * happens on every visible tick.</p>
+ */
+public final class ClusterTopologyService implements AutoCloseable {
+
+    private static final Logger log = LoggerFactory.getLogger(ClusterTopologyService.class);
+
+    private static final long HEARTBEAT_MS = 300;
+    private static final long VISIBLE_MS   = 2_000;
+    private static final long PERSIST_MS   = 60_000;
+    private static final int  COMMAND_TIMEOUT_MS = 5_000;
+    private static final long BACKOFF_INITIAL_MS = 2_000;
+    private static final long BACKOFF_MAX_MS     = 16_000;
+
+    private final Function<String, MongoService> serviceLookup;
+    private final TopologySnapshotDao dao;
+    private final EventBus bus;
+    private final Clock clock;
+
+    private final ConcurrentMap<String, State> states = new ConcurrentHashMap<>();
+    private volatile boolean closed = false;
+
+    public ClusterTopologyService(Function<String, MongoService> serviceLookup,
+                                  TopologySnapshotDao dao, EventBus bus, Clock clock) {
+        this.serviceLookup = Objects.requireNonNull(serviceLookup);
+        this.dao = dao;
+        this.bus = bus;
+        this.clock = clock == null ? Clock.systemUTC() : clock;
+    }
+
+    /** Begin sampling for a connection. Idempotent — safe to call repeatedly. */
+    public void start(String connectionId) {
+        if (closed) return;
+        states.computeIfAbsent(connectionId, this::newState);
+    }
+
+    /** Stop sampling for a connection (keeps persisted snapshots untouched). */
+    public void stop(String connectionId) {
+        State s = states.remove(connectionId);
+        if (s != null) s.close();
+    }
+
+    /** Force one immediate sample, bypassing back-off. */
+    public TopologySnapshot refreshNow(String connectionId) {
+        State s = states.get(connectionId);
+        if (s == null) return null;
+        return s.sampleOnce(true);
+    }
+
+    /** Latest in-memory snapshot; {@code null} if the service never produced one. */
+    public TopologySnapshot latest(String connectionId) {
+        State s = states.get(connectionId);
+        return s == null ? null : s.latest;
+    }
+
+    @Override
+    public void close() {
+        closed = true;
+        for (State s : states.values()) s.close();
+        states.clear();
+    }
+
+    /* ================================================================== */
+
+    private State newState(String connectionId) {
+        ScheduledExecutorService exec = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "topology-" + connectionId);
+            t.setDaemon(true);
+            return t;
+        });
+        State s = new State(connectionId, exec);
+        ScheduledFuture<?> tick = exec.scheduleAtFixedRate(s::heartbeat,
+                HEARTBEAT_MS, HEARTBEAT_MS, TimeUnit.MILLISECONDS);
+        s.tick = tick;
+        return s;
+    }
+
+    /** Per-connection state + tick loop. */
+    private final class State {
+        final String connectionId;
+        final ScheduledExecutorService exec;
+        ScheduledFuture<?> tick;
+
+        volatile TopologySnapshot latest;
+        volatile long nextVisibleAt = 0L;
+        volatile long nextPersistAt = 0L;
+        volatile long backoffUntil = 0L;
+        volatile long backoffDelay = BACKOFF_INITIAL_MS;
+        volatile int  consecutiveFailures = 0;
+
+        State(String connectionId, ScheduledExecutorService exec) {
+            this.connectionId = connectionId;
+            this.exec = exec;
+        }
+
+        void heartbeat() {
+            long now = clock.millis();
+            if (now < backoffUntil) return;
+            if (now < nextVisibleAt) return;
+            sampleOnce(false);
+        }
+
+        TopologySnapshot sampleOnce(boolean force) {
+            long now = clock.millis();
+            MongoService svc = serviceLookup.apply(connectionId);
+            if (svc == null) {
+                scheduleBackoff();
+                return null;
+            }
+            TopologySnapshot snap;
+            try {
+                snap = sample(svc, now);
+                consecutiveFailures = 0;
+                backoffDelay = BACKOFF_INITIAL_MS;
+                backoffUntil = 0L;
+            } catch (Exception e) {
+                log.debug("topology sample failed for {}: {}", connectionId, e.getMessage());
+                scheduleBackoff();
+                return null;
+            }
+            latest = snap;
+            nextVisibleAt = now + VISIBLE_MS;
+            if (bus != null) bus.publishTopology(connectionId, snap);
+            if (dao != null && (force || now >= nextPersistAt)) {
+                dao.insertIfChanged(connectionId, snap);
+                nextPersistAt = now + PERSIST_MS;
+            }
+            return snap;
+        }
+
+        void scheduleBackoff() {
+            consecutiveFailures++;
+            long now = clock.millis();
+            backoffUntil = now + backoffDelay;
+            backoffDelay = Math.min(backoffDelay * 2, BACKOFF_MAX_MS);
+        }
+
+        void close() {
+            if (tick != null) tick.cancel(false);
+            exec.shutdownNow();
+        }
+    }
+
+    /* ==================== command orchestration ======================== */
+
+    private TopologySnapshot sample(MongoService svc, long capturedAt) {
+        Document hello = runAdmin(svc, new Document("hello", 1));
+        ClusterKind kind = detectKind(hello);
+        String version = svc.serverVersion();
+
+        return switch (kind) {
+            case STANDALONE -> new TopologySnapshot(ClusterKind.STANDALONE, capturedAt, version,
+                    List.of(Member.unknownAt(hostOf(hello, "me"))),
+                    List.of(), List.of(), List.of(), List.of());
+            case REPLSET   -> sampleReplica(svc, capturedAt, version);
+            case SHARDED   -> sampleSharded(svc, capturedAt, version);
+        };
+    }
+
+    private TopologySnapshot sampleReplica(MongoService svc, long capturedAt, String version) {
+        Document status = runAdmin(svc, new Document("replSetGetStatus", 1));
+        Document config = safeRunAdmin(svc, new Document("replSetGetConfig", 1));
+        List<Member> members = buildMembers(status, config);
+        return new TopologySnapshot(ClusterKind.REPLSET, capturedAt, version,
+                members, List.of(), List.of(), List.of(), List.of());
+    }
+
+    private TopologySnapshot sampleSharded(MongoService svc, long capturedAt, String version) {
+        List<String> warnings = new ArrayList<>();
+        Document shardsCmd = safeRunAdmin(svc, new Document("listShards", 1));
+        if (shardsCmd == null) warnings.add("listShards unavailable");
+        List<Shard> shards = buildShards(shardsCmd);
+        Document shardMap = safeRunAdmin(svc, new Document("getShardMap", 1));
+        List<Member> configServers = buildConfigServers(shardMap);
+        if (configServers.isEmpty()) warnings.add("config-server topology unavailable");
+        List<Mongos> mongos = buildMongos(svc);
+        // Per-shard replSetGetStatus requires a dedicated MongoClient to each shard's
+        // seed list; the topology service currently only holds the mongos handle, so
+        // shard members are populated as host-only UNKNOWN entries parsed from
+        // listShards.host. Filling them in with live state is scheduled with the
+        // Q2.4-G sharding workstream (dedicated ClusterMemberProbe).
+        return new TopologySnapshot(ClusterKind.SHARDED, capturedAt, version,
+                List.of(), shards, mongos, configServers, warnings);
+    }
+
+    /* ==================== parsing helpers ============================== */
+
+    private static ClusterKind detectKind(Document hello) {
+        String msg = hello.getString("msg");
+        if ("isdbgrid".equals(msg)) return ClusterKind.SHARDED;
+        Object setName = hello.get("setName");
+        if (setName instanceof String s && !s.isBlank()) return ClusterKind.REPLSET;
+        return ClusterKind.STANDALONE;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Member> buildMembers(Document status, Document config) {
+        List<Document> statusMembers = (List<Document>) status.get("members");
+        if (statusMembers == null) return List.of();
+        Map<String, Document> cfgByHost = new HashMap<>();
+        if (config != null) {
+            Document cfg = (Document) config.get("config");
+            if (cfg != null) {
+                List<Document> cfgMembers = (List<Document>) cfg.get("members");
+                if (cfgMembers != null) for (Document m : cfgMembers) {
+                    cfgByHost.put(m.getString("host"), m);
+                }
+            }
+        }
+        long primaryOpt = 0L;
+        for (Document m : statusMembers) {
+            if ("PRIMARY".equals(m.getString("stateStr"))) {
+                Date d = (Date) m.get("optimeDate");
+                if (d != null) primaryOpt = d.getTime();
+                break;
+            }
+        }
+        List<Member> out = new ArrayList<>(statusMembers.size());
+        for (Document m : statusMembers) {
+            String host = m.getString("name");
+            MemberState state = MemberState.from(
+                    m.getInteger("state"), m.getString("stateStr"));
+            Date optDate = (Date) m.get("optimeDate");
+            Long optimeMs = optDate == null ? null : optDate.getTime();
+            Long lagMs = (state == MemberState.PRIMARY || optimeMs == null || primaryOpt == 0)
+                    ? null : Math.max(0, primaryOpt - optimeMs);
+            Document cfg = cfgByHost.get(host);
+            Integer priority = cfg == null ? null : intOrNull(cfg.get("priority"));
+            Integer votes    = cfg == null ? null : intOrNull(cfg.get("votes"));
+            Boolean hidden   = cfg == null ? null : boolOrNull(cfg.get("hidden"));
+            Boolean arbiter  = cfg == null ? null : boolOrNull(cfg.get("arbiterOnly"));
+            Map<String, String> tags = cfg == null ? Map.of() : extractTags(cfg);
+
+            Integer configVersion = intOrNull(m.get("configVersion"));
+            out.add(new Member(host, state, priority, votes, hidden, arbiter, tags,
+                    optimeMs, lagMs,
+                    longOrNull(m.get("pingMs")),
+                    longOrNull(m.get("uptime")),
+                    m.getString("syncSourceHost"),
+                    configVersion));
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Shard> buildShards(Document shardsCmd) {
+        if (shardsCmd == null) return List.of();
+        List<Document> entries = (List<Document>) shardsCmd.get("shards");
+        if (entries == null) return List.of();
+        List<Shard> out = new ArrayList<>(entries.size());
+        for (Document s : entries) {
+            String host = s.getString("host");
+            List<Member> members = parseSeedHosts(host);
+            out.add(new Shard(
+                    s.getString("_id"),
+                    host == null ? "" : host,
+                    Boolean.TRUE.equals(s.getBoolean("draining")),
+                    Map.of(),
+                    members
+            ));
+        }
+        return out;
+    }
+
+    /** Parses the {@code rsName/host1:port,host2:port} shape returned by
+     *  {@code listShards} into a list of {@code UNKNOWN}-state members. Live
+     *  state is populated later by a dedicated per-shard probe. */
+    private static List<Member> parseSeedHosts(String host) {
+        if (host == null || host.isBlank()) return List.of();
+        int slash = host.indexOf('/');
+        String seeds = slash < 0 ? host : host.substring(slash + 1);
+        List<Member> out = new ArrayList<>();
+        for (String seed : seeds.split(",")) {
+            String h = seed.trim();
+            if (!h.isEmpty()) out.add(Member.unknownAt(h));
+        }
+        return out;
+    }
+
+    /** Extracts the config-server host list from {@code getShardMap}. The map
+     *  key {@code "config"} holds {@code rsName/host1:port,host2:port,...}. */
+    private static List<Member> buildConfigServers(Document shardMap) {
+        if (shardMap == null) return List.of();
+        Object rawMap = shardMap.get("map");
+        if (!(rawMap instanceof Document m)) return List.of();
+        Object config = m.get("config");
+        if (!(config instanceof String s) || s.isBlank()) return List.of();
+        return parseSeedHosts(s);
+    }
+
+    /** Reads {@code config.mongos} for the live mongos roster. The collection
+     *  is maintained by each mongos pinging at ~30 s cadence, so entries older
+     *  than 60 s are treated as stale and filtered out. */
+    @SuppressWarnings("unchecked")
+    private static List<Mongos> buildMongos(MongoService svc) {
+        List<Mongos> out = new ArrayList<>();
+        try {
+            var coll = svc.database("config").getCollection("mongos");
+            long freshnessMs = 60_000;
+            long now = System.currentTimeMillis();
+            for (Document d : coll.find()) {
+                String id = d.getString("_id");
+                if (id == null) continue;
+                Date ping = (Date) d.get("ping");
+                if (ping != null && now - ping.getTime() > freshnessMs) continue;
+                Long up = longOrNull(d.get("up"));
+                Long delay = longOrNull(d.get("waiting"));
+                String mv = d.getString("mongoVersion");
+                out.add(new Mongos(id, mv == null ? "" : mv, up, delay));
+            }
+        } catch (Exception ignored) { /* partial topology is ok */ }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, String> extractTags(Document cfg) {
+        Object tags = cfg.get("tags");
+        if (!(tags instanceof Document d)) return Map.of();
+        Map<String, String> out = new HashMap<>();
+        for (Map.Entry<String, Object> e : d.entrySet()) {
+            if (e.getValue() != null) out.put(e.getKey(), String.valueOf(e.getValue()));
+        }
+        return out;
+    }
+
+    private static String hostOf(Document hello, String key) {
+        Object v = hello.get(key);
+        return v == null ? "" : v.toString();
+    }
+
+    private static Integer intOrNull(Object o) {
+        if (o instanceof Number n) return n.intValue();
+        return null;
+    }
+
+    private static Long longOrNull(Object o) {
+        if (o instanceof Number n) return n.longValue();
+        return null;
+    }
+
+    private static Boolean boolOrNull(Object o) {
+        return o instanceof Boolean b ? b : null;
+    }
+
+    /* ==================== mongo helpers ================================ */
+
+    private static Document runAdmin(MongoService svc, Document cmd) {
+        cmd.put("maxTimeMS", COMMAND_TIMEOUT_MS);
+        return svc.database("admin").runCommand(cmd);
+    }
+
+    /** Returns {@code null} instead of throwing on benign refusals (standalone, missing privileges). */
+    private static Document safeRunAdmin(MongoService svc, Document cmd) {
+        try {
+            return runAdmin(svc, cmd);
+        } catch (MongoCommandException mce) {
+            return null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+}
