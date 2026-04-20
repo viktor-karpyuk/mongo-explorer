@@ -120,8 +120,10 @@ public final class DryRunRenderer {
 
     private static DryRunResult renderTagRange(String ns, Map<String, Object> min,
                                                Map<String, Object> max, String zone) {
+        // Real wire command: admin.{updateZoneKeyRange: ns, min, max, zone}.
+        // Matching the server shape means OpsExecutor forwards commandBson() as-is.
         Map<String, Object> body = ordered();
-        body.put("addTagRange", ns);
+        body.put("updateZoneKeyRange", ns);
         body.put("min",  min);
         body.put("max",  max);
         body.put("zone", zone);
@@ -134,10 +136,12 @@ public final class DryRunRenderer {
 
     private static DryRunResult renderRemoveTagRange(String ns, Map<String, Object> min,
                                                      Map<String, Object> max) {
+        // Removing a zone key range is the same admin command with zone = null.
         Map<String, Object> body = ordered();
-        body.put("removeTagRange", ns);
+        body.put("updateZoneKeyRange", ns);
         body.put("min", min);
         body.put("max", max);
+        body.put("zone", null);
         String summary = String.format("Remove tag range [%s, %s) on %s.", min, max, ns);
         String predicted = String.format(
                 "Documents in %s with shard-key in [%s, %s) are no longer zone-constrained.", ns, min, max);

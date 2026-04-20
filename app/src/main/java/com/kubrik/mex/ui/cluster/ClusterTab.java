@@ -48,11 +48,13 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
     private final AuditPane auditPane;
     private final BalancerPane balancerPane;
     private final ChunkDistributionPane chunkPane;
+    private final ZonesPane zonesPane;
     private final EventBus.Subscription topoSub;
 
     public ClusterTab(String connectionId, EventBus bus, ConnectionManager connManager,
                       OpsAuditDao auditDao, OpsExecutor opsExecutor,
                       BalancerPane.BalancerHandler balancerHandler,
+                      ZonesPane.ZonesHandler zonesHandler,
                       CurrentOpPane.KillOpHandler killHandler,
                       TopologyPane.RsAdminHandler adminHandler) {
         this.connectionId = connectionId;
@@ -67,15 +69,20 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         this.auditPane = new AuditPane(connectionId, auditDao, bus);
         this.balancerPane = new BalancerPane(connectionId, connManager, opsExecutor, balancerHandler);
         this.chunkPane = new ChunkDistributionPane(connectionId, connManager);
-        SplitPane balancerSplit = new SplitPane(balancerPane, chunkPane);
-        balancerSplit.setOrientation(Orientation.VERTICAL);
-        balancerSplit.setDividerPositions(0.35);
+        this.zonesPane = new ZonesPane(connectionId, connManager, opsExecutor, zonesHandler);
+        // Nested TabPane inside the Balancer sub-tab keeps the three surfaces
+        // legible without a triple vertical split that squeezes every section.
+        TabPane balancerTabs = new TabPane(
+                closableOff("Controls", balancerPane),
+                closableOff("Chunks", chunkPane),
+                closableOff("Zones", zonesPane));
+        balancerTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         SplitPane opsSplit = new SplitPane(currentOpPane, lockInfoPane);
         opsSplit.setOrientation(Orientation.VERTICAL);
         opsSplit.setDividerPositions(0.72);
         this.topologyTab = tab("Topology", topologyPane);
         this.opsTab      = tab("Ops",       opsSplit);
-        this.balancerTab = tab("Balancer",  balancerSplit);
+        this.balancerTab = tab("Balancer",  balancerTabs);
         this.oplogTab    = tab("Oplog",     oplogPane);
         this.auditTab    = tab("Audit",     auditPane);
         this.poolsTab    = tab("Pools",     connPoolPane);
@@ -107,6 +114,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         try { auditPane.close(); } catch (Exception ignored) {}
         try { balancerPane.close(); } catch (Exception ignored) {}
         try { chunkPane.close(); } catch (Exception ignored) {}
+        try { zonesPane.close(); } catch (Exception ignored) {}
     }
 
     /* =========================== internals ============================== */
@@ -126,6 +134,11 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         Tab t = new Tab(name, content);
         t.setClosable(false);
         return t;
+    }
+
+    /** Alias for {@link #tab} used by the nested balancer TabPane. */
+    private static Tab closableOff(String name, javafx.scene.Node content) {
+        return tab(name, content);
     }
 
     private static VBox placeholder(String message) {

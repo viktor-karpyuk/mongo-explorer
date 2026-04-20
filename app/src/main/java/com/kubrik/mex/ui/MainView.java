@@ -13,6 +13,7 @@ import com.kubrik.mex.ui.cluster.BalancerPane;
 import com.kubrik.mex.ui.cluster.ClusterTab;
 import com.kubrik.mex.ui.cluster.CurrentOpPane;
 import com.kubrik.mex.ui.cluster.TopologyPane;
+import com.kubrik.mex.ui.cluster.ZonesPane;
 import com.kubrik.mex.ui.migration.MigrationsTab;
 import com.kubrik.mex.ui.migration.MigrationWizard;
 import com.kubrik.mex.monitoring.model.MetricId;
@@ -60,6 +61,7 @@ public class MainView extends BorderPane {
     private final OpsAuditDao opsAuditDao;
     private final OpsExecutor opsExecutor;
     private final BalancerPane.BalancerHandler balancerHandler;
+    private final ZonesPane.ZonesHandler zonesHandler;
 
     private final ConnectionTree connTree;
     private final TabPane tabs = new TabPane();
@@ -88,7 +90,8 @@ public class MainView extends BorderPane {
                     TopologyPane.RsAdminHandler rsAdminHandler,
                     OpsAuditDao opsAuditDao,
                     OpsExecutor opsExecutor,
-                    BalancerPane.BalancerHandler balancerHandler) {
+                    BalancerPane.BalancerHandler balancerHandler,
+                    ZonesPane.ZonesHandler zonesHandler) {
         this.manager = manager;
         this.connectionStore = connectionStore;
         this.historyStore = historyStore;
@@ -101,6 +104,7 @@ public class MainView extends BorderPane {
         this.opsAuditDao = opsAuditDao;
         this.opsExecutor = opsExecutor;
         this.balancerHandler = balancerHandler;
+        this.zonesHandler = zonesHandler;
 
         this.connTree = new ConnectionTree(manager, connectionStore, events);
         this.connTree.setOpenHandler(new ConnectionTree.OpenHandler() {
@@ -429,7 +433,7 @@ public class MainView extends BorderPane {
             return;
         }
         ClusterTab body = new ClusterTab(connectionId, events, manager, opsAuditDao,
-                opsExecutor, balancerHandler, killOpHandler, rsAdminHandler);
+                opsExecutor, balancerHandler, zonesHandler, killOpHandler, rsAdminHandler);
         MongoConnection conn = connectionStore.get(connectionId);
         String title = "Cluster · " + (conn != null ? conn.name() : connectionId);
         Tab t = new Tab(title, body);

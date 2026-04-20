@@ -20,6 +20,7 @@ import com.kubrik.mex.ui.cluster.FreezeDialog;
 import com.kubrik.mex.ui.cluster.KillOpDialog;
 import com.kubrik.mex.ui.cluster.StepDownDialog;
 import com.kubrik.mex.ui.cluster.TopologyPane;
+import com.kubrik.mex.ui.cluster.ZonesPane;
 import com.kubrik.mex.migration.MigrationService;
 import com.kubrik.mex.migration.gate.PreconditionGate;
 import com.kubrik.mex.migration.schedule.MigrationScheduler;
@@ -197,10 +198,18 @@ public class Main extends Application {
             @Override public String callerUser() { return finalCallerUser; }
             @Override public String callerHost() { return finalCallerHost; }
         };
+        ZonesPane.ZonesHandler zonesHandler = new ZonesPane.ZonesHandler() {
+            @Override public boolean allowed(String connectionId) {
+                return roleProbeService.currentOrProbe(connectionId)
+                        .hasAny(java.util.List.of("clusterManager", "root"));
+            }
+            @Override public String callerUser() { return finalCallerUser; }
+            @Override public String callerHost() { return finalCallerHost; }
+        };
 
         MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
                 migrationService, monitoringService, db, killOpHandler, rsAdminHandler,
-                opsAuditDao, opsExecutor, balancerHandler);
+                opsAuditDao, opsExecutor, balancerHandler, zonesHandler);
 
         // If a previous session left unfinished migrations behind, surface the recovery panel
         // as soon as the UI is up. See docs/mvp-functional-spec.md §4.6.

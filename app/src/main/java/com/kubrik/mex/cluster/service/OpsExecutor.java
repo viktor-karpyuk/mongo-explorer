@@ -128,6 +128,8 @@ public final class OpsExecutor {
             case Command.BalancerStop  b -> svc.database("admin").runCommand(preview.commandBson());
             case Command.BalancerWindow w -> dispatchBalancerWindow(svc, w);
             case Command.MoveChunk m     -> svc.database("admin").runCommand(preview.commandBson());
+            case Command.AddTagRange a   -> svc.database("admin").runCommand(preview.commandBson());
+            case Command.RemoveTagRange r -> svc.database("admin").runCommand(preview.commandBson());
             default -> throw new UnsupportedOperationException(
                     "Dispatch for " + cmd.name() + " lands with a later Q2.4 phase.");
         };
