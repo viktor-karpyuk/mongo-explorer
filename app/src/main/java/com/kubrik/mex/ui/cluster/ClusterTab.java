@@ -41,6 +41,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
     private final TopologyPane topologyPane;
     private final CurrentOpPane currentOpPane;
     private final LockInfoPane lockInfoPane;
+    private final ConnPoolPane connPoolPane;
     private final EventBus.Subscription topoSub;
 
     public ClusterTab(String connectionId, EventBus bus, ConnectionManager connManager) {
@@ -51,6 +52,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         this.topologyPane = new TopologyPane(connectionId, bus);
         this.currentOpPane = new CurrentOpPane(connectionId, connManager);
         this.lockInfoPane = new LockInfoPane(connectionId, connManager);
+        this.connPoolPane = new ConnPoolPane(connectionId, connManager);
         SplitPane opsSplit = new SplitPane(currentOpPane, lockInfoPane);
         opsSplit.setOrientation(Orientation.VERTICAL);
         opsSplit.setDividerPositions(0.72);
@@ -59,7 +61,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         this.balancerTab = tab("Balancer",  placeholder("Balancer controls land with Q2.4-G."));
         this.oplogTab    = tab("Oplog",     placeholder("Oplog gauge + tail lands with Q2.4-E."));
         this.auditTab    = tab("Audit",     placeholder("Audit pane lands with Q2.4-H."));
-        this.poolsTab    = tab("Pools",     placeholder("Connection-pool viewer lands with Q2.4-D."));
+        this.poolsTab    = tab("Pools",     connPoolPane);
 
         tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         tabPane.getTabs().addAll(topologyTab, opsTab, oplogTab, auditTab, poolsTab);
@@ -83,6 +85,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         try { topologyPane.close(); } catch (Exception ignored) {}
         try { currentOpPane.close(); } catch (Exception ignored) {}
         try { lockInfoPane.close(); } catch (Exception ignored) {}
+        try { connPoolPane.close(); } catch (Exception ignored) {}
     }
 
     /* =========================== internals ============================== */
