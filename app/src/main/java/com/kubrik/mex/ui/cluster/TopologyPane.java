@@ -8,10 +8,13 @@ import com.kubrik.mex.cluster.model.Mongos;
 import com.kubrik.mex.cluster.model.Shard;
 import com.kubrik.mex.cluster.model.TopologySnapshot;
 import com.kubrik.mex.cluster.service.HealthScorer;
+import com.kubrik.mex.core.ConnectionManager;
+import com.kubrik.mex.core.MongoService;
 import com.kubrik.mex.events.EventBus;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.control.Button;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
@@ -61,18 +64,22 @@ public final class TopologyPane extends VBox implements AutoCloseable {
 
     private final String connectionId;
     private final EventBus bus;
+    private final ConnectionManager connManager;
     private final RsAdminHandler adminHandler;
     private final EventBus.Subscription sub;
 
     private final Label headline = new Label("Resolving topology…");
     private final Label subline = new Label("Waiting for the first sample.");
     private final Label healthPill = new Label();
+    private final Button viewConfBtn = new Button("View rs.conf");
     private final VBox warningBox = new VBox(4);
     private final VBox body = new VBox(12);
 
-    public TopologyPane(String connectionId, EventBus bus, RsAdminHandler adminHandler) {
+    public TopologyPane(String connectionId, EventBus bus, ConnectionManager connManager,
+                        RsAdminHandler adminHandler) {
         this.connectionId = connectionId;
         this.bus = bus;
+        this.connManager = connManager;
         this.adminHandler = adminHandler;
 
         setSpacing(14);
@@ -85,7 +92,10 @@ public final class TopologyPane extends VBox implements AutoCloseable {
 
         Region grow = new Region();
         HBox.setHgrow(grow, Priority.ALWAYS);
-        HBox header = new HBox(12, new VBox(2, headline, subline), grow, healthPill);
+        viewConfBtn.setVisible(false);
+        viewConfBtn.managedProperty().bind(viewConfBtn.visibleProperty());
+        viewConfBtn.setOnAction(e -> openRsConf());
+        HBox header = new HBox(12, new VBox(2, headline, subline), grow, viewConfBtn, healthPill);
         header.setAlignment(Pos.CENTER_LEFT);
 
         warningBox.setVisible(false);
@@ -124,11 +134,20 @@ public final class TopologyPane extends VBox implements AutoCloseable {
         updateHeader(snap);
         updateWarnings(snap.warnings());
 
+        viewConfBtn.setVisible(snap.clusterKind() != ClusterKind.STANDALONE);
         switch (snap.clusterKind()) {
             case STANDALONE -> renderStandalone(snap);
             case REPLSET    -> renderReplset(snap);
             case SHARDED    -> renderSharded(snap);
         }
+    }
+
+    private void openRsConf() {
+        if (connManager == null) return;
+        MongoService svc = connManager.service(connectionId);
+        if (svc == null) return;
+        javafx.stage.Window owner = getScene() == null ? null : getScene().getWindow();
+        ReplConfigDialog.show(owner, connectionId, svc);
     }
 
     private void updateHeader(TopologySnapshot snap) {

@@ -51,7 +51,7 @@ public final class ClusterTab extends BorderPane implements AutoCloseable {
         this.bus = bus;
         this.connManager = connManager;
 
-        this.topologyPane = new TopologyPane(connectionId, bus, adminHandler);
+        this.topologyPane = new TopologyPane(connectionId, bus, connManager, adminHandler);
         this.currentOpPane = new CurrentOpPane(connectionId, connManager, killHandler);
         this.lockInfoPane = new LockInfoPane(connectionId, connManager);
         this.connPoolPane = new ConnPoolPane(connectionId, connManager);
