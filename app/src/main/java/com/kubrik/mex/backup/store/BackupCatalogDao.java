@@ -124,6 +124,21 @@ public final class BackupCatalogDao {
         }
     }
 
+    /** Rows for a policy with {@code started_at >= sinceMs}. Used by the
+     *  scheduler's missed-runs backfill so a policy with a years-long history
+     *  doesn't pull every row off disk just to compare against the 24h window. */
+    public List<BackupCatalogRow> listForPolicySince(long policyId, long sinceMs) {
+        try (PreparedStatement ps = db.connection().prepareStatement(
+                "SELECT * FROM backup_catalog WHERE policy_id = ? AND started_at >= ? " +
+                        "ORDER BY started_at DESC, id DESC")) {
+            ps.setLong(1, policyId);
+            ps.setLong(2, sinceMs);
+            return read(ps);
+        } catch (SQLException e) {
+            return List.of();
+        }
+    }
+
     public int deleteOlderThan(long cutoffMs) {
         try (PreparedStatement ps = db.connection().prepareStatement(
                 "DELETE FROM backup_catalog WHERE finished_at IS NOT NULL AND finished_at < ?")) {

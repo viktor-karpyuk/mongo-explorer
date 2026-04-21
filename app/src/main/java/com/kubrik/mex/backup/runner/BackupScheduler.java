@@ -169,7 +169,10 @@ public final class BackupScheduler implements AutoCloseable {
             catch (IllegalArgumentException bad) { continue; }
 
             // Collect every firing in [floor, now) by walking nextFireAfter.
-            List<BackupCatalogRow> existing = catalog.listForPolicy(p.id());
+            // listForPolicySince is bounded by the backfill window so a policy
+            // with years of history doesn't pull every row for a 24h check.
+            List<BackupCatalogRow> existing =
+                    catalog.listForPolicySince(p.id(), floor.toEpochMilli());
             Set<Long> existingStartMinuteMs = new HashSet<>();
             for (BackupCatalogRow row : existing) {
                 existingStartMinuteMs.add(row.startedAt() / 60_000 * 60_000);

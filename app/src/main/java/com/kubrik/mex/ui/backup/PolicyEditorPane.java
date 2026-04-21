@@ -233,9 +233,48 @@ public final class PolicyEditorPane extends BorderPane {
 
     private List<String> validateForm() {
         if (connection.get() == null) return List.of("pick a connection first");
+
+        // Per-line scope checks surface the specific problem (empty list,
+        // missing db.collection separator) instead of the old catch-all
+        // "scope is empty / malformed" that hid the real cause.
+        List<String> scopeErrors = validateScopeText();
+        if (!scopeErrors.isEmpty()) return scopeErrors;
+
+        // Guard against a deleted sink: the picker could hold a stale selection
+        // after the user removes a sink from the Sinks editor in another pane.
+        SinkRecord pickedSink = sinkPicker.getValue();
+        if (pickedSink != null && sinkDao.byId(pickedSink.id()).isEmpty()) {
+            return List.of("selected sink was deleted — pick another");
+        }
+
         BackupPolicy draft = buildFromForm(policyListView.getSelectionModel().getSelectedItem());
-        if (draft == null) return List.of("scope list is empty / malformed");
+        if (draft == null) return List.of("archive / retention values are out of range");
         return PolicyValidator.validate(draft);
+    }
+
+    /** Line-level checks over the scope textarea. Namespaces must all contain
+     *  a dot separator, and the databases/namespaces modes both require at
+     *  least one entry. WholeCluster ignores the textarea entirely. */
+    private List<String> validateScopeText() {
+        if (scopeWhole.isSelected()) return List.of();
+        List<String> lines = parseList(scopeList.getText());
+        if (lines.isEmpty()) {
+            return List.of(scopeDatabases.isSelected()
+                    ? "databases scope needs at least one database name"
+                    : "namespaces scope needs at least one db.collection entry");
+        }
+        if (scopeNamespaces.isSelected()) {
+            List<String> errs = new java.util.ArrayList<>();
+            int idx = 0;
+            for (String ns : lines) {
+                idx++;
+                if (!ns.contains(".")) {
+                    errs.add("line " + idx + ": \"" + ns + "\" — expected db.collection");
+                }
+            }
+            return errs;
+        }
+        return List.of();
     }
 
     private void onSave() {
