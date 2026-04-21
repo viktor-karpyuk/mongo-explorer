@@ -2,6 +2,7 @@ package com.kubrik.mex;
 
 import atlantafx.base.theme.PrimerLight;
 import com.kubrik.mex.backup.pitr.PitrPlanner;
+import com.kubrik.mex.backup.rehearse.DrRehearsalReport;
 import com.kubrik.mex.backup.runner.BackupScheduler;
 import com.kubrik.mex.backup.runner.RestoreService;
 import com.kubrik.mex.backup.store.BackupCatalogDao;
@@ -249,12 +250,16 @@ public class Main extends Application {
         // Q2.5-F — PITR planner walks the catalog's oplog windows to pick
         // the covering backup for a target timestamp.
         PitrPlanner pitrPlanner = new PitrPlanner(backupCatalogDao);
+        // Q2.5-G — DR rehearsal report compiles ops_audit.restore.rehearse
+        // rows into JSON / HTML bundles.
+        DrRehearsalReport rehearsalReport = new DrRehearsalReport(opsAuditDao);
 
         MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
                 migrationService, monitoringService, db, killOpHandler, rsAdminHandler,
                 opsAuditDao, opsExecutor, balancerHandler, zonesHandler, killSwitch,
                 backupPolicyDao, backupCatalogDao, backupFileDao, sinkDao, catalogVerifier,
-                restoreService, pitrPlanner, finalCallerUser, finalCallerHost);
+                restoreService, pitrPlanner, rehearsalReport,
+                finalCallerUser, finalCallerHost);
 
         // If a previous session left unfinished migrations behind, surface the recovery panel
         // as soon as the UI is up. See docs/mvp-functional-spec.md §4.6.

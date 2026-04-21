@@ -1,6 +1,7 @@
 package com.kubrik.mex.ui.backup;
 
 import com.kubrik.mex.backup.pitr.PitrPlanner;
+import com.kubrik.mex.backup.rehearse.DrRehearsalReport;
 import com.kubrik.mex.backup.runner.RestoreService;
 import com.kubrik.mex.backup.store.BackupCatalogDao;
 import com.kubrik.mex.backup.store.BackupFileDao;
@@ -30,13 +31,14 @@ public final class BackupsTab extends BorderPane implements AutoCloseable {
     public BackupsTab(BackupPolicyDao policyDao, BackupCatalogDao catalogDao,
                       BackupFileDao fileDao, SinkDao sinkDao,
                       CatalogVerifier verifier, RestoreService restoreService,
-                      PitrPlanner pitrPlanner,
+                      PitrPlanner pitrPlanner, DrRehearsalReport rehearsalReport,
                       String callerUser, String callerHost,
                       EventBus bus,
                       ConnectionManager connManager, ConnectionStore connectionStore) {
         this.policyPane = new PolicyEditorPane(policyDao, sinkDao, connManager, connectionStore);
         this.historyPane = new BackupHistoryPane(catalogDao, fileDao, verifier,
-                restoreService, pitrPlanner, callerUser, callerHost, bus);
+                restoreService, pitrPlanner, rehearsalReport,
+                callerUser, callerHost, bus);
         // Share the connection selection across both sub-tabs.
         policyPane.connectionProperty().addListener((obs, o, n) ->
                 historyPane.connectionProperty().set(n));

@@ -2,6 +2,7 @@ package com.kubrik.mex.ui.backup;
 
 import com.kubrik.mex.backup.event.BackupEvent;
 import com.kubrik.mex.backup.pitr.PitrPlanner;
+import com.kubrik.mex.backup.rehearse.DrRehearsalReport;
 import com.kubrik.mex.backup.runner.RestoreService;
 import com.kubrik.mex.backup.store.BackupCatalogDao;
 import com.kubrik.mex.backup.store.BackupCatalogRow;
@@ -32,6 +33,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.stage.FileChooser;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -60,6 +62,7 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
     private final CatalogVerifier verifier;
     private final RestoreService restoreService;
     private final PitrPlanner pitrPlanner;
+    private final DrRehearsalReport rehearsalReport;
     private final String callerUser;
     private final String callerHost;
     private final EventBus bus;
@@ -76,13 +79,14 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
 
     public BackupHistoryPane(BackupCatalogDao catalog, BackupFileDao files,
                              CatalogVerifier verifier, RestoreService restoreService,
-                             PitrPlanner pitrPlanner,
+                             PitrPlanner pitrPlanner, DrRehearsalReport rehearsalReport,
                              String callerUser, String callerHost, EventBus bus) {
         this.catalog = catalog;
         this.files = files;
         this.verifier = verifier;
         this.restoreService = restoreService;
         this.pitrPlanner = pitrPlanner;
+        this.rehearsalReport = rehearsalReport;
         this.callerUser = callerUser;
         this.callerHost = callerHost;
         this.bus = bus;
@@ -128,8 +132,11 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
             PitrPickerDialog.show(getScene() == null ? null : getScene().getWindow(),
                     cx, pitrPlanner, restoreService, callerUser, callerHost);
         });
+        Button reportBtn = new Button("Rehearsal report…");
+        reportBtn.setDisable(rehearsalReport == null);
+        reportBtn.setOnAction(e -> exportRehearsalReport());
         HBox row = new HBox(10, small("status"), statusFilter,
-                small("search"), searchField, grow, pitrBtn);
+                small("search"), searchField, grow, reportBtn, pitrBtn);
         row.setAlignment(Pos.CENTER_LEFT);
         row.setPadding(new Insets(0, 0, 10, 0));
         return row;
@@ -238,6 +245,36 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
                     }
                 }
             }));
+        });
+    }
+
+    private void exportRehearsalReport() {
+        if (rehearsalReport == null) return;
+        javafx.stage.Window win = getScene() == null ? null : getScene().getWindow();
+        FileChooser fc = new FileChooser();
+        fc.setTitle("Export DR rehearsal report");
+        fc.setInitialFileName("dr-rehearsal-report-" + Instant.now().getEpochSecond() + ".html");
+        fc.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("HTML", "*.html"),
+                new FileChooser.ExtensionFilter("JSON", "*.json"));
+        java.io.File out = fc.showSaveDialog(win);
+        if (out == null) return;
+        // 30-day window by default; the picker doesn't expose a window editor
+        // in v2.5.0 — a dedicated window-picker dialog is a follow-up.
+        long sinceMs = System.currentTimeMillis() - 30L * 86_400_000L;
+        Thread.startVirtualThread(() -> {
+            try {
+                DrRehearsalReport.Bundle b = rehearsalReport.build(sinceMs, 5_000);
+                java.nio.file.Path target = java.nio.file.Path.of(out.getAbsolutePath());
+                if (out.getName().toLowerCase().endsWith(".json")) rehearsalReport.writeJson(b, target);
+                else rehearsalReport.writeHtml(b, target);
+                Platform.runLater(() -> footer.setText(
+                        "Exported " + b.rowCount() + " rehearsal rows → " + out.getName()));
+            } catch (Exception ex) {
+                Platform.runLater(() -> footer.setText(
+                        "Report export failed: " + ex.getClass().getSimpleName()
+                                + " — " + ex.getMessage()));
+            }
         });
     }
 
