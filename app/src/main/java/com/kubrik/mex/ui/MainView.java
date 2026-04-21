@@ -300,7 +300,12 @@ public class MainView extends BorderPane {
                 item("Backups",
                         new KeyCodeCombination(KeyCode.B,
                                 KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
-                        this::openBackupsTab));
+                        this::openBackupsTab),
+                // v2.6 UI-SEC — Security tab for the connection in context.
+                item("Security",
+                        new KeyCodeCombination(KeyCode.S,
+                                KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
+                        this::openSecurityTabForContext));
 
         // ----- Help -----
         Menu help = new Menu("Help");
@@ -490,6 +495,14 @@ public class MainView extends BorderPane {
      *  the bus subscriptions held by {@code TopologyPane} / {@code ClusterTab}. */
     private final java.util.Map<String, Tab> clusterTabs = new java.util.HashMap<>();
 
+    // v2.6 Q2.6-UI — per-connection Security tabs + lazy-init shared DAOs.
+    private final java.util.Map<String, Tab> securityTabs = new java.util.HashMap<>();
+    private com.kubrik.mex.security.baseline.SecurityBaselineDao securityBaselineDao;
+    private com.kubrik.mex.security.drift.DriftAckDao driftAckDao;
+    private com.kubrik.mex.security.cis.CisSuppressionsDao cisSuppressionsDao;
+    private com.kubrik.mex.security.audit.AuditIndex auditIndex;
+    private com.kubrik.mex.security.EvidenceSigner evidenceSigner;
+
     /** Keyboard-accelerator entry point. Picks the tree's current connection
      *  context, falling back to the first connected one; if nothing is
      *  connected the status bar surfaces the reason instead of silently no-op'ing. */
@@ -557,6 +570,61 @@ public class MainView extends BorderPane {
         clusterTabs.put(connectionId, t);
         tabs.getTabs().add(t);
         tabs.getSelectionModel().select(t);
+    }
+
+    /**
+     * v2.6 Q2.6-UI — Cmd/Ctrl+Alt+S opens a per-connection Security tab
+     * with the full sub-tab set: Roles, Audit, Drift, Certificates,
+     * Auth, Encryption, CIS. Lazy-initialised DAOs + EvidenceSigner are
+     * shared across every Security tab in the session.
+     */
+    private void openSecurityTabForContext() {
+        String selected = resolveClusterContext();
+        if (selected == null) return;
+        openSecurityTab(selected);
+    }
+
+    private void openSecurityTab(String connectionId) {
+        Tab existing = securityTabs.get(connectionId);
+        if (existing != null && tabs.getTabs().contains(existing)) {
+            tabs.getSelectionModel().select(existing);
+            return;
+        }
+        com.kubrik.mex.core.MongoService svc = manager.service(connectionId);
+        if (svc == null) {
+            statusConn.setText("Security tab: connect the cluster first.");
+            return;
+        }
+        ensureSecurityDaos();
+
+        java.util.List<String> members = java.util.List.of();  // cluster-aggregate fallback;
+                                                                // per-node expansion lands with Q2.6-K.
+
+        com.kubrik.mex.ui.security.SecurityTab body =
+                new com.kubrik.mex.ui.security.SecurityTab(
+                        connectionId, callerUser, svc, members,
+                        securityBaselineDao, driftAckDao, cisSuppressionsDao,
+                        auditIndex, evidenceSigner);
+        MongoConnection conn = connectionStore.get(connectionId);
+        String title = "Security · " + (conn != null ? conn.name() : connectionId);
+        Tab t = new Tab(title, body);
+        t.setOnClosed(e -> securityTabs.remove(connectionId));
+        securityTabs.put(connectionId, t);
+        tabs.getTabs().add(t);
+        tabs.getSelectionModel().select(t);
+    }
+
+    private void ensureSecurityDaos() {
+        if (securityBaselineDao != null) return;
+        securityBaselineDao = new com.kubrik.mex.security.baseline.SecurityBaselineDao(database);
+        driftAckDao = new com.kubrik.mex.security.drift.DriftAckDao(database);
+        cisSuppressionsDao = new com.kubrik.mex.security.cis.CisSuppressionsDao(database);
+        auditIndex = new com.kubrik.mex.security.audit.AuditIndex(database);
+        // EvidenceSigner mints the HMAC key on first use and stores it
+        // AES-wrapped via Crypto. Constructing a fresh Crypto here is
+        // safe — it just reads the per-install keyfile.
+        evidenceSigner = new com.kubrik.mex.security.EvidenceSigner(
+                database, new com.kubrik.mex.core.Crypto());
     }
 
     private void openBackupsTab() {
