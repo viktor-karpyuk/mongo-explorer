@@ -1,6 +1,7 @@
 package com.kubrik.mex.ui.backup;
 
 import com.kubrik.mex.backup.event.BackupEvent;
+import com.kubrik.mex.backup.pitr.PitrPlanner;
 import com.kubrik.mex.backup.runner.RestoreService;
 import com.kubrik.mex.backup.store.BackupCatalogDao;
 import com.kubrik.mex.backup.store.BackupCatalogRow;
@@ -17,6 +18,7 @@ import javafx.collections.transformation.FilteredList;
 import javafx.collections.transformation.SortedList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.control.Button;
 import javafx.scene.control.ChoiceBox;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
@@ -57,6 +59,7 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
     private final BackupFileDao files;
     private final CatalogVerifier verifier;
     private final RestoreService restoreService;
+    private final PitrPlanner pitrPlanner;
     private final String callerUser;
     private final String callerHost;
     private final EventBus bus;
@@ -73,11 +76,13 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
 
     public BackupHistoryPane(BackupCatalogDao catalog, BackupFileDao files,
                              CatalogVerifier verifier, RestoreService restoreService,
+                             PitrPlanner pitrPlanner,
                              String callerUser, String callerHost, EventBus bus) {
         this.catalog = catalog;
         this.files = files;
         this.verifier = verifier;
         this.restoreService = restoreService;
+        this.pitrPlanner = pitrPlanner;
         this.callerUser = callerUser;
         this.callerHost = callerHost;
         this.bus = bus;
@@ -115,8 +120,16 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
 
         Region grow = new Region();
         HBox.setHgrow(grow, Priority.ALWAYS);
+        Button pitrBtn = new Button("PITR…");
+        pitrBtn.setDisable(pitrPlanner == null);
+        pitrBtn.setOnAction(e -> {
+            String cx = connection.get();
+            if (cx == null || pitrPlanner == null) return;
+            PitrPickerDialog.show(getScene() == null ? null : getScene().getWindow(),
+                    cx, pitrPlanner, restoreService, callerUser, callerHost);
+        });
         HBox row = new HBox(10, small("status"), statusFilter,
-                small("search"), searchField, grow);
+                small("search"), searchField, grow, pitrBtn);
         row.setAlignment(Pos.CENTER_LEFT);
         row.setPadding(new Insets(0, 0, 10, 0));
         return row;

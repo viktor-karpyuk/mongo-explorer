@@ -75,6 +75,7 @@ public class MainView extends BorderPane {
     private final com.kubrik.mex.backup.store.SinkDao sinkDao;
     private final com.kubrik.mex.backup.verify.CatalogVerifier catalogVerifier;
     private final com.kubrik.mex.backup.runner.RestoreService restoreService;
+    private final com.kubrik.mex.backup.pitr.PitrPlanner pitrPlanner;
     private final String callerUser;
     private final String callerHost;
 
@@ -114,6 +115,7 @@ public class MainView extends BorderPane {
                     com.kubrik.mex.backup.store.SinkDao sinkDao,
                     com.kubrik.mex.backup.verify.CatalogVerifier catalogVerifier,
                     com.kubrik.mex.backup.runner.RestoreService restoreService,
+                    com.kubrik.mex.backup.pitr.PitrPlanner pitrPlanner,
                     String callerUser, String callerHost) {
         this.manager = manager;
         this.connectionStore = connectionStore;
@@ -135,6 +137,7 @@ public class MainView extends BorderPane {
         this.sinkDao = sinkDao;
         this.catalogVerifier = catalogVerifier;
         this.restoreService = restoreService;
+        this.pitrPlanner = pitrPlanner;
         this.callerUser = callerUser;
         this.callerHost = callerHost;
 
@@ -560,7 +563,7 @@ public class MainView extends BorderPane {
         }
         if (backupsView == null) {
             backupsView = new BackupsTab(backupPolicyDao, backupCatalogDao, backupFileDao,
-                    sinkDao, catalogVerifier, restoreService,
+                    sinkDao, catalogVerifier, restoreService, pitrPlanner,
                     callerUser, callerHost, events, manager, connectionStore);
         }
         backupsTab = new Tab("Backups", backupsView);
