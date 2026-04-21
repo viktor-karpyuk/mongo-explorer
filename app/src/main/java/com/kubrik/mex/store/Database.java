@@ -606,6 +606,25 @@ public class Database implements AutoCloseable {
                     created_at      INTEGER NOT NULL
                 )
                 """);
+
+            // v2.6 Q2.6-C3 — FTS5 virtual table for the native MongoDB audit
+            // log. Deferred from the Q2.6-A1 migration because the parser and
+            // FTS path land together. Unindexed columns (connection_id, ts)
+            // drive the pane's per-connection filter + time-range queries
+            // without bloating the FTS index.
+            st.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS audit_native_fts
+                    USING fts5(
+                        connection_id UNINDEXED,
+                        atype,
+                        ts UNINDEXED,
+                        who,
+                        from_host,
+                        param_json,
+                        raw_json,
+                        tokenize = 'porter ascii'
+                    )
+                """);
         }
     }
 
