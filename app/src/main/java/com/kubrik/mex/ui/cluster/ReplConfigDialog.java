@@ -47,7 +47,10 @@ public final class ReplConfigDialog {
         stage.setTitle("rs.conf · " + connectionLabel);
         stage.setResizable(true);
         stage.setMinWidth(640);
-        stage.setMinHeight(440);
+        // Header (~50 px) + footer (~50 px) + vertical padding + breathing
+        // room for the JSON pane — 540 keeps ≥ 400 px of scrollable config
+        // content even at the floor.
+        stage.setMinHeight(540);
 
         Label title = new Label("Replica set configuration");
         title.setStyle("-fx-font-weight: 700; -fx-font-size: 14px;");

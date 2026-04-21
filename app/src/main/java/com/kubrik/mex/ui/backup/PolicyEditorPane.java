@@ -200,22 +200,19 @@ public final class PolicyEditorPane extends BorderPane {
         gzipBox.setSelected(true);
         gzipLevel.setEditable(true);
 
-        // Tooltips mirror the label's help text so hovering over either the
-        // label or the field surfaces the same explanation.
-        installTip(nameField, HELP_NAME);
-        installTip(cronField, HELP_CRON);
-        installTip(scopeList, HELP_SCOPE);
+        // Help text is attached to the field labels only (via helpLabel()).
+        // We previously installed duplicate tooltips on every control too,
+        // but JavaFX could end up showing two popups when the cursor sat
+        // near the label/control boundary — noisy and a bit disorienting.
+        // The checkbox labels (Gzip / Enabled / Include oplog) don't get a
+        // separate helpLabel on the form, so they get their field tooltip
+        // directly.
+        installTip(gzipBox, HELP_ARCHIVE);
+        installTip(enabledBox, HELP_ENABLED);
+        installTip(oplogBox, HELP_OPLOG);
         installTip(scopeWhole, HELP_SCOPE);
         installTip(scopeDatabases, HELP_SCOPE);
         installTip(scopeNamespaces, HELP_SCOPE);
-        installTip(gzipBox, HELP_ARCHIVE);
-        installTip(gzipLevel, HELP_ARCHIVE);
-        installTip(archiveTemplate, HELP_ARCHIVE);
-        installTip(retentionCount, HELP_RETENTION);
-        installTip(retentionDays, HELP_RETENTION);
-        installTip(sinkPicker, HELP_SINK);
-        installTip(enabledBox, HELP_ENABLED);
-        installTip(oplogBox, HELP_OPLOG);
 
         sinkPicker.setConverter(new javafx.util.StringConverter<>() {
             @Override public String toString(SinkRecord s) {
@@ -246,6 +243,7 @@ public final class PolicyEditorPane extends BorderPane {
                 + "databases, where to store the files, and how long to keep "
                 + "them. Hover any label or field for a short explanation.");
         intro.setWrapText(true);
+        intro.setMaxWidth(Double.MAX_VALUE);
         intro.setStyle("-fx-text-fill: #1e40af; -fx-font-size: 11px; "
                 + "-fx-background-color: #eff6ff; -fx-border-color: #bfdbfe; "
                 + "-fx-border-radius: 4; -fx-background-radius: 4; "
@@ -358,13 +356,6 @@ public final class PolicyEditorPane extends BorderPane {
         List<String> scopeErrors = validateScopeText();
         if (!scopeErrors.isEmpty()) return scopeErrors;
 
-        // Guard against a deleted sink: the picker could hold a stale selection
-        // after the user removes a sink from the Sinks editor in another pane.
-        SinkRecord pickedSink = sinkPicker.getValue();
-        if (pickedSink != null && sinkDao.byId(pickedSink.id()).isEmpty()) {
-            return List.of("selected sink was deleted — pick another");
-        }
-
         BackupPolicy draft = buildFromForm(policyListView.getSelectionModel().getSelectedItem());
         if (draft == null) return List.of("archive / retention values are out of range");
         return PolicyValidator.validate(draft);
@@ -396,6 +387,16 @@ public final class PolicyEditorPane extends BorderPane {
     }
 
     private void onSave() {
+        // Sink orphan check runs here (not in live validation) so we don't
+        // hit SQLite on every keystroke. If another pane deleted the sink
+        // while this form was open, surface a specific error and refuse
+        // the save instead of letting the FK reference go stale.
+        SinkRecord pickedSink = sinkPicker.getValue();
+        if (pickedSink != null && sinkDao.byId(pickedSink.id()).isEmpty()) {
+            errorLabel.setText("selected sink was deleted — pick another");
+            sinkPicker.setValue(null);
+            return;
+        }
         BackupPolicy existing = policyListView.getSelectionModel().getSelectedItem();
         BackupPolicy draft = buildFromForm(existing);
         if (draft == null) return;

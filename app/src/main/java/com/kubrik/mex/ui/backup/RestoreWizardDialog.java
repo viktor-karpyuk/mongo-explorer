@@ -8,6 +8,7 @@ import com.kubrik.mex.cluster.dryrun.DryRunRenderer;
 import com.kubrik.mex.cluster.safety.DryRunResult;
 import com.kubrik.mex.cluster.safety.TypedConfirmDialog;
 import com.kubrik.mex.cluster.safety.TypedConfirmModel;
+import com.kubrik.mex.migration.log.Redactor;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -187,14 +188,19 @@ public final class RestoreWizardDialog {
      *  from before they can enable Execute. */
     private static boolean confirmExecute(Window owner, BackupCatalogRow row,
                                           String targetUri, boolean drop, boolean oplog) {
+        // Never show the raw URI in the preview — it may carry credentials
+        // (mongodb://user:pass@host). The redactor swaps the password slot
+        // for "***" so screen-capture and session-recording tools never see
+        // the secret. Audit rows only store the sinkPath anyway.
+        String redactedUri = Redactor.defaultInstance().redact(targetUri);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("mongorestore", row.sinkPath());
-        body.put("target", targetUri);
+        body.put("target", redactedUri);
         body.put("drop", drop);
         body.put("oplogReplay", oplog);
         String json = CommandJson.render(body);
         String hash = DryRunRenderer.sha256(json);
-        String summary = "Execute restore from " + row.sinkPath() + " → " + targetUri;
+        String summary = "Execute restore from " + row.sinkPath() + " → " + redactedUri;
         String predicted = "mongorestore reads the backup tree and writes into the target cluster. "
                 + "Kill-switch and role gate still apply at dispatch. "
                 + (drop ? "Existing target namespaces are dropped first. "

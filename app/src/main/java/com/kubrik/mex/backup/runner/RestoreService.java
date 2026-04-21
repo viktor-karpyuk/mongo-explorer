@@ -48,10 +48,15 @@ public final class RestoreService {
 
     private static final Logger log = LoggerFactory.getLogger(RestoreService.class);
 
-    /** Roles the EXECUTE mode accepts — mirrors the cluster path's
-     *  destructive-command role policy. {@code restore} is the MongoDB
-     *  built-in; {@code root} dominates. */
-    static final List<String> EXECUTE_ROLES = List.of("restore", "root", "backup");
+    /** Roles the EXECUTE mode accepts. MongoDB's built-in {@code restore}
+     *  role grants the write privileges mongorestore needs; {@code root}
+     *  dominates. Note: the {@code backup} role is deliberately NOT on
+     *  this list — it grants read + mongodump rights but cannot write to
+     *  target collections, so allowing it through the restore gate would
+     *  let a backup-only operator trip a Restore they can't actually
+     *  complete. Matches v2.4 Command.allowedRoles() which never pairs
+     *  {@code backup} with write-side commands. */
+    static final List<String> EXECUTE_ROLES = List.of("restore", "root");
 
     public enum Mode { REHEARSE, EXECUTE }
 
@@ -116,8 +121,8 @@ public final class RestoreService {
             return new RestoreResult(Outcome.CANCELLED, 0, 0, "kill_switch_engaged");
         }
 
-        // Role gate for EXECUTE mode. Mirrors OpsExecutor's policy: the
-        // user must hold at least one of {restore, backup, root}. Rehearse
+        // Role gate for EXECUTE mode. Mirrors the v2.4 cluster-ops policy:
+        // the user must hold at least one of {restore, root}. Rehearse
         // bypasses this check — a dryRun into a sandbox namespace cannot
         // affect production data regardless of role.
         String roleUsed = null;
