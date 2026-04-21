@@ -1,5 +1,36 @@
 # Changelog
 
+## v2.5.1 — Backup polish + UX overhaul
+
+Patch release closing the issues raised in the post-v2.5.0 deep review plus the "Backups UI is totally broken" + rs.conf modal feedback. No schema changes; drops cleanly onto a v2.5.0 install.
+
+### Correctness fixes
+- **`BackupRunner` manifest byte-count** — the catalog's `total_bytes` and the `backup_files` row for `manifest.json` now reflect the UTF-8 byte size of the canonical JSON, not the Java `String` character count. Non-ASCII policy names (e.g. `nachtlauf-äöü`) previously triggered a verify mismatch.
+- **`BackupRunner` crash leaks** — the orchestrator body is wrapped in `try { … } finally { finaliseFail(…) if not already finalised }` so a JVM crash mid-run no longer leaves a `RUNNING` row stranded forever. Regression test pins the guard.
+- **`BackupRunner` sink path** — the runner uses `LocalFsTarget.rootPath()` directly instead of re-parsing `canonicalRoot()`, removing a latent bug when the sink root contained characters that round-trip-normalised differently.
+- **`PitrPlanner` empty-windows message** — when no catalog row has an oplog window (i.e. every backup ran with `includeOplog = false`), the planner now returns a plain-English refusal ("no backup in the catalog captured an oplog window — enable includeOplog on the policy and run a fresh backup") instead of leaking the `Long.MAX_VALUE` reduce sentinel.
+
+### Security
+- **`RestoreService` gains a role-probe gate** (`BKP-SEC-1`) — Execute mode calls `RoleProbeService.currentOrProbe(connectionId)` and refuses with `outcome=FAIL, message=role_denied` when the effective user lacks `restore` / `root` / `backup`. Rehearse mode is unchanged (safe-by-default, no role probe). Matches the three-gate pattern from v2.4 cluster ops. New tests pin the gate.
+
+### Scheduler + editor polish
+- **`BackupScheduler.backfillMissed` is bounded** — the missed-runs walk used to pull every catalog row for a policy regardless of age; now uses the new `BackupCatalogDao.listForPolicySince(policyId, sinceMs)` so the 24 h window is the only range touched.
+- **`PolicyEditorPane` sink orphan guard** — saving a policy whose selected sink was removed in another pane is refused with a specific message instead of silently falling through.
+- **Per-line scope errors** — the old catch-all "scope is empty / malformed" is replaced with line-specific feedback ("line 3: `orders` — expected db.collection"), matching the editor's live-validation contract.
+- **History pane refresh on `Started`** — `BackupEvent.Started` now prepends/upserts a `RUNNING` row into the history table instead of the table only filling on `Ended`, closing the "backup runs but history is empty" gap.
+
+### Restore confirm surface
+- **`RestoreWizardDialog` uses the shared `TypedConfirmDialog`** from v2.4 cluster ops — preview JSON, summary, predicted effect, and preview-hash footer. The old stand-alone `TextInputDialog` is gone; Execute mode now has the same confirm UX as `stepDown` / `moveChunk` / `addTagRange`.
+
+### UI overhaul (feedback-driven)
+- **Backups tab** — connection dropdown renders `Name (cluster-id)` instead of the previous `Name · id`. Every form label is title-cased with a bold foreground (Name, Schedule (cron), Scope, Archive, Retention, Destination, Options). Inline helpers read as sentences ("Keep last N runs or up to M days — whichever is tighter") instead of raw technical tokens. An info banner explains what a backup policy is, and every label + field now carries a hover `Tooltip` with plain-English explanations of cron grammar, scope choices, gzip levels, retention semantics, and when to include the oplog — enough context for operators who aren't seasoned DBAs. History pane column headers and filter labels are capitalised; PITR + Rehearsal-report buttons gain hover tooltips.
+- **`ReplConfigDialog` (Cluster → View rs.conf)** — window is explicitly resizable with a 640×440 minimum and a 960×640 default (mirrors `DocumentEditorDialog`). The JSON pane now sits in a `VirtualizedScrollPane` wrapping `JsonCodeArea` so scrolling stays smooth on multi-thousand-line configs.
+
+### Deferred to v2.5.2
+- Cloud sinks (S3 / GCS / Azure / SFTP) — permit-list entries exist, SDK impls still throw `CloudSinkUnavailableException`.
+- `--oplogLimit` threading from `PitrPlanner` → `MongorestoreRunner` argv.
+- Multi-DB / multi-namespace backup fan-out — `MongodumpCommandBuilder` still emits the first entry only for `Databases(N>1)` / `Namespaces(N>1)`.
+
 ## v2.5.0 — Backup, Restore & Disaster Recovery
 
 v2.5 gives every DBA a credible, rehearsable DR story inside Mongo Explorer. Define a backup policy per cluster, run ad-hoc or scheduled `mongodump` backups to a local sink, catalog + verify the artefacts, and restore to a point in time — all with the three-gate safety model + `ops_audit` trail from v2.4.
@@ -49,10 +80,14 @@ All additive via `Database.migrate()`:
 
 v2.5 rolls back cleanly to v2.4.x — the new tables simply remain unread.
 
-### Known gaps (deferred to v2.5.1)
-- **Cloud sinks** — S3 / GCS / Azure / SFTP permit-list entries exist and can be persisted via `SinkDao`, but every I/O call throws `CloudSinkUnavailableException`. Real SDK integrations (AWS SDK, google-cloud-storage, azure-storage-blob, JSch) land with v2.5.1.
+### Known gaps (addressed in v2.5.1 or deferred to v2.5.2)
+
+Closed in v2.5.1 (polish release): BackupRunner manifest byte-count + crash-leak guard, RestoreService role-probe gate, PITR empty-windows message, Backups UI overhaul, `rs.conf` viewer resizable, shared TypedConfirm for restore.
+
+Still deferred to v2.5.2:
+- **Cloud sinks** — S3 / GCS / Azure / SFTP permit-list entries exist and can be persisted via `SinkDao`, but every I/O call throws `CloudSinkUnavailableException`. Real SDK integrations (AWS SDK, google-cloud-storage, azure-storage-blob, JSch) land with v2.5.2.
 - **`--oplogLimit` in the restore wizard** — `PitrPlanner` returns an oplog limit timestamp; the wizard hands off the source backup but does not yet thread the limit into mongorestore's argv.
-- **Multi-DB / multi-namespace backup fan-out** — `MongodumpCommandBuilder` emits the first entry only for `Databases(N>1)` and `Namespaces(N>1)` scopes; looping per-entry lands with v2.5.1.
+- **Multi-DB / multi-namespace backup fan-out** — `MongodumpCommandBuilder` emits the first entry only for `Databases(N>1)` and `Namespaces(N>1)` scopes; looping per-entry lands with v2.5.2.
 
 ## v2.4.1 — Cluster polish + shard depth
 
