@@ -256,6 +256,16 @@ public class Main extends Application {
         // rows into JSON / HTML bundles.
         DrRehearsalReport rehearsalReport = new DrRehearsalReport(opsAuditDao);
 
+        // v2.6 Q2.6-C — audit-log tailer lifecycle. On every CONNECTED
+        // transition the service probes for a readable auditLog.path and
+        // pipes parsed events into the FTS index; the AuditPane reads
+        // the index.
+        com.kubrik.mex.security.audit.AuditIndex auditIndex =
+                new com.kubrik.mex.security.audit.AuditIndex(db);
+        com.kubrik.mex.security.audit.AuditTailerService auditTailerService =
+                new com.kubrik.mex.security.audit.AuditTailerService(
+                        connectionManager, eventBus, auditIndex);
+
         MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
                 migrationService, monitoringService, db, killOpHandler, rsAdminHandler,
                 opsAuditDao, opsExecutor, balancerHandler, zonesHandler, killSwitch,
