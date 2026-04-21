@@ -10,6 +10,7 @@ import com.kubrik.mex.model.MongoConnection;
 import com.kubrik.mex.monitoring.MonitoringService;
 import com.kubrik.mex.store.ConnectionStore;
 import com.kubrik.mex.store.HistoryStore;
+import com.kubrik.mex.ui.backup.BackupsTab;
 import com.kubrik.mex.ui.cluster.BalancerPane;
 import com.kubrik.mex.ui.cluster.ClusterTab;
 import com.kubrik.mex.ui.cluster.CurrentOpPane;
@@ -66,6 +67,12 @@ public class MainView extends BorderPane {
     private final ZonesPane.ZonesHandler zonesHandler;
     private final KillSwitch killSwitch;
 
+    private Tab backupsTab;
+    private BackupsTab backupsView;
+    private final com.kubrik.mex.backup.store.BackupPolicyDao backupPolicyDao;
+    private final com.kubrik.mex.backup.store.BackupCatalogDao backupCatalogDao;
+    private final com.kubrik.mex.backup.store.SinkDao sinkDao;
+
     private final ConnectionTree connTree;
     private final TabPane tabs = new TabPane();
     private final Map<String, Tab> openCollectionTabs = new HashMap<>();
@@ -95,7 +102,10 @@ public class MainView extends BorderPane {
                     OpsExecutor opsExecutor,
                     BalancerPane.BalancerHandler balancerHandler,
                     ZonesPane.ZonesHandler zonesHandler,
-                    KillSwitch killSwitch) {
+                    KillSwitch killSwitch,
+                    com.kubrik.mex.backup.store.BackupPolicyDao backupPolicyDao,
+                    com.kubrik.mex.backup.store.BackupCatalogDao backupCatalogDao,
+                    com.kubrik.mex.backup.store.SinkDao sinkDao) {
         this.manager = manager;
         this.connectionStore = connectionStore;
         this.historyStore = historyStore;
@@ -110,6 +120,9 @@ public class MainView extends BorderPane {
         this.balancerHandler = balancerHandler;
         this.zonesHandler = zonesHandler;
         this.killSwitch = killSwitch;
+        this.backupPolicyDao = backupPolicyDao;
+        this.backupCatalogDao = backupCatalogDao;
+        this.sinkDao = sinkDao;
 
         this.connTree = new ConnectionTree(manager, connectionStore, events);
         this.connTree.setOpenHandler(new ConnectionTree.OpenHandler() {
@@ -262,7 +275,12 @@ public class MainView extends BorderPane {
                 item("Logs (audit only)",
                         new KeyCodeCombination(KeyCode.L,
                                 KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
-                        this::openLogsFilteredToAudit));
+                        this::openLogsFilteredToAudit),
+                // v2.5 UI-BKP-1 — Backups top-level tab (policies + history).
+                item("Backups",
+                        new KeyCodeCombination(KeyCode.B,
+                                KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
+                        this::openBackupsTab));
 
         // ----- Help -----
         Menu help = new Menu("Help");
@@ -519,6 +537,24 @@ public class MainView extends BorderPane {
         clusterTabs.put(connectionId, t);
         tabs.getTabs().add(t);
         tabs.getSelectionModel().select(t);
+    }
+
+    private void openBackupsTab() {
+        if (backupsTab != null && tabs.getTabs().contains(backupsTab)) {
+            tabs.getSelectionModel().select(backupsTab);
+            return;
+        }
+        if (backupsView == null) {
+            backupsView = new BackupsTab(backupPolicyDao, backupCatalogDao, sinkDao,
+                    events, manager, connectionStore);
+        }
+        backupsTab = new Tab("Backups", backupsView);
+        backupsTab.setOnClosed(e -> {
+            if (backupsView != null) backupsView.close();
+            backupsTab = null;
+        });
+        tabs.getTabs().add(backupsTab);
+        tabs.getSelectionModel().select(backupsTab);
     }
 
     private void openMonitoringTab() {

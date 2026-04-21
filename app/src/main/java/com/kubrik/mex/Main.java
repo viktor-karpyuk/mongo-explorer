@@ -1,6 +1,10 @@
 package com.kubrik.mex;
 
 import atlantafx.base.theme.PrimerLight;
+import com.kubrik.mex.backup.runner.BackupScheduler;
+import com.kubrik.mex.backup.store.BackupCatalogDao;
+import com.kubrik.mex.backup.store.BackupPolicyDao;
+import com.kubrik.mex.backup.store.SinkDao;
 import com.kubrik.mex.cluster.ClusterWiring;
 import com.kubrik.mex.cluster.audit.AuditJanitor;
 import com.kubrik.mex.cluster.safety.KillSwitch;
@@ -79,6 +83,7 @@ public class Main extends Application {
     private OpsExecutor opsExecutor;
     private KillSwitch killSwitch;
     private AuditJanitor auditJanitor;
+    private BackupScheduler backupScheduler;
 
     @Override
     public void start(Stage stage) throws Exception {
@@ -207,9 +212,23 @@ public class Main extends Application {
             @Override public String callerHost() { return finalCallerHost; }
         };
 
+        // v2.5 — backup DAOs shared between the Backups tab UI and the
+        // scheduler. The scheduler's dispatcher logs for now; wiring to
+        // BackupRunner needs per-policy URI resolution which lands with a
+        // later milestone phase (Q2.5-E handles the restore counterpart too).
+        BackupPolicyDao backupPolicyDao = new BackupPolicyDao(db);
+        BackupCatalogDao backupCatalogDao = new BackupCatalogDao(db);
+        SinkDao sinkDao = new SinkDao(db, crypto);
+        backupScheduler = new BackupScheduler(backupPolicyDao, backupCatalogDao,
+                policy -> log.info("scheduler: would dispatch policy {} (runner wiring in Q2.5-E)",
+                        policy.id()),
+                java.time.Clock.systemUTC());
+        backupScheduler.start();
+
         MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
                 migrationService, monitoringService, db, killOpHandler, rsAdminHandler,
-                opsAuditDao, opsExecutor, balancerHandler, zonesHandler, killSwitch);
+                opsAuditDao, opsExecutor, balancerHandler, zonesHandler, killSwitch,
+                backupPolicyDao, backupCatalogDao, sinkDao);
 
         // If a previous session left unfinished migrations behind, surface the recovery panel
         // as soon as the UI is up. See docs/mvp-functional-spec.md §4.6.
@@ -284,6 +303,7 @@ public class Main extends Application {
             try { if (recordingCapture != null) recordingCapture.close(); } catch (Exception ignored) {}
             try { if (recordingService != null) recordingService.close(); } catch (Exception ignored) {}
             try { if (auditJanitor != null) auditJanitor.close(); } catch (Exception ignored) {}
+            try { if (backupScheduler != null) backupScheduler.close(); } catch (Exception ignored) {}
             try { if (clusterWiring != null) clusterWiring.close(); } catch (Exception ignored) {}
             try { if (clusterTopologyService != null) clusterTopologyService.close(); } catch (Exception ignored) {}
             try { if (monitoringWiring != null) monitoringWiring.close(); } catch (Exception ignored) {}
