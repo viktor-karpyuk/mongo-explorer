@@ -27,7 +27,10 @@ Patch release closing the issues raised in the post-v2.5.0 deep review plus the 
 - **Backups tab** — connection dropdown renders `Name (cluster-id)` instead of the previous `Name · id`. Every form label is title-cased with a bold foreground (Name, Schedule (cron), Scope, Archive, Retention, Destination, Options). Inline helpers read as sentences ("Keep last N runs or up to M days — whichever is tighter") instead of raw technical tokens. An info banner explains what a backup policy is, and every label + field now carries a hover `Tooltip` with plain-English explanations of cron grammar, scope choices, gzip levels, retention semantics, and when to include the oplog — enough context for operators who aren't seasoned DBAs. History pane column headers and filter labels are capitalised; PITR + Rehearsal-report buttons gain hover tooltips.
 - **`ReplConfigDialog` (Cluster → View rs.conf)** — window is explicitly resizable with a 640×440 minimum and a 960×640 default (mirrors `DocumentEditorDialog`). The JSON pane now sits in a `VirtualizedScrollPane` wrapping `JsonCodeArea` so scrolling stays smooth on multi-thousand-line configs.
 
-### Deferred to v2.5.2
+### Deferred to v2.6
+
+No v2.5.2 is planned — the remaining backup tails roll into v2.6 alongside the Security & Compliance milestone:
+
 - Cloud sinks (S3 / GCS / Azure / SFTP) — permit-list entries exist, SDK impls still throw `CloudSinkUnavailableException`.
 - `--oplogLimit` threading from `PitrPlanner` → `MongorestoreRunner` argv.
 - Multi-DB / multi-namespace backup fan-out — `MongodumpCommandBuilder` still emits the first entry only for `Databases(N>1)` / `Namespaces(N>1)`.
@@ -81,14 +84,14 @@ All additive via `Database.migrate()`:
 
 v2.5 rolls back cleanly to v2.4.x — the new tables simply remain unread.
 
-### Known gaps (addressed in v2.5.1 or deferred to v2.5.2)
+### Known gaps (addressed in v2.5.1 or deferred to v2.6)
 
 Closed in v2.5.1 (polish release): BackupRunner manifest byte-count + crash-leak guard, RestoreService role-probe gate, PITR empty-windows message, Backups UI overhaul, `rs.conf` viewer resizable, shared TypedConfirm for restore.
 
-Still deferred to v2.5.2:
-- **Cloud sinks** — S3 / GCS / Azure / SFTP permit-list entries exist and can be persisted via `SinkDao`, but every I/O call throws `CloudSinkUnavailableException`. Real SDK integrations (AWS SDK, google-cloud-storage, azure-storage-blob, JSch) land with v2.5.2.
+Deferred to v2.6 (folded into the Security & Compliance milestone — no dedicated v2.5.2 patch):
+- **Cloud sinks** — S3 / GCS / Azure / SFTP permit-list entries exist and can be persisted via `SinkDao`, but every I/O call throws `CloudSinkUnavailableException`. Real SDK integrations (AWS SDK, google-cloud-storage, azure-storage-blob, JSch) land with v2.6.
 - **`--oplogLimit` in the restore wizard** — `PitrPlanner` returns an oplog limit timestamp; the wizard hands off the source backup but does not yet thread the limit into mongorestore's argv.
-- **Multi-DB / multi-namespace backup fan-out** — `MongodumpCommandBuilder` emits the first entry only for `Databases(N>1)` and `Namespaces(N>1)` scopes; looping per-entry lands with v2.5.2.
+- **Multi-DB / multi-namespace backup fan-out** — `MongodumpCommandBuilder` emits the first entry only for `Databases(N>1)` and `Namespaces(N>1)` scopes; looping per-entry lands with v2.6.
 
 ## v2.4.1 — Cluster polish + shard depth
 
