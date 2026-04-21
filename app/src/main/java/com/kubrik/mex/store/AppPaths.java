@@ -23,4 +23,12 @@ public final class AppPaths {
 
     public static Path databaseFile() { return dataDir().resolve("data.db"); }
     public static Path keyFile() { return dataDir().resolve("secret.key"); }
+
+    // Migration feature (v1.1.0) — see docs/mvp-technical-spec.md §14
+    public static Path migrationJobsDir() { return dataDir().resolve("jobs"); }
+    public static Path migrationJobDir(String jobId) { return migrationJobsDir().resolve(jobId); }
+    public static Path migrationLogsDir() { return dataDir().resolve("logs"); }
+
+    /** EXT-1 — location scanned for user-supplied plugin JARs (sink / source / transform). */
+    public static Path pluginsDir() { return dataDir().resolve("plugins"); }
 }

@@ -1,0 +1,17 @@
+services:
+  mongo-target:
+    image: mongo:7
+    container_name: mex-mongo-target
+    ports:
+      - "27019:27017"
+    volumes:
+      - mex-target-data:/data/db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mex-target-data:
