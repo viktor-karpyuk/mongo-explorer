@@ -458,6 +458,50 @@ public class Database implements AutoCloseable {
                 """);
             st.execute("CREATE INDEX IF NOT EXISTS idx_backup_policies_conn " +
                     "ON backup_policies(connection_id, enabled)");
+
+            // v2.5 Q2.5-B — backup runs + per-file artefact inventory. Catalog
+            // rows carry the manifest SHA-256 + verification state; file rows
+            // are cascade-deleted when the catalog row is purged by the Q2.5-D
+            // retention janitor.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS backup_catalog (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    policy_id           INTEGER REFERENCES backup_policies(id) ON DELETE SET NULL,
+                    connection_id       TEXT    NOT NULL,
+                    started_at          INTEGER NOT NULL,
+                    finished_at         INTEGER,
+                    status              TEXT    NOT NULL,
+                    sink_id             INTEGER NOT NULL,
+                    sink_path           TEXT    NOT NULL,
+                    manifest_sha256     TEXT,
+                    total_bytes         INTEGER,
+                    doc_count           INTEGER,
+                    oplog_first_ts      INTEGER,
+                    oplog_last_ts       INTEGER,
+                    verified_at         INTEGER,
+                    verify_outcome      TEXT,
+                    notes               TEXT
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_backup_catalog_conn_started " +
+                    "ON backup_catalog(connection_id, started_at)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_backup_catalog_policy " +
+                    "ON backup_catalog(policy_id, started_at)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS backup_files (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    catalog_id      INTEGER NOT NULL REFERENCES backup_catalog(id) ON DELETE CASCADE,
+                    relative_path   TEXT    NOT NULL,
+                    bytes           INTEGER NOT NULL,
+                    sha256          TEXT    NOT NULL,
+                    db              TEXT,
+                    coll            TEXT,
+                    kind            TEXT    NOT NULL
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_backup_files_catalog " +
+                    "ON backup_files(catalog_id)");
         }
     }
 
