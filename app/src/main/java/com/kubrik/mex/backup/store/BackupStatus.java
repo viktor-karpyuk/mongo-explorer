@@ -10,5 +10,10 @@ public enum BackupStatus {
     RUNNING,
     OK,
     FAILED,
-    CANCELLED
+    CANCELLED,
+    /** v2.5 BKP-SCHED-2 — a scheduled tick's due-time passed while the app
+     *  was closed. Written as a synthetic catalog row with
+     *  {@code started_at = finished_at = dueTimeMs} so the history surface
+     *  can show the gap without a runner invocation. */
+    MISSED
 }

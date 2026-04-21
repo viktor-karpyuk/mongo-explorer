@@ -236,6 +236,7 @@ public final class BackupRunner {
             case CANCELLED -> Outcome.CANCELLED;
             case FAILED -> Outcome.FAIL;
             case RUNNING -> Outcome.PENDING;
+            case MISSED -> Outcome.FAIL;  // synthetic — treated as fail in the audit row
         };
         writeAudit(connectionId, "backup.end", sinkPath, auditOutcome,
                 notes, callerUser, callerHost, startedAt, finishedAt);
