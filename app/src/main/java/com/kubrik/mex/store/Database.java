@@ -515,6 +515,97 @@ public class Database implements AutoCloseable {
                 """);
             st.execute("CREATE INDEX IF NOT EXISTS idx_backup_files_catalog " +
                     "ON backup_files(catalog_id)");
+
+            // v2.6 Q2.6-A1 — security baselines, drift acks, cert inventory
+            // cache, CIS suppressions + reports. FTS table for native audit
+            // lands with Q2.6-C once the parser is in.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS sec_baselines (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    captured_at     INTEGER NOT NULL,
+                    captured_by     TEXT    NOT NULL,
+                    notes           TEXT,
+                    snapshot_json   TEXT    NOT NULL,
+                    sha256          TEXT    NOT NULL
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_sec_baselines_conn_time " +
+                    "ON sec_baselines(connection_id, captured_at)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS sec_drift_acks (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    baseline_id     INTEGER NOT NULL REFERENCES sec_baselines(id) ON DELETE CASCADE,
+                    path            TEXT    NOT NULL,
+                    acked_at        INTEGER NOT NULL,
+                    acked_by        TEXT    NOT NULL,
+                    mode            TEXT    NOT NULL,
+                    note            TEXT
+                )
+                """);
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS sec_cert_cache (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    host            TEXT    NOT NULL,
+                    subject_cn      TEXT,
+                    issuer_cn       TEXT,
+                    sans_json       TEXT,
+                    not_before      INTEGER,
+                    not_after       INTEGER,
+                    serial_hex      TEXT,
+                    fingerprint_sha256 TEXT NOT NULL,
+                    captured_at     INTEGER NOT NULL,
+                    UNIQUE (connection_id, host, fingerprint_sha256)
+                )
+                """);
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS cis_suppressions (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    rule_id         TEXT    NOT NULL,
+                    scope           TEXT    NOT NULL,
+                    reason          TEXT    NOT NULL,
+                    created_at      INTEGER NOT NULL,
+                    created_by      TEXT    NOT NULL,
+                    expires_at      INTEGER
+                )
+                """);
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS cis_reports (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    ran_at          INTEGER NOT NULL,
+                    benchmark_version TEXT NOT NULL,
+                    total           INTEGER NOT NULL,
+                    pass            INTEGER NOT NULL,
+                    fail            INTEGER NOT NULL,
+                    na              INTEGER NOT NULL,
+                    suppressed      INTEGER NOT NULL,
+                    report_json     TEXT    NOT NULL,
+                    report_html_path TEXT,
+                    evidence_sig    TEXT NOT NULL
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_cis_reports_conn_time " +
+                    "ON cis_reports(connection_id, ran_at)");
+
+            // Stores the install's HMAC-SHA-256 evidence-signing key, AES-wrapped
+            // via Crypto. Exactly one row (id = 1). Distinct from the connection-
+            // password AES key so signed reports can be shared with auditors
+            // without leaking other secrets.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS evidence_key (
+                    id              INTEGER PRIMARY KEY CHECK (id = 1),
+                    wrapped_key     BLOB    NOT NULL,
+                    created_at      INTEGER NOT NULL
+                )
+                """);
         }
     }
 
