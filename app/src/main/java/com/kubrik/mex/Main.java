@@ -239,10 +239,12 @@ public class Main extends Application {
                 java.time.Clock.systemUTC());
         backupScheduler.start();
 
-        // Q2.5-E — restore orchestrator shares the kill-switch with the
-        // cluster executor so engaging it blocks Execute-mode restores too.
+        // Q2.5-E — restore orchestrator shares the kill-switch + role
+        // probe with the cluster executor so engaging the switch blocks
+        // Execute-mode restores too and Execute mode gets the same role
+        // gate as any other destructive dispatch.
         RestoreService restoreService = new RestoreService(backupCatalogDao, opsAuditDao,
-                eventBus, killSwitch, java.time.Clock.systemUTC(),
+                eventBus, killSwitch, roleProbeService, java.time.Clock.systemUTC(),
                 java.nio.file.Paths.get(System.getProperty("user.home", "."),
                         "mongo-explorer", "backups"),
                 "mongorestore");

@@ -7,6 +7,8 @@ import com.kubrik.mex.backup.store.BackupCatalogRow;
 import com.kubrik.mex.cluster.audit.OpsAuditRecord;
 import com.kubrik.mex.cluster.audit.Outcome;
 import com.kubrik.mex.cluster.safety.KillSwitch;
+import com.kubrik.mex.cluster.safety.RoleSet;
+import com.kubrik.mex.cluster.service.RoleProbeService;
 import com.kubrik.mex.cluster.store.OpsAuditDao;
 import com.kubrik.mex.events.EventBus;
 import org.slf4j.Logger;
@@ -16,6 +18,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -45,23 +48,30 @@ public final class RestoreService {
 
     private static final Logger log = LoggerFactory.getLogger(RestoreService.class);
 
+    /** Roles the EXECUTE mode accepts — mirrors the cluster path's
+     *  destructive-command role policy. {@code restore} is the MongoDB
+     *  built-in; {@code root} dominates. */
+    static final List<String> EXECUTE_ROLES = List.of("restore", "root", "backup");
+
     public enum Mode { REHEARSE, EXECUTE }
 
     private final BackupCatalogDao catalog;
     private final OpsAuditDao audit;
     private final EventBus bus;
     private final KillSwitch killSwitch;
+    private final RoleProbeService roleProbe;
     private final Clock clock;
     private final Path sinkRoot;
     private final String mongorestoreBinary;
 
     public RestoreService(BackupCatalogDao catalog, OpsAuditDao audit, EventBus bus,
-                          KillSwitch killSwitch, Clock clock, Path sinkRoot,
-                          String mongorestoreBinary) {
+                          KillSwitch killSwitch, RoleProbeService roleProbe,
+                          Clock clock, Path sinkRoot, String mongorestoreBinary) {
         this.catalog = catalog;
         this.audit = audit;
         this.bus = bus;
         this.killSwitch = killSwitch;
+        this.roleProbe = roleProbe;
         this.clock = clock == null ? Clock.systemUTC() : clock;
         this.sinkRoot = sinkRoot;
         this.mongorestoreBinary = mongorestoreBinary == null
@@ -101,9 +111,27 @@ public final class RestoreService {
 
         if (mode == Mode.EXECUTE && killSwitch.isEngaged()) {
             writeAudit(connectionId, "restore.execute", row, mode, Outcome.CANCELLED,
-                    "kill_switch_engaged", callerUser, callerHost, startedAt, startedAt, true);
+                    "kill_switch_engaged", null, callerUser, callerHost, startedAt, startedAt, true);
             publishEnded(catalogId, connectionId, false, 0, 0, "kill_switch_engaged");
             return new RestoreResult(Outcome.CANCELLED, 0, 0, "kill_switch_engaged");
+        }
+
+        // Role gate for EXECUTE mode. Mirrors OpsExecutor's policy: the
+        // user must hold at least one of {restore, backup, root}. Rehearse
+        // bypasses this check — a dryRun into a sandbox namespace cannot
+        // affect production data regardless of role.
+        String roleUsed = null;
+        if (mode == Mode.EXECUTE && roleProbe != null) {
+            RoleSet roles = roleProbe.currentOrProbe(connectionId);
+            if (!roles.hasAny(EXECUTE_ROLES)) {
+                String msg = "role_denied: needed any of " + EXECUTE_ROLES;
+                writeAudit(connectionId, "restore.execute", row, mode, Outcome.FAIL,
+                        msg, null, callerUser, callerHost, startedAt, startedAt, false);
+                publishEnded(catalogId, connectionId, false, 0, 0, msg);
+                return new RestoreResult(Outcome.FAIL, 0, 0, msg);
+            }
+            roleUsed = EXECUTE_ROLES.stream()
+                    .filter(roles::hasRole).findFirst().orElse(null);
         }
 
         String command = mode == Mode.REHEARSE ? "restore.rehearse" : "restore.execute";
@@ -137,7 +165,7 @@ public final class RestoreService {
         } catch (IOException ioe) {
             long finishedAt = clock.millis();
             writeAudit(connectionId, command, row, mode, Outcome.FAIL,
-                    "spawn_failed: " + ioe.getMessage(),
+                    "spawn_failed: " + ioe.getMessage(), roleUsed,
                     callerUser, callerHost, startedAt, finishedAt, false);
             publishEnded(catalogId, connectionId, false, finishedAt - startedAt,
                     0, ioe.getMessage());
@@ -163,7 +191,7 @@ public final class RestoreService {
                             : "\n" + outcome.stderrTail());
         }
         writeAudit(connectionId, command, row, mode, auditOutcome, message,
-                callerUser, callerHost, startedAt, finishedAt, false);
+                roleUsed, callerUser, callerHost, startedAt, finishedAt, false);
         publishEnded(catalogId, connectionId, auditOutcome == Outcome.OK,
                 finishedAt - startedAt, failures.get(), message);
         return new RestoreResult(auditOutcome, finishedAt - startedAt,
@@ -187,14 +215,15 @@ public final class RestoreService {
 
     private void writeAudit(String connectionId, String commandName,
                              BackupCatalogRow row, Mode mode, Outcome outcome,
-                             String message, String callerUser, String callerHost,
+                             String message, String roleUsed,
+                             String callerUser, String callerHost,
                              long startedAt, long finishedAt, boolean killSwitchEngaged) {
         String redacted = "{\"catalogId\":" + row.id() + ",\"mode\":\""
                 + mode.name() + "\",\"sinkPath\":\""
                 + row.sinkPath().replace("\"", "\\\"") + "\"}";
         String hash = FileHasher.hashBytes(redacted.getBytes(StandardCharsets.UTF_8));
         OpsAuditRecord rec = new OpsAuditRecord(-1L, connectionId, null, null,
-                commandName, redacted, hash, outcome, message, null,
+                commandName, redacted, hash, outcome, message, roleUsed,
                 startedAt, finishedAt, Math.max(0, finishedAt - startedAt),
                 callerHost, callerUser, "backup.restore", false, killSwitchEngaged);
         try {
