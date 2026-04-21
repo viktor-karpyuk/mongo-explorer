@@ -29,6 +29,8 @@ import javafx.scene.control.Spinner;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.Tooltip;
+import javafx.util.Duration;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -82,6 +84,49 @@ public final class PolicyEditorPane extends BorderPane {
     private final Button saveBtn = new Button("Save");
     private final Button newBtn = new Button("New policy");
     private final Button deleteBtn = new Button("Delete");
+
+    /* Help copy for non-DBA users. Installed as hover tooltips on each field's
+     * label and as the contents of the "Help" info banner at the top of the
+     * editor. Kept as constants so copy changes are one place. */
+    private static final String HELP_NAME =
+            "A short identifier for this policy. Letters, digits, spaces, "
+            + "dots, dashes, and underscores only. Shown in the history tab "
+            + "so pick something memorable (e.g., \"nightly-reports\").";
+    private static final String HELP_CRON =
+            "UTC cron expression — five fields: minute hour day-of-month "
+            + "month day-of-week. Examples:\n"
+            + "   0 3 * * *      every day at 03:00 UTC\n"
+            + "   */15 * * * *   every 15 minutes\n"
+            + "   0 2 * * 0      Sundays at 02:00 UTC\n"
+            + "Leave blank to run this policy manually only.";
+    private static final String HELP_SCOPE =
+            "What to back up.\n"
+            + "   Whole cluster — every database on the connection.\n"
+            + "   Databases — list one db name per line.\n"
+            + "   Namespaces — list one db.collection per line for "
+            + "collection-level backups.";
+    private static final String HELP_ARCHIVE =
+            "Gzip compresses the bson files. Level 1 = fastest, 9 = smallest. "
+            + "Level 6 is a good default. \"Out\" is the folder-name template "
+            + "inside the destination — placeholders: <policy>, "
+            + "<yyyy-MM-dd_HH-mm-ss>, <connection>.";
+    private static final String HELP_RETENTION =
+            "Old backups are removed when either limit is exceeded — whichever "
+            + "is tighter wins. Count caps how many runs are kept; days caps "
+            + "age. Rows stay in the catalog with status PRUNED for audit.";
+    private static final String HELP_SINK =
+            "Where dump files are written. Configure destinations in the "
+            + "Sinks tab. Local-filesystem sinks go to a folder on disk; S3 "
+            + "sinks stage to a temp folder first, then upload.";
+    private static final String HELP_ENABLED =
+            "Turns the cron schedule on or off. A disabled policy can still "
+            + "be run manually from the history tab — useful for rehearsing a "
+            + "policy before putting it in rotation.";
+    private static final String HELP_OPLOG =
+            "Captures the oplog alongside the dump so restores can be aligned "
+            + "to a specific point in time (PITR). Requires a replica set. "
+            + "Turn off only if your source is standalone or you don't need "
+            + "PITR on this policy.";
 
     public PolicyEditorPane(BackupPolicyDao policyDao, SinkDao sinkDao,
                             ConnectionManager connManager, ConnectionStore connectionStore) {
@@ -149,11 +194,28 @@ public final class PolicyEditorPane extends BorderPane {
         scopeNamespaces.setToggleGroup(scopeGroup);
         scopeWhole.setSelected(true);
         scopeList.setPrefRowCount(3);
-        scopeList.setPromptText("One db name per line — or db.collection for namespaces");
+        scopeList.setPromptText("One db name per line — or db.collection for Namespaces");
         enabledBox.setSelected(true);
         oplogBox.setSelected(true);
         gzipBox.setSelected(true);
         gzipLevel.setEditable(true);
+
+        // Tooltips mirror the label's help text so hovering over either the
+        // label or the field surfaces the same explanation.
+        installTip(nameField, HELP_NAME);
+        installTip(cronField, HELP_CRON);
+        installTip(scopeList, HELP_SCOPE);
+        installTip(scopeWhole, HELP_SCOPE);
+        installTip(scopeDatabases, HELP_SCOPE);
+        installTip(scopeNamespaces, HELP_SCOPE);
+        installTip(gzipBox, HELP_ARCHIVE);
+        installTip(gzipLevel, HELP_ARCHIVE);
+        installTip(archiveTemplate, HELP_ARCHIVE);
+        installTip(retentionCount, HELP_RETENTION);
+        installTip(retentionDays, HELP_RETENTION);
+        installTip(sinkPicker, HELP_SINK);
+        installTip(enabledBox, HELP_ENABLED);
+        installTip(oplogBox, HELP_OPLOG);
 
         sinkPicker.setConverter(new javafx.util.StringConverter<>() {
             @Override public String toString(SinkRecord s) {
@@ -172,27 +234,56 @@ public final class PolicyEditorPane extends BorderPane {
 
         GridPane g = new GridPane();
         g.setHgap(10);
-        g.setVgap(8);
-        g.setPadding(new Insets(12));
+        g.setVgap(10);
+        g.setPadding(new Insets(14));
         int row = 0;
-        g.add(label("name"), 0, row); g.add(nameField, 1, row++, 2, 1);
-        g.add(label("schedule cron"), 0, row); g.add(cronField, 1, row++, 2, 1);
-        g.add(label("scope"), 0, row);
+
+        // Info banner at the top so first-time users see what a backup policy
+        // is and where to hover for details. Hover on the banner expands the
+        // tooltip with the field-level explanations.
+        Label intro = new Label(
+                "A backup policy tells the scheduler when to dump which "
+                + "databases, where to store the files, and how long to keep "
+                + "them. Hover any label or field for a short explanation.");
+        intro.setWrapText(true);
+        intro.setStyle("-fx-text-fill: #1e40af; -fx-font-size: 11px; "
+                + "-fx-background-color: #eff6ff; -fx-border-color: #bfdbfe; "
+                + "-fx-border-radius: 4; -fx-background-radius: 4; "
+                + "-fx-padding: 8 10 8 10;");
+        g.add(intro, 0, row++, 3, 1);
+
+        g.add(helpLabel("Name", HELP_NAME), 0, row);
+        g.add(nameField, 1, row++, 2, 1);
+
+        g.add(helpLabel("Schedule (cron)", HELP_CRON), 0, row);
+        g.add(cronField, 1, row++, 2, 1);
+
+        g.add(helpLabel("Scope", HELP_SCOPE), 0, row);
         HBox scopeRadios = new HBox(10, scopeWhole, scopeDatabases, scopeNamespaces);
         g.add(scopeRadios, 1, row++, 2, 1);
         g.add(new Label(""), 0, row);
         g.add(scopeList, 1, row++, 2, 1);
-        g.add(label("archive"), 0, row);
-        g.add(new HBox(10, gzipBox, new Label("level"), gzipLevel,
-                new Label("out"), archiveTemplate), 1, row++, 2, 1);
-        g.add(label("retention"), 0, row);
-        g.add(new HBox(10, new Label("count"), retentionCount,
-                new Label("days"), retentionDays,
-                new Label("— whichever is tighter")),
+
+        g.add(helpLabel("Archive", HELP_ARCHIVE), 0, row);
+        HBox archiveRow = new HBox(10, gzipBox,
+                small("Level"), gzipLevel,
+                small("Output"), archiveTemplate);
+        HBox.setHgrow(archiveTemplate, Priority.ALWAYS);
+        g.add(archiveRow, 1, row++, 2, 1);
+
+        g.add(helpLabel("Retention", HELP_RETENTION), 0, row);
+        g.add(new HBox(10,
+                small("Keep last"), retentionCount, small("runs"),
+                small("or up to"), retentionDays, small("days"),
+                small("— whichever is tighter")),
                 1, row++, 2, 1);
-        g.add(label("sink"), 0, row); g.add(sinkPicker, 1, row++, 2, 1);
-        g.add(label("flags"), 0, row); g.add(new HBox(10, enabledBox, oplogBox),
-                1, row++, 2, 1);
+
+        g.add(helpLabel("Destination", HELP_SINK), 0, row);
+        g.add(sinkPicker, 1, row++, 2, 1);
+
+        g.add(helpLabel("Options", HELP_ENABLED + "\n\n" + HELP_OPLOG), 0, row);
+        g.add(new HBox(10, enabledBox, oplogBox), 1, row++, 2, 1);
+
         g.add(errorLabel, 0, row++, 3, 1);
 
         HBox actions = new HBox(8, saveBtn, deleteBtn);
@@ -203,6 +294,33 @@ public final class PolicyEditorPane extends BorderPane {
         installLiveValidation();
 
         return g;
+    }
+
+    private static Label helpLabel(String text, String helpBody) {
+        Label l = new Label(text);
+        l.setStyle("-fx-text-fill: #374151; -fx-font-size: 12px; -fx-font-weight: 600;");
+        Tooltip t = new Tooltip(helpBody);
+        t.setShowDelay(Duration.millis(250));
+        t.setShowDuration(Duration.seconds(30));
+        t.setWrapText(true);
+        t.setMaxWidth(360);
+        l.setTooltip(t);
+        return l;
+    }
+
+    private static Label small(String text) {
+        Label l = new Label(text);
+        l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        return l;
+    }
+
+    private static void installTip(javafx.scene.control.Control c, String body) {
+        Tooltip t = new Tooltip(body);
+        t.setShowDelay(Duration.millis(250));
+        t.setShowDuration(Duration.seconds(30));
+        t.setWrapText(true);
+        t.setMaxWidth(360);
+        Tooltip.install(c, t);
     }
 
     private void installLiveValidation() {
@@ -403,7 +521,12 @@ public final class PolicyEditorPane extends BorderPane {
                 if (id == null) return "";
                 com.kubrik.mex.model.MongoConnection c = connectionStore.get(id);
                 String name = c == null ? null : c.name();
-                return (name == null || name.isBlank()) ? id : name + "  ·  " + id;
+                // "Connection Name (cluster id)" is the format picked in the
+                // v2.5 UI polish pass — the human name leads so the operator
+                // sees what they typed in the connection editor, with the id
+                // in parens as a disambiguator when two connections share a
+                // display name.
+                return (name == null || name.isBlank()) ? id : name + " (" + id + ")";
             }
             @Override public String fromString(String s) { return s; }
         });
@@ -438,9 +561,4 @@ public final class PolicyEditorPane extends BorderPane {
         return out;
     }
 
-    private static Label label(String text) {
-        Label l = new Label(text);
-        l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
-        return l;
-    }
 }

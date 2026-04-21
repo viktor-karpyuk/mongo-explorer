@@ -113,12 +113,12 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
     /* ============================= filter bar ============================= */
 
     private Region buildFilterBar() {
-        statusFilter.getItems().addAll("all statuses", "OK", "FAILED", "CANCELLED",
+        statusFilter.getItems().addAll("All statuses", "OK", "FAILED", "CANCELLED",
                 "MISSED", "RUNNING");
-        statusFilter.setValue("all statuses");
+        statusFilter.setValue("All statuses");
         statusFilter.valueProperty().addListener((o, a, b) -> reapplyFilter());
 
-        searchField.setPromptText("search policy / notes");
+        searchField.setPromptText("Search policy / notes");
         searchField.setPrefWidth(240);
         searchField.textProperty().addListener((o, a, b) -> reapplyFilter());
 
@@ -126,6 +126,10 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
         HBox.setHgrow(grow, Priority.ALWAYS);
         Button pitrBtn = new Button("PITR…");
         pitrBtn.setDisable(pitrPlanner == null);
+        pitrBtn.setTooltip(helpTip(
+                "Point-in-time restore. Pick a target timestamp and the "
+                + "planner picks the smallest covering backup + oplog window "
+                + "to land there."));
         pitrBtn.setOnAction(e -> {
             String cx = connection.get();
             if (cx == null || pitrPlanner == null) return;
@@ -134,9 +138,12 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
         });
         Button reportBtn = new Button("Rehearsal report…");
         reportBtn.setDisable(rehearsalReport == null);
+        reportBtn.setTooltip(helpTip(
+                "Exports the last 30 days of restore rehearsals (verify + "
+                + "rehearse runs) as an HTML/JSON audit bundle."));
         reportBtn.setOnAction(e -> exportRehearsalReport());
-        HBox row = new HBox(10, small("status"), statusFilter,
-                small("search"), searchField, grow, reportBtn, pitrBtn);
+        HBox row = new HBox(10, small("Status"), statusFilter,
+                small("Search"), searchField, grow, reportBtn, pitrBtn);
         row.setAlignment(Pos.CENTER_LEFT);
         row.setPadding(new Insets(0, 0, 10, 0));
         return row;
@@ -146,7 +153,7 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
         String st = statusFilter.getValue();
         String q = searchField.getText() == null ? "" : searchField.getText().trim().toLowerCase();
         filtered.setPredicate(r -> {
-            if (st != null && !"all statuses".equals(st) && !r.status().name().equals(st))
+            if (st != null && !"All statuses".equals(st) && !r.status().name().equals(st))
                 return false;
             if (!q.isEmpty()) {
                 String blob = ((r.notes() == null ? "" : r.notes()) + " "
@@ -177,16 +184,16 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
         });
 
         table.getColumns().setAll(
-                tsCol("started", 170, BackupCatalogRow::startedAt),
+                tsCol("Started", 170, BackupCatalogRow::startedAt),
                 statusCol(),
-                textCol("duration", 100, r -> formatDuration(r.startedAt(), r.finishedAt())),
-                textCol("bytes", 110, r -> r.totalBytes() == null ? "—"
+                textCol("Duration", 100, r -> formatDuration(r.startedAt(), r.finishedAt())),
+                textCol("Size", 110, r -> r.totalBytes() == null ? "—"
                         : formatBytes(r.totalBytes())),
-                textCol("docs", 90, r -> r.docCount() == null ? "—"
+                textCol("Docs", 90, r -> r.docCount() == null ? "—"
                         : String.format("%,d", r.docCount())),
-                textCol("sink", 120, r -> "#" + r.sinkId()),
-                textCol("path", 240, BackupCatalogRow::sinkPath),
-                textCol("notes", 260, r -> r.notes() == null ? "" : r.notes())
+                textCol("Sink", 120, r -> "#" + r.sinkId()),
+                textCol("Path", 240, BackupCatalogRow::sinkPath),
+                textCol("Notes", 260, r -> r.notes() == null ? "" : r.notes())
         );
         VBox.setVgrow(table, Priority.ALWAYS);
         return table;
@@ -323,7 +330,7 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
     }
 
     private static TableColumn<BackupCatalogRow, BackupStatus> statusCol() {
-        TableColumn<BackupCatalogRow, BackupStatus> c = new TableColumn<>("status");
+        TableColumn<BackupCatalogRow, BackupStatus> c = new TableColumn<>("Status");
         c.setPrefWidth(110);
         c.setCellValueFactory(cd ->
                 new javafx.beans.property.SimpleObjectProperty<>(cd.getValue().status()));
@@ -353,6 +360,15 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
         Label l = new Label(s);
         l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
         return l;
+    }
+
+    private static javafx.scene.control.Tooltip helpTip(String body) {
+        javafx.scene.control.Tooltip t = new javafx.scene.control.Tooltip(body);
+        t.setShowDelay(javafx.util.Duration.millis(250));
+        t.setShowDuration(javafx.util.Duration.seconds(30));
+        t.setWrapText(true);
+        t.setMaxWidth(360);
+        return t;
     }
 
     private static String formatDuration(long startedAt, Long finishedAt) {
