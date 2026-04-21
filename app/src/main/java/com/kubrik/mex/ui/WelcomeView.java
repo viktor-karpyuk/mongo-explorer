@@ -36,7 +36,6 @@ public class WelcomeView extends VBox {
                        Runnable onNewConnection,
                        Runnable onManageConnections,
                        Runnable onOpenLogs,
-                       Runnable onOpenMonitoring,
                        Consumer<MongoConnection> onConnectAndOpen,
                        Consumer<MongoConnection> onEditConnection) {
         this.manager = manager;
@@ -66,9 +65,7 @@ public class WelcomeView extends VBox {
         manage.setOnAction(e -> onManageConnections.run());
         Button logs = secondaryButton("fth-file-text", "Connection Log");
         logs.setOnAction(e -> onOpenLogs.run());
-        Button monitoring = secondaryButton("fth-activity", "Monitoring");
-        monitoring.setOnAction(e -> onOpenMonitoring.run());
-        HBox actions = new HBox(12, newConn, manage, logs, monitoring);
+        HBox actions = new HBox(12, newConn, manage, logs);
         actions.setAlignment(Pos.CENTER_LEFT);
 
         /* ----- saved connections section ----- */
