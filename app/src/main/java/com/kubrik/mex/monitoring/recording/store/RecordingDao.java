@@ -64,7 +64,18 @@ public final class RecordingDao {
                AND state IN ('ACTIVE','PAUSED')
             """;
 
+    private static final String SELECT_ACTIVE_AND_PAUSED_SQL = """
+            SELECT id, connection_id, name, note, tags_json, state, stop_reason,
+                   started_at, ended_at, paused_millis, max_duration_ms, max_size_bytes,
+                   capture_profiler, schema_version, created_at
+              FROM recordings
+             WHERE state IN ('ACTIVE','PAUSED')
+            """;
+
     private static final String DELETE_SQL = "DELETE FROM recordings WHERE id = ?";
+
+    private static final String SELECT_BYTES_SQL =
+            "SELECT bytes_approx FROM recordings WHERE id = ?";
 
     /** Crash-recovery sweep — marks any ACTIVE/PAUSED row as INTERRUPTED. See §4.5. */
     private static final String CRASH_SWEEP_SQL = """
@@ -149,11 +160,35 @@ public final class RecordingDao {
         return out;
     }
 
+    /** Only ACTIVE/PAUSED rows — consumed by {@code RecordingService.onTick} / {@code close()}
+     *  so the 5 s tick doesn't scan the full table when thousands of STOPPED recordings are
+     *  kept (tech-spec §6). */
+    public List<Recording> findActiveAndPaused() throws SQLException {
+        List<Recording> out = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(SELECT_ACTIVE_AND_PAUSED_SQL);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) out.add(map(rs));
+        }
+        return out;
+    }
+
     /** Cascade via FK removes samples + profiler rows + annotations in one transaction. */
     public void delete(String id) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(DELETE_SQL)) {
             ps.setString(1, id);
             ps.executeUpdate();
+        }
+    }
+
+    /** Read the running byte counter maintained inside {@link com.kubrik.mex.monitoring.recording.store.RecordingSampleDao#insertBatch}
+     *  (P2). Returns 0 for recordings that pre-date the counter column or haven't
+     *  seen samples yet. Caller must hold {@code Database.writeLock()}. */
+    public long bytesApprox(String recordingId) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(SELECT_BYTES_SQL)) {
+            ps.setString(1, recordingId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getLong(1) : 0L;
+            }
         }
     }
 

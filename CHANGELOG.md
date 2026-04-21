@@ -1,5 +1,59 @@
 # Changelog
 
+## v2.5.0 — Backup, Restore & Disaster Recovery
+
+v2.5 gives every DBA a credible, rehearsable DR story inside Mongo Explorer. Define a backup policy per cluster, run ad-hoc or scheduled `mongodump` backups to a local sink, catalog + verify the artefacts, and restore to a point in time — all with the three-gate safety model + `ops_audit` trail from v2.4.
+
+### Policies + sinks (`BKP-POLICY-*`, `STG-*`)
+- **New `Backups` top-level tab** with Policies + History sub-tabs. `Cmd/Ctrl+Alt+B` opens it.
+- **Policy editor** — name (1–64 chars, `[\w .-]+`), cron schedule (blank = manual-only), scope (WholeCluster / Databases / Namespaces sealed choice), archive (gzip + level 1–9 + output-dir template), retention (maxCount 1–1000 × maxAgeDays 1–3650 — tighter bound wins), sink dropdown, enabled + oplog flags. Live validation via `PolicyValidator`; Save disabled until the record is valid.
+- **Storage sinks** — `LocalFsTarget` ships end-to-end (1 KB `testWrite()` probe, put/get/list/stat/delete, path-escape guard). Cloud sinks (S3 / GCS / Azure / SFTP) scaffolded in the sealed `StorageTarget` permit list; real impls defer to v2.5.1 once SDK deps are pinned.
+- **`SinkDao`** — credentials encrypted via `Crypto` AES-GCM; plain-text tokens never touch SQLite.
+
+### Backup runner (`BKP-RUN-*`)
+- **`MongodumpRunner`** — subprocess wrapper (argv builder with URI redaction, `RunLog` 1000-line bounded ring buffer, SIGTERM→SIGKILL watchdog after 10 s, tqdm-style progress parsing).
+- **`BackupRunner`** orchestrator — inserts RUNNING catalog row + writes `backup.start` audit row + publishes `BackupEvent.Started` → spawns mongodump → walks output dir, streams every file through `FileHasher` (64 KB buffer, GB-safe) → builds a canonical `BackupManifest` with footer SHA-256 → batch-inserts `backup_files` rows transactionally → finalises the catalog row + publishes `BackupEvent.Ended`.
+- **`BackupScheduler`** — 60 s tick walks every enabled policy; cron matches invoke an injected dispatcher once per minute (deduped), with a concurrency gate so in-flight policies skip. On startup, flips orphan RUNNING rows to FAILED and back-fills MISSED rows for cron firings within the last 24 h. `BackupStatus.MISSED` enum value added.
+
+### Catalog + verifier (`BKP-VER-*`)
+- **`backup_catalog`** + **`backup_files`** tables with foreign-key cascade from policies → catalog (`ON DELETE SET NULL`) and catalog → files (`ON DELETE CASCADE`). Indexes on `(connection_id, started_at)`, `(policy_id, started_at)`, and `(catalog_id)`.
+- **`CatalogVerifier`** — three gates: manifest file present, manifest bytes hash back to the stored `manifest_sha256`, every file row round-trips byte-equal. Outcomes: `VERIFIED`, `MANIFEST_MISSING`, `MANIFEST_TAMPERED`, `FILE_MISSING`, `FILE_MISMATCH`, `IO_ERROR`.
+- **`ArtefactExplorerDialog`** — opens on history-row double-click, lists every artefact file (path / bytes / kind / sha256 prefix), and runs `Verify now` on-demand. Verdict badge + problem list render inline.
+
+### Restore (`BKP-RESTORE-*`)
+- **`MongorestoreRunner`** — mirror of the dump runner (argv builder with `--uri / --dir / --gzip / --oplogReplay / --dryRun / --drop / --nsFrom + --nsTo`, progress parser for three stderr shapes including failure counts, SIGTERM/SIGKILL watchdog).
+- **`RestoreService`** — two explicit modes. `REHEARSE` rewrites every namespace via `*.* → <prefix>*.*` and forces `--dryRun`; never checks the kill-switch. `EXECUTE` refuses when the kill-switch is engaged; caller gathers a typed-confirm first. Every outcome publishes `RestoreEvent` (Started / Progress / Ended) + writes an `ops_audit` row with `command_name = restore.rehearse` / `restore.execute`.
+- **`RestoreWizardDialog`** — target URI + mode radio + sandbox prefix + drop + oplog-replay; Execute mode pops a typed-confirm on the backup's sinkPath; live progress panel with colour-coded verdict.
+
+### PITR (`BKP-PITR-*`)
+- **`BackupRunner` captures the oplog slice** — `oplog_first_ts` / `oplog_last_ts` populated from run bounds (second precision, sufficient for PITR planning).
+- **`PitrPlanner`** — given a target epoch-seconds + connectionId, returns a `RestorePlan` with the most-recent OK backup whose oplog window covers the target; refusal messages distinguish "older than earliest oplog", "newer than latest oplog", "gap between windows".
+- **`PitrPickerDialog`** — UTC date/time picker + planner verdict + `Restore to this point…` handoff to the restore wizard.
+
+### DR rehearsal report (`BKP-DR-*`)
+- **`DrRehearsalReport`** — compiles every `restore.rehearse` audit row in a window into a bundle (OK / FAIL / CANCELLED counts + per-row list). `writeJson` streams a self-describing payload; `writeHtml` emits an email-safe single-file HTML report with status pills + a sortable table.
+- **`BackupHistoryPane` toolbar button** `Rehearsal report…` — FileChooser (HTML / JSON), 30-day window, writes on a virtual thread.
+
+### Audit + events
+- **`EventBus.onBackup`** — BackupEvent sealed trio (Started / Progress / Ended); no replay, historical runs read from `BackupCatalogDao`.
+- **`EventBus.onRestore`** — RestoreEvent sealed trio with the same shape.
+- **`ops_audit` reuse** — every backup / restore phase writes a row (`backup.start` / `backup.end` / `restore.rehearse` / `restore.execute`); `ui_source = "backup.runner"` / `"backup.restore"` so the v2.4 audit pane filters cleanly.
+
+### Schema additions
+All additive via `Database.migrate()`:
+
+- `storage_sinks (id, kind, name, root_path, credentials_enc, extras_json, ...)`.
+- `backup_policies (id, connection_id, name, enabled, schedule_cron, scope_json, archive_json, retention_json, sink_id, include_oplog, ...)` with unique `(connection_id, name)` + index on `(connection_id, enabled)`.
+- `backup_catalog (id, policy_id → backup_policies, connection_id, started_at, finished_at, status, sink_id, sink_path, manifest_sha256, total_bytes, doc_count, oplog_first_ts, oplog_last_ts, verified_at, verify_outcome, notes)`.
+- `backup_files (id, catalog_id → backup_catalog CASCADE, relative_path, bytes, sha256, db, coll, kind)`.
+
+v2.5 rolls back cleanly to v2.4.x — the new tables simply remain unread.
+
+### Known gaps (deferred to v2.5.1)
+- **Cloud sinks** — S3 / GCS / Azure / SFTP permit-list entries exist and can be persisted via `SinkDao`, but every I/O call throws `CloudSinkUnavailableException`. Real SDK integrations (AWS SDK, google-cloud-storage, azure-storage-blob, JSch) land with v2.5.1.
+- **`--oplogLimit` in the restore wizard** — `PitrPlanner` returns an oplog limit timestamp; the wizard hands off the source backup but does not yet thread the limit into mongorestore's argv.
+- **Multi-DB / multi-namespace backup fan-out** — `MongodumpCommandBuilder` emits the first entry only for `Databases(N>1)` and `Namespaces(N>1)` scopes; looping per-entry lands with v2.5.1.
+
 ## v2.4.1 — Cluster polish + shard depth
 
 Patch release closing four concrete gaps left open in v2.4.0.

@@ -235,11 +235,15 @@ public final class MonitoringService implements AutoCloseable {
                 ? ProfilingController.enable(mongo, slowMs)
                 : ProfilingController.disable(mongo);
 
+        // Persist what the server actually accepted: if the user asked to enable
+        // but no DB accepted the profile command, record profilerEnabled=false so
+        // the UI reflects reality (B6). See docs/v2/v2.5/fixes-v2.3-recording-hardening.md.
+        boolean effectiveEnabled = enabled && result.changedCount() > 0;
         MonitoringProfile updated = new MonitoringProfile(
                 p.connectionId(), p.enabled(),
                 p.instancePollInterval(), p.storagePollInterval(), p.indexUsagePollInterval(),
                 p.readPreference(),
-                enabled, slowMs, autoDisableAfter,
+                effectiveEnabled, slowMs, autoDisableAfter,
                 p.topNCollectionsPerDb(), p.pinnedCollections(), p.retention(),
                 p.createdAt(), java.time.Instant.now());
         profileDao.upsert(updated);
@@ -249,7 +253,7 @@ public final class MonitoringService implements AutoCloseable {
         java.util.concurrent.ScheduledFuture<?> prev = profilerAutoDisablers.remove(connectionId);
         if (prev != null) prev.cancel(false);
 
-        if (enabled) {
+        if (effectiveEnabled) {
             ProfilerSampler sampler = newProfilerSampler(connectionId, mongo);
             try { scheduler.register(updated, sampler); }
             catch (RuntimeException ex) {

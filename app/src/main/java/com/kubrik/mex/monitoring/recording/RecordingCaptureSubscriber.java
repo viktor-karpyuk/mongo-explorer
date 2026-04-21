@@ -10,7 +10,9 @@ import org.slf4j.LoggerFactory;
 
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -59,20 +61,30 @@ public final class RecordingCaptureSubscriber implements AutoCloseable {
     private final AtomicLong writeErrors      = new AtomicLong();
     private final AtomicLong lastFlushMs      = new AtomicLong();
     private volatile boolean running = true;
-    /** Serialises writer-thread flushes against explicit {@link #flush()} calls so
-     *  two threads never touch the SQLite connection's auto-commit flag at once. */
-    private final Object writeLock = new Object();
+    /** Shared with every other component that writes to the same SQLite connection
+     *  (auto-stop tick, future sidecar writers). See {@code Database.writeLock()}
+     *  and docs/v2/v2.5/fixes-v2.3-recording-hardening.md B1/B3. */
+    private final Object writeLock;
 
     private final EventBus.Subscription recordingSub;
     private final EventBus.Subscription metricsSub;
     private final EventBus.Subscription profilerSub;
 
+    /** Back-compat ctor for tests + standalone dev — creates a private write-lock. */
     public RecordingCaptureSubscriber(RecordingSampleDao sampleDao,
                                       RecordingProfileSampleDao profileDao,
                                       EventBus bus) {
+        this(sampleDao, profileDao, bus, new Object());
+    }
+
+    public RecordingCaptureSubscriber(RecordingSampleDao sampleDao,
+                                      RecordingProfileSampleDao profileDao,
+                                      EventBus bus,
+                                      Object writeLock) {
         this.sampleDao = sampleDao;
         this.profileDao = profileDao;
         this.bus = bus;
+        this.writeLock = writeLock;
         this.recordingSub = bus.onRecording(this::onRecordingEvent);
         this.metricsSub   = bus.onMetrics(this::onSamples);
         this.profilerSub  = bus.onProfilerSamples(this::onProfilerSamples);
@@ -84,9 +96,16 @@ public final class RecordingCaptureSubscriber implements AutoCloseable {
     private void onRecordingEvent(RecordingEvent e) {
         if (e instanceof RecordingEvent.Started s) {
             ActiveRecording ar = new ActiveRecording(s.recordingId(), s.connectionId());
-            // If another recording was mid-flight (shouldn't happen — service rejects), last-write wins.
-            byConnection.put(s.connectionId(), ar);
-            byRecordingId.put(s.recordingId(), ar);
+            // The service rejects concurrent active recordings per connection; if a
+            // Started event arrives for a connection we already track, keep the existing
+            // entry and surface the collision at WARN so it's diagnosable (B8).
+            ActiveRecording prior = byConnection.putIfAbsent(s.connectionId(), ar);
+            if (prior != null) {
+                log.warn("recording Started collision on {}: keeping {} ignoring {}",
+                        s.connectionId(), prior.recordingId, s.recordingId());
+            } else {
+                byRecordingId.put(s.recordingId(), ar);
+            }
         } else if (e instanceof RecordingEvent.Paused p) {
             ActiveRecording ar = byRecordingId.get(p.recordingId());
             if (ar != null) ar.paused = true;
@@ -118,18 +137,27 @@ public final class RecordingCaptureSubscriber implements AutoCloseable {
 
     void onProfilerSamples(List<ProfileSampleRecord> samples) {
         if (samples == null || samples.isEmpty() || byConnection.isEmpty()) return;
-        // Group by connectionId → recordingId, then flush via the profiler DAO.
-        // This runs on the bus thread; the payloads are tiny + infrequent.
+        // Group first (no DB access; safe to do outside writeLock).
+        Map<String, List<ProfileSampleRecord>> byRecording = new LinkedHashMap<>();
         for (ProfileSampleRecord p : samples) {
             ActiveRecording ar = byConnection.get(p.connectionId());
             if (ar == null || ar.paused) continue;
-            try {
-                profileDao.insertBatch(ar.recordingId, List.of(p));
-            } catch (SQLException ex) {
-                writeErrors.incrementAndGet();
-                log.warn("recording profiler double-write failed for {}: {}", ar.recordingId, ex.toString());
-                bus.publishRecording(new RecordingEvent.SampleWriteError(
-                        ar.recordingId, ex.getMessage(), System.currentTimeMillis()));
+            byRecording.computeIfAbsent(ar.recordingId, k -> new ArrayList<>()).add(p);
+        }
+        if (byRecording.isEmpty()) return;
+        // One insertBatch per recording, all under the shared writeLock so we
+        // don't interleave transactions with the metric writer thread on the
+        // shared SQLite connection (B1).
+        synchronized (writeLock) {
+            for (Map.Entry<String, List<ProfileSampleRecord>> e : byRecording.entrySet()) {
+                try {
+                    profileDao.insertBatch(e.getKey(), e.getValue());
+                } catch (SQLException ex) {
+                    writeErrors.addAndGet(e.getValue().size());
+                    log.warn("recording profiler double-write failed for {}: {}", e.getKey(), ex.toString());
+                    bus.publishRecording(new RecordingEvent.SampleWriteError(
+                            e.getKey(), ex.getMessage(), System.currentTimeMillis()));
+                }
             }
         }
     }

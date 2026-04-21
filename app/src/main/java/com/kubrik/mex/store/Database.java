@@ -10,6 +10,7 @@ import java.sql.Statement;
 public class Database implements AutoCloseable {
 
     private final Connection connection;
+    private final Object writeLock = new Object();
 
     public Database() throws SQLException, IOException {
         Files.createDirectories(AppPaths.dataDir());
@@ -23,6 +24,13 @@ public class Database implements AutoCloseable {
     }
 
     public Connection connection() { return connection; }
+
+    /** Canonical write-serialization lock for the shared SQLite connection.
+     *  SQLite's default JDBC connection is not thread-safe; components that
+     *  write from multiple threads synchronize on this object so their
+     *  transaction boundaries don't interleave. See
+     *  {@code docs/v2/v2.5/fixes-v2.3-recording-hardening.md} B1/B3. */
+    public Object writeLock() { return writeLock; }
 
     private void migrate() throws SQLException {
         try (Statement st = connection.createStatement()) {
@@ -311,6 +319,11 @@ public class Database implements AutoCloseable {
                 """);
             st.execute("CREATE INDEX IF NOT EXISTS idx_recordings_connection ON recordings(connection_id)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_recordings_started    ON recordings(started_at DESC)");
+
+            // v2.5 hardening — running byte counter so the auto-stop tick doesn't re-scan
+            // recording_samples every 5 s. See docs/v2/v2.5/fixes-v2.3-recording-hardening.md P2.
+            try { st.execute("ALTER TABLE recordings ADD COLUMN bytes_approx INTEGER NOT NULL DEFAULT 0"); }
+            catch (SQLException ignored) { /* column already present */ }
 
             st.execute("""
                 CREATE TABLE IF NOT EXISTS recording_samples (

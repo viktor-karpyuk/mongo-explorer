@@ -13,6 +13,8 @@ import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Sorts;
 import org.bson.Document;
 import org.bson.json.JsonWriterSettings;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -30,6 +32,8 @@ import java.util.function.Supplier;
  * <p>QPERF-1 caps the tail at 200 samples per poll per DB.
  */
 public final class ProfilerSampler implements Sampler {
+
+    private static final Logger log = LoggerFactory.getLogger(ProfilerSampler.class);
 
     public static final int CAP_PER_POLL = 200;
 
@@ -95,7 +99,10 @@ public final class ProfilerSampler implements Sampler {
                         cmdJson));
             }
         } catch (com.mongodb.MongoCommandException mce) {
-            // Profiler may not be enabled for this DB; that's fine.
+            // Profiler may not be enabled for this DB; that's fine, but log it so a
+            // perpetually-failing tail is visible (B7). Same poll returns any rows we'd
+            // gathered before the cursor threw; next poll re-reads from the old watermark.
+            log.debug("profiler tail on db {} aborted: {}", db, mce.toString());
             return;
         }
         if (!batch.isEmpty()) {

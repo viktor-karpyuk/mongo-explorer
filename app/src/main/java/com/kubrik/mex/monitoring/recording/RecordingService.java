@@ -60,6 +60,10 @@ public final class RecordingService implements AutoCloseable {
     private final Predicate<String> isConnected;
     private final LongSupplier storageCapBytes;
     private final ScheduledExecutorService scheduler;
+    /** Shared with {@code RecordingCaptureSubscriber}'s writer thread. Every
+     *  SQLite access against the shared connection acquires this so transaction
+     *  boundaries never interleave. See docs/v2/v2.5/fixes-v2.3-recording-hardening.md B3. */
+    private final Object writeLock;
 
     private final ReentrantLock lock = new ReentrantLock();
     /** Records the wall time when a recording entered {@code PAUSED} so resume() can
@@ -80,6 +84,7 @@ public final class RecordingService implements AutoCloseable {
         this.clock = clock;
         this.isConnected = isConnected;
         this.storageCapBytes = storageCapBytes;
+        this.writeLock = database.writeLock();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "recording-scheduler");
             t.setDaemon(true);
@@ -94,7 +99,10 @@ public final class RecordingService implements AutoCloseable {
     public void init() throws SQLException {
         if (started) return;
         started = true;
-        int swept = dao.sweepInterrupted();
+        int swept;
+        synchronized (writeLock) {
+            swept = dao.sweepInterrupted();
+        }
         if (swept > 0) log.info("recording crash-recovery sweep marked {} row(s) INTERRUPTED", swept);
         scheduler.scheduleAtFixedRate(this::tickSafely,
                 TICK_PERIOD_MS, TICK_PERIOD_MS, TimeUnit.MILLISECONDS);
@@ -103,106 +111,126 @@ public final class RecordingService implements AutoCloseable {
     // ---------------------------------------------------------------- Lifecycle
 
     public Recording start(String connectionId, StartArgs args) throws SQLException {
+        Recording r;
+        RecordingEvent.Started event;
         lock.lock();
         try {
             if (!isConnected.test(connectionId)) {
                 throw new ConnectionNotConnected(connectionId).asRuntime();
             }
-            List<Recording> active = dao.findActiveForConnection(connectionId);
-            if (!active.isEmpty()) {
-                throw new RecordingAlreadyActive(connectionId, active.get(0).name()).asRuntime();
+            synchronized (writeLock) {
+                List<Recording> active = dao.findActiveForConnection(connectionId);
+                if (!active.isEmpty()) {
+                    throw new RecordingAlreadyActive(connectionId, active.get(0).name()).asRuntime();
+                }
+                long cap = storageCapBytes.getAsLong();
+                long used = sampleDao.estimateBytes();
+                if (used >= cap) {
+                    throw new StorageCapExceeded(used, cap).asRuntime();
+                }
+                long now = clock.millis();
+                r = new Recording(
+                        UUID.randomUUID().toString(),
+                        connectionId,
+                        args.name(),
+                        args.note(),
+                        args.tags(),
+                        RecordingState.ACTIVE,
+                        null,
+                        now,
+                        null,
+                        0L,
+                        args.maxDurationMs(),
+                        args.maxSizeBytes(),
+                        args.captureProfilerSamples(),
+                        now,
+                        1);
+                dao.insert(r);
+                event = new RecordingEvent.Started(r.id(), connectionId, now);
             }
-            long cap = storageCapBytes.getAsLong();
-            long used = sampleDao.estimateBytes();
-            if (used >= cap) {
-                throw new StorageCapExceeded(used, cap).asRuntime();
-            }
-            long now = clock.millis();
-            Recording r = new Recording(
-                    UUID.randomUUID().toString(),
-                    connectionId,
-                    args.name(),
-                    args.note(),
-                    args.tags(),
-                    RecordingState.ACTIVE,
-                    null,
-                    now,
-                    null,
-                    0L,
-                    args.maxDurationMs(),
-                    args.maxSizeBytes(),
-                    args.captureProfilerSamples(),
-                    now,
-                    1);
-            dao.insert(r);
-            bus.publishRecording(new RecordingEvent.Started(r.id(), connectionId, now));
-            return r;
         } finally {
             lock.unlock();
         }
+        bus.publishRecording(event);
+        return r;
     }
 
     public void pause(String recordingId) throws SQLException {
+        RecordingEvent.Paused event = null;
         lock.lock();
         try {
-            Recording r = requireFound(recordingId);
-            if (r.state() != RecordingState.ACTIVE) {
-                return;   // idempotent: already paused or stopped
+            synchronized (writeLock) {
+                Recording r = requireFound(recordingId);
+                if (r.state() != RecordingState.ACTIVE) {
+                    return;   // idempotent: already paused or stopped
+                }
+                long now = clock.millis();
+                Recording paused = r.withTransition(RecordingState.PAUSED, null, null, r.pausedMillis());
+                dao.update(paused);
+                pauseStartedAt.put(recordingId, now);
+                event = new RecordingEvent.Paused(recordingId, now);
             }
-            long now = clock.millis();
-            Recording paused = r.withTransition(RecordingState.PAUSED, null, null, r.pausedMillis());
-            dao.update(paused);
-            pauseStartedAt.put(recordingId, now);
-            bus.publishRecording(new RecordingEvent.Paused(recordingId, now));
         } finally {
             lock.unlock();
         }
+        if (event != null) bus.publishRecording(event);
     }
 
     public void resume(String recordingId) throws SQLException {
+        RecordingEvent.Resumed event = null;
         lock.lock();
         try {
-            Recording r = requireFound(recordingId);
-            if (r.state() != RecordingState.PAUSED) {
-                return;   // idempotent: already active or stopped
+            synchronized (writeLock) {
+                Recording r = requireFound(recordingId);
+                if (r.state() != RecordingState.PAUSED) {
+                    return;   // idempotent: already active or stopped
+                }
+                long now = clock.millis();
+                Long pauseStart = pauseStartedAt.remove(recordingId);
+                long additional = pauseStart != null ? Math.max(0, now - pauseStart) : 0L;
+                Recording resumed = r.withTransition(RecordingState.ACTIVE, null, null,
+                        r.pausedMillis() + additional);
+                dao.update(resumed);
+                event = new RecordingEvent.Resumed(recordingId, now);
             }
-            long now = clock.millis();
-            Long pauseStart = pauseStartedAt.remove(recordingId);
-            long additional = pauseStart != null ? Math.max(0, now - pauseStart) : 0L;
-            Recording resumed = r.withTransition(RecordingState.ACTIVE, null, null,
-                    r.pausedMillis() + additional);
-            dao.update(resumed);
-            bus.publishRecording(new RecordingEvent.Resumed(recordingId, now));
         } finally {
             lock.unlock();
         }
+        if (event != null) bus.publishRecording(event);
     }
 
     public Recording stop(String recordingId, StopReason reason) throws SQLException {
+        Recording stopped;
+        RecordingEvent.Stopped event = null;
         lock.lock();
         try {
-            Recording r = requireFound(recordingId);
-            if (r.state() == RecordingState.STOPPED) return r;
-            long now = clock.millis();
-            long pausedMillis = r.pausedMillis();
-            if (r.state() == RecordingState.PAUSED) {
-                Long pauseStart = pauseStartedAt.remove(recordingId);
-                if (pauseStart != null) pausedMillis += Math.max(0, now - pauseStart);
+            synchronized (writeLock) {
+                Recording r = requireFound(recordingId);
+                if (r.state() == RecordingState.STOPPED) return r;
+                long now = clock.millis();
+                long pausedMillis = r.pausedMillis();
+                if (r.state() == RecordingState.PAUSED) {
+                    Long pauseStart = pauseStartedAt.remove(recordingId);
+                    if (pauseStart != null) pausedMillis += Math.max(0, now - pauseStart);
+                }
+                stopped = r.withTransition(RecordingState.STOPPED, reason, now, pausedMillis);
+                dao.update(stopped);
+                event = new RecordingEvent.Stopped(recordingId, reason, now);
             }
-            Recording stopped = r.withTransition(RecordingState.STOPPED, reason, now, pausedMillis);
-            dao.update(stopped);
-            bus.publishRecording(new RecordingEvent.Stopped(recordingId, reason, now));
-            return stopped;
         } finally {
             lock.unlock();
         }
+        if (event != null) bus.publishRecording(event);
+        return stopped;
     }
 
     public void delete(String recordingId) throws SQLException {
         lock.lock();
         try {
-            requireFound(recordingId);
-            dao.delete(recordingId);
+            synchronized (writeLock) {
+                requireFound(recordingId);
+                dao.delete(recordingId);
+            }
             pauseStartedAt.remove(recordingId);
         } finally {
             lock.unlock();
@@ -224,15 +252,21 @@ public final class RecordingService implements AutoCloseable {
     // ---------------------------------------------------------------- Queries
 
     public Optional<Recording> get(String recordingId) throws SQLException {
-        return dao.findById(recordingId);
+        synchronized (writeLock) {
+            return dao.findById(recordingId);
+        }
     }
 
     public List<Recording> list() throws SQLException {
-        return dao.listAll();
+        synchronized (writeLock) {
+            return dao.listAll();
+        }
     }
 
     public List<Recording> activeForConnection(String connectionId) throws SQLException {
-        return dao.findActiveForConnection(connectionId);
+        synchronized (writeLock) {
+            return dao.findActiveForConnection(connectionId);
+        }
     }
 
     // ---------------------------------------------------------------- Scheduler tick
@@ -243,15 +277,16 @@ public final class RecordingService implements AutoCloseable {
      */
     void onTick() {
         long now = clock.millis();
-        List<Recording> all;
+        List<Recording> candidates;
         try {
-            all = dao.listAll();
+            synchronized (writeLock) {
+                candidates = dao.findActiveAndPaused();
+            }
         } catch (SQLException e) {
             log.warn("recording auto-stop tick: list failed", e);
             return;
         }
-        for (Recording r : all) {
-            if (r.state() != RecordingState.ACTIVE && r.state() != RecordingState.PAUSED) continue;
+        for (Recording r : candidates) {
             // Freeze effective time at pause-start for PAUSED recordings so the in-progress
             // pause interval doesn't silently count toward the max-duration limit.
             long effectiveNow = now;
@@ -265,7 +300,13 @@ public final class RecordingService implements AutoCloseable {
                     continue;
                 }
                 if (r.maxSizeBytes() != null) {
-                    long used = sampleDao.estimateBytes(r.id());
+                    // Read the running counter maintained by the writer thread (P2) instead
+                    // of SUM(LENGTH(labels_json)) + 28*COUNT(*) which rescans the full
+                    // recording_samples range every 5 s per active recording.
+                    long used;
+                    synchronized (writeLock) {
+                        used = dao.bytesApprox(r.id());
+                    }
                     if (used >= r.maxSizeBytes()) {
                         stop(r.id(), StopReason.AUTO_SIZE);
                     }
@@ -293,24 +334,24 @@ public final class RecordingService implements AutoCloseable {
         scheduler.shutdown();
         try { scheduler.awaitTermination(5, TimeUnit.SECONDS); }
         catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-        lock.lock();
+        List<Recording> candidates;
         try {
-            List<Recording> all = dao.listAll();
-            for (Recording r : all) {
-                if (r.state() == RecordingState.ACTIVE || r.state() == RecordingState.PAUSED) {
-                    try { stop(r.id(), StopReason.INTERRUPTED); }
-                    catch (SQLException e) { log.warn("recording close: stop failed for {}", r.id(), e); }
-                }
+            synchronized (writeLock) {
+                candidates = dao.findActiveAndPaused();
             }
         } catch (SQLException e) {
             log.warn("recording close: list failed", e);
-        } finally {
-            lock.unlock();
+            return;
+        }
+        for (Recording r : candidates) {
+            try { stop(r.id(), StopReason.INTERRUPTED); }
+            catch (SQLException e) { log.warn("recording close: stop failed for {}", r.id(), e); }
         }
     }
 
     // ---------------------------------------------------------------- Helpers
 
+    /** Caller MUST already hold {@code writeLock}. */
     private Recording requireFound(String recordingId) throws SQLException {
         return dao.findById(recordingId)
                 .orElseThrow(() -> new RecordingNotFound(recordingId).asRuntime());
@@ -320,9 +361,11 @@ public final class RecordingService implements AutoCloseable {
             throws SQLException {
         lock.lock();
         try {
-            // Metadata (name, note, tags) is editable in any state per REC-META-1/2/3.
-            Recording r = requireFound(recordingId);
-            dao.update(f.apply(r));
+            synchronized (writeLock) {
+                // Metadata (name, note, tags) is editable in any state per REC-META-1/2/3.
+                Recording r = requireFound(recordingId);
+                dao.update(f.apply(r));
+            }
         } finally {
             lock.unlock();
         }

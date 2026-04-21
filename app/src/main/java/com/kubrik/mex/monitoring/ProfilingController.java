@@ -38,7 +38,14 @@ public final class ProfilingController {
         List<String> changed = new ArrayList<>();
         List<String> failed = new ArrayList<>();
         if (mongo == null) return new Result(changed, failed);
-        for (String dbName : mongo.listDatabaseNames()) {
+        List<String> dbNames;
+        try {
+            dbNames = mongo.listDatabaseNames();
+        } catch (Throwable t) {
+            log.debug("profile {} listDatabaseNames failed: {}", level == 1 ? "enable" : "disable", t.toString());
+            return new Result(changed, failed);
+        }
+        for (String dbName : dbNames) {
             if (SYSTEM_DBS.contains(dbName)) continue;
             try {
                 Document cmd = new Document("profile", level);

@@ -27,6 +27,12 @@ public final class RecordingSampleDao {
             VALUES (?, ?, ?, ?, ?, ?)
             """;
 
+    /** Keeps {@code recordings.bytes_approx} in sync inside the same transaction as the
+     *  insert batch, so {@code RecordingService.onTick} can enforce {@code maxSizeBytes}
+     *  via a point read instead of a full-scan SUM(LENGTH) (P2). */
+    private static final String BUMP_BYTES_SQL =
+            "UPDATE recordings SET bytes_approx = bytes_approx + ? WHERE id = ?";
+
     private static final String LOAD_RANGE_SQL = """
             SELECT ts, labels_json, value
               FROM recording_samples
@@ -80,22 +86,39 @@ public final class RecordingSampleDao {
 
     public int insertBatch(List<RecordingWriteTask> batch) throws SQLException {
         if (batch.isEmpty()) return 0;
+        // Pre-compute per-recording byte additions to UPDATE in the same transaction.
+        java.util.Map<String, Long> bytesPerRecording = new java.util.LinkedHashMap<>();
+        for (RecordingWriteTask t : batch) {
+            long bytes = (t.labelsJson() == null ? 0 : t.labelsJson().length()) + 28L;
+            bytesPerRecording.merge(t.recordingId(), bytes, Long::sum);
+        }
         boolean prevAuto = conn.getAutoCommit();
         conn.setAutoCommit(false);
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
-            for (RecordingWriteTask t : batch) {
-                ps.setString(1, t.recordingId());
-                ps.setString(2, t.connectionId());
-                ps.setString(3, t.metric());
-                ps.setString(4, t.labelsJson());
-                ps.setLong  (5, t.tsMs());
-                ps.setDouble(6, t.value());
-                ps.addBatch();
+        try {
+            int total;
+            try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+                for (RecordingWriteTask t : batch) {
+                    ps.setString(1, t.recordingId());
+                    ps.setString(2, t.connectionId());
+                    ps.setString(3, t.metric());
+                    ps.setString(4, t.labelsJson());
+                    ps.setLong  (5, t.tsMs());
+                    ps.setDouble(6, t.value());
+                    ps.addBatch();
+                }
+                int[] rc = ps.executeBatch();
+                total = 0;
+                for (int r : rc) if (r > 0) total += r;
             }
-            int[] rc = ps.executeBatch();
+            try (PreparedStatement bump = conn.prepareStatement(BUMP_BYTES_SQL)) {
+                for (java.util.Map.Entry<String, Long> e : bytesPerRecording.entrySet()) {
+                    bump.setLong  (1, e.getValue());
+                    bump.setString(2, e.getKey());
+                    bump.addBatch();
+                }
+                bump.executeBatch();
+            }
             conn.commit();
-            int total = 0;
-            for (int r : rc) if (r > 0) total += r;
             return total;
         } catch (SQLException e) {
             try { conn.rollback(); } catch (SQLException ignored) {}
