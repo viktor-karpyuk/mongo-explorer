@@ -7,7 +7,6 @@ import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
-import javafx.scene.control.ScrollPane;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.BorderPane;
@@ -20,6 +19,7 @@ import javafx.stage.Stage;
 import javafx.stage.Window;
 import org.bson.Document;
 import org.bson.json.JsonWriterSettings;
+import org.fxmisc.flowless.VirtualizedScrollPane;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -31,6 +31,11 @@ import java.nio.file.Path;
  * window so users can keep the cluster tab visible while inspecting the
  * current config. Copy + Export buttons cover the two most common follow-ups:
  * paste into chat / git commit, or capture a pre-reconfig baseline.
+ *
+ * <p>v2.5 polish: window is resizable with a sensible minimum so the JSON
+ * pane can grow for large configs (mirrors DocumentEditorDialog). The code
+ * area sits inside a {@link VirtualizedScrollPane} so scrolling stays smooth
+ * on multi-thousand-line configs.</p>
  */
 public final class ReplConfigDialog {
 
@@ -40,6 +45,9 @@ public final class ReplConfigDialog {
         Stage stage = new Stage();
         if (owner != null) stage.initOwner(owner);
         stage.setTitle("rs.conf · " + connectionLabel);
+        stage.setResizable(true);
+        stage.setMinWidth(640);
+        stage.setMinHeight(440);
 
         Label title = new Label("Replica set configuration");
         title.setStyle("-fx-font-weight: 700; -fx-font-size: 14px;");
@@ -48,9 +56,7 @@ public final class ReplConfigDialog {
 
         JsonCodeArea area = new JsonCodeArea("loading…");
         area.setEditable(false);
-        ScrollPane scroll = new ScrollPane(area);
-        scroll.setFitToWidth(true);
-        scroll.setStyle("-fx-background-color: transparent; -fx-background: transparent;");
+        VirtualizedScrollPane<JsonCodeArea> scroll = new VirtualizedScrollPane<>(area);
         VBox.setVgrow(scroll, Priority.ALWAYS);
 
         Button copyBtn = new Button("Copy JSON");
@@ -65,14 +71,20 @@ public final class ReplConfigDialog {
         footer.setAlignment(Pos.CENTER_RIGHT);
         footer.setPadding(new Insets(10, 14, 12, 14));
 
-        BorderPane root = new BorderPane(scroll);
         VBox header = new VBox(2, title, sub);
         header.setPadding(new Insets(12, 14, 10, 14));
+
+        VBox body = new VBox(scroll);
+        body.setPadding(new Insets(0, 14, 0, 14));
+        VBox.setVgrow(scroll, Priority.ALWAYS);
+        VBox.setVgrow(body, Priority.ALWAYS);
+
+        BorderPane root = new BorderPane(body);
         root.setTop(header);
         root.setBottom(footer);
         root.setStyle("-fx-background-color: white;");
 
-        Scene scene = new Scene(root, 720, 520);
+        Scene scene = new Scene(root, 960, 640);
         stage.setScene(scene);
         stage.show();
 
