@@ -10,14 +10,18 @@ import java.util.Optional;
  * v2.5 STG-1..5 — abstract storage target for backup artefacts.
  *
  * <p>Sealed so the permit list is the authoritative set of supported sink
- * kinds: local filesystem in v2.5.0, cloud sinks (S3 / GCS / Azure / SFTP)
- * land with Q2.5-H and extend the permit list at that time.</p>
+ * kinds. Local filesystem is the only ready impl in v2.5.0; cloud targets
+ * (S3 / GCS / Azure / SFTP) are scaffolded so the sealed hierarchy is
+ * complete and {@link com.kubrik.mex.backup.store.SinkRecord#kind()} maps
+ * cleanly, but they throw {@link CloudSinkUnavailableException} — real
+ * impls land with v2.5.1 once the SDK dependency set is chosen.</p>
  *
  * <p>All I/O methods are blocking and assumed-safe to call off the JavaFX
  * application thread. Callers close {@link InputStream} / {@link OutputStream}
  * instances themselves.</p>
  */
-public sealed interface StorageTarget permits LocalFsTarget {
+public sealed interface StorageTarget
+        permits LocalFsTarget, S3Target, GcsTarget, AzureBlobTarget, SftpTarget {
 
     /** Probe result from {@link #testWrite()}. */
     record Probe(boolean writable, long latencyMs, Optional<String> error) {}
