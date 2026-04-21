@@ -2,6 +2,7 @@ package com.kubrik.mex;
 
 import atlantafx.base.theme.PrimerLight;
 import com.kubrik.mex.backup.runner.BackupScheduler;
+import com.kubrik.mex.backup.runner.RestoreService;
 import com.kubrik.mex.backup.store.BackupCatalogDao;
 import com.kubrik.mex.backup.store.BackupFileDao;
 import com.kubrik.mex.backup.store.BackupPolicyDao;
@@ -235,10 +236,19 @@ public class Main extends Application {
                 java.time.Clock.systemUTC());
         backupScheduler.start();
 
+        // Q2.5-E — restore orchestrator shares the kill-switch with the
+        // cluster executor so engaging it blocks Execute-mode restores too.
+        RestoreService restoreService = new RestoreService(backupCatalogDao, opsAuditDao,
+                eventBus, killSwitch, java.time.Clock.systemUTC(),
+                java.nio.file.Paths.get(System.getProperty("user.home", "."),
+                        "mongo-explorer", "backups"),
+                "mongorestore");
+
         MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
                 migrationService, monitoringService, db, killOpHandler, rsAdminHandler,
                 opsAuditDao, opsExecutor, balancerHandler, zonesHandler, killSwitch,
-                backupPolicyDao, backupCatalogDao, backupFileDao, sinkDao, catalogVerifier);
+                backupPolicyDao, backupCatalogDao, backupFileDao, sinkDao, catalogVerifier,
+                restoreService, finalCallerUser, finalCallerHost);
 
         // If a previous session left unfinished migrations behind, surface the recovery panel
         // as soon as the UI is up. See docs/mvp-functional-spec.md §4.6.

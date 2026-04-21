@@ -1,6 +1,7 @@
 package com.kubrik.mex.ui.backup;
 
 import com.kubrik.mex.backup.event.BackupEvent;
+import com.kubrik.mex.backup.runner.RestoreService;
 import com.kubrik.mex.backup.store.BackupCatalogDao;
 import com.kubrik.mex.backup.store.BackupCatalogRow;
 import com.kubrik.mex.backup.store.BackupFileDao;
@@ -17,7 +18,9 @@ import javafx.collections.transformation.SortedList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.ChoiceBox;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
@@ -53,6 +56,9 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
     private final BackupCatalogDao catalog;
     private final BackupFileDao files;
     private final CatalogVerifier verifier;
+    private final RestoreService restoreService;
+    private final String callerUser;
+    private final String callerHost;
     private final EventBus bus;
     private final EventBus.Subscription sub;
     private final SimpleObjectProperty<String> connection = new SimpleObjectProperty<>();
@@ -66,10 +72,14 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
     private final Label footer = new Label("—");
 
     public BackupHistoryPane(BackupCatalogDao catalog, BackupFileDao files,
-                             CatalogVerifier verifier, EventBus bus) {
+                             CatalogVerifier verifier, RestoreService restoreService,
+                             String callerUser, String callerHost, EventBus bus) {
         this.catalog = catalog;
         this.files = files;
         this.verifier = verifier;
+        this.restoreService = restoreService;
+        this.callerUser = callerUser;
+        this.callerHost = callerHost;
         this.bus = bus;
 
         setStyle("-fx-background-color: white;");
@@ -138,6 +148,10 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
             var r = new javafx.scene.control.TableRow<BackupCatalogRow>();
             r.setOnMouseClicked(e -> {
                 if (e.getClickCount() == 2 && !r.isEmpty()) openArtefactExplorer(r.getItem());
+            });
+            r.itemProperty().addListener((obs, old, item) -> {
+                if (item == null) { r.setContextMenu(null); return; }
+                r.setContextMenu(buildRowMenu(item));
             });
             return r;
         });
@@ -212,6 +226,23 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
                 }
             }));
         });
+    }
+
+    private ContextMenu buildRowMenu(BackupCatalogRow row) {
+        ContextMenu m = new ContextMenu();
+        MenuItem verify = new MenuItem("Artefacts + verify…");
+        verify.setOnAction(e -> openArtefactExplorer(row));
+        MenuItem restore = new MenuItem("Restore…");
+        restore.setDisable(restoreService == null || row.status() != BackupStatus.OK);
+        if (row.status() != BackupStatus.OK) {
+            restore.setText("Restore…  (only available for OK backups)");
+        }
+        restore.setOnAction(e -> {
+            javafx.stage.Window win = getScene() == null ? null : getScene().getWindow();
+            RestoreWizardDialog.show(win, row, restoreService, callerUser, callerHost);
+        });
+        m.getItems().addAll(verify, restore);
+        return m;
     }
 
     /* ============================= helpers =============================== */

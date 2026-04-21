@@ -74,6 +74,9 @@ public class MainView extends BorderPane {
     private final com.kubrik.mex.backup.store.BackupFileDao backupFileDao;
     private final com.kubrik.mex.backup.store.SinkDao sinkDao;
     private final com.kubrik.mex.backup.verify.CatalogVerifier catalogVerifier;
+    private final com.kubrik.mex.backup.runner.RestoreService restoreService;
+    private final String callerUser;
+    private final String callerHost;
 
     private final ConnectionTree connTree;
     private final TabPane tabs = new TabPane();
@@ -109,7 +112,9 @@ public class MainView extends BorderPane {
                     com.kubrik.mex.backup.store.BackupCatalogDao backupCatalogDao,
                     com.kubrik.mex.backup.store.BackupFileDao backupFileDao,
                     com.kubrik.mex.backup.store.SinkDao sinkDao,
-                    com.kubrik.mex.backup.verify.CatalogVerifier catalogVerifier) {
+                    com.kubrik.mex.backup.verify.CatalogVerifier catalogVerifier,
+                    com.kubrik.mex.backup.runner.RestoreService restoreService,
+                    String callerUser, String callerHost) {
         this.manager = manager;
         this.connectionStore = connectionStore;
         this.historyStore = historyStore;
@@ -129,6 +134,9 @@ public class MainView extends BorderPane {
         this.backupFileDao = backupFileDao;
         this.sinkDao = sinkDao;
         this.catalogVerifier = catalogVerifier;
+        this.restoreService = restoreService;
+        this.callerUser = callerUser;
+        this.callerHost = callerHost;
 
         this.connTree = new ConnectionTree(manager, connectionStore, events);
         this.connTree.setOpenHandler(new ConnectionTree.OpenHandler() {
@@ -552,7 +560,8 @@ public class MainView extends BorderPane {
         }
         if (backupsView == null) {
             backupsView = new BackupsTab(backupPolicyDao, backupCatalogDao, backupFileDao,
-                    sinkDao, catalogVerifier, events, manager, connectionStore);
+                    sinkDao, catalogVerifier, restoreService,
+                    callerUser, callerHost, events, manager, connectionStore);
         }
         backupsTab = new Tab("Backups", backupsView);
         backupsTab.setOnClosed(e -> {
