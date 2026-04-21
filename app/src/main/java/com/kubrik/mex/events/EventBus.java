@@ -1,6 +1,7 @@
 package com.kubrik.mex.events;
 
 import com.kubrik.mex.backup.event.BackupEvent;
+import com.kubrik.mex.backup.event.RestoreEvent;
 import com.kubrik.mex.cluster.audit.OpsAuditRecord;
 import com.kubrik.mex.cluster.model.TopologySnapshot;
 import com.kubrik.mex.migration.events.JobEvent;
@@ -49,6 +50,8 @@ public class EventBus {
     private final ConcurrentMap<Object, Consumer<OpsAuditRecord>> opsAuditListeners =
             new ConcurrentHashMap<>();
     private final ConcurrentMap<Object, Consumer<BackupEvent>> backupListeners =
+            new ConcurrentHashMap<>();
+    private final ConcurrentMap<Object, Consumer<RestoreEvent>> restoreListeners =
             new ConcurrentHashMap<>();
 
     /** Latest topology snapshot per connection — delivered to late subscribers so newly-mounted
@@ -249,6 +252,25 @@ public class EventBus {
     public void publishBackup(BackupEvent e) {
         if (e == null) return;
         for (Consumer<BackupEvent> l : backupListeners.values()) {
+            try { l.accept(e); } catch (Exception ignored) {}
+        }
+    }
+
+    /**
+     * Restore lifecycle feed (v2.5 Q2.5-E). Rehearse + Execute runs publish
+     * the same event stream; consumers tell them apart via {@link
+     * RestoreEvent.Started#mode()}. No replay — historical restore rows
+     * live in {@code ops_audit} keyed by {@code command_name = "restore.*"}.
+     */
+    public Subscription onRestore(Consumer<RestoreEvent> l) {
+        Object key = new Object();
+        restoreListeners.put(key, l);
+        return () -> restoreListeners.remove(key);
+    }
+
+    public void publishRestore(RestoreEvent e) {
+        if (e == null) return;
+        for (Consumer<RestoreEvent> l : restoreListeners.values()) {
             try { l.accept(e); } catch (Exception ignored) {}
         }
     }
