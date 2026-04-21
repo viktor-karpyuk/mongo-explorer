@@ -139,6 +139,31 @@ class BackupRunnerIT {
     }
 
     @Test
+    void manifest_file_row_byte_count_matches_utf8_size_for_non_ascii_scope() throws IOException {
+        // Policy name contains non-ASCII chars so the canonical manifest JSON
+        // encodes to more bytes than Java String chars — exposed a verifier
+        // size-mismatch bug before the UTF-8-byte-count fix landed.
+        LocalFsTarget sink = new LocalFsTarget("local", sinkDir.toString());
+        BackupPolicy policy = new BackupPolicy(-1L, "cx-it", "nachtlauf-äöü", true, null,
+                new Scope.WholeCluster(),
+                new ArchiveSpec(false, 0, "<policy>/<yyyy-MM-dd_HH-mm-ss>"),
+                RetentionSpec.defaults(), 99L, false, 1L, 1L);
+
+        BackupRunner.RunResult result = runner.execute(
+                "cx-it", "mongodb://host/", policy, sink, 99L, "dba", "localhost");
+        assertEquals(BackupStatus.OK, result.status());
+
+        var inventory = files.listForCatalog(result.catalogId());
+        var manifestRow = inventory.stream()
+                .filter(r -> r.kind().equals("manifest"))
+                .findFirst().orElseThrow();
+        BackupCatalogRow rowMeta = catalog.byId(result.catalogId()).orElseThrow();
+        Path manifestFile = sinkDir.resolve(rowMeta.sinkPath()).resolve("manifest.json");
+        assertEquals(Files.size(manifestFile), manifestRow.bytes(),
+                "manifest row's bytes must match the on-disk UTF-8 size");
+    }
+
+    @Test
     void nonzero_exit_code_produces_FAILED_catalog_and_stderr_tail() throws Exception {
         Path failShim = writeFailShim();
         runner = new BackupRunner(catalog, files, audit, bus, Clock.systemUTC(),

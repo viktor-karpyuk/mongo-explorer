@@ -110,9 +110,11 @@ public final class BackupRunner {
         String relativeOutDir = OutputDirTemplate.render(
                 policy.archive().outputDirTemplate(), policy.name(),
                 connectionId, startedAt);
-        Path sinkRoot = java.nio.file.Paths.get(
-                local.canonicalRoot().substring("file://".length()));
-        Path outDir = sinkRoot.resolve(relativeOutDir);
+        // Use the sink's Path accessor — string-parsing canonicalRoot()
+        // breaks on Windows (non-URI form) and strips to the wrong path
+        // on SMB / alternate-root mounts.
+        Path sinkRootPath = local.rootPath();
+        Path outDir = sinkRootPath.resolve(relativeOutDir);
         Files.createDirectories(outDir);
 
         BackupCatalogRow running = new BackupCatalogRow(-1,
@@ -128,6 +130,13 @@ public final class BackupRunner {
                 startedAt.toEpochMilli());
         bus.publishBackup(new BackupEvent.Started(catalogId, connectionId,
                 startedAt.toEpochMilli()));
+
+        // Any uncaught throwable from this point on must flip the catalog
+        // row out of RUNNING; otherwise the scheduler's orphan-reconcile
+        // sweep only catches it on the next JVM restart. Track whether the
+        // happy path already finalised so the catch doesn't double-write.
+        boolean finalised = false;
+        try {
 
         MongodumpOptions opts = new MongodumpOptions(uri, outDir, policy.scope(),
                 policy.archive(), policy.includeOplog(), 4);
@@ -149,6 +158,7 @@ public final class BackupRunner {
             finaliseFail(catalogId, connectionId, startedAt, sinkId,
                     "mongodump spawn failed: " + ioe.getMessage(),
                     callerUser, callerHost);
+            finalised = true;
             throw ioe;
         }
 
@@ -162,6 +172,7 @@ public final class BackupRunner {
             finalise(catalogId, terminal, clock.millis(), null, null, null,
                     null, null, notes, startedAt.toEpochMilli(), connectionId,
                     relativeOutDir, callerUser, callerHost);
+            finalised = true;
             return new RunResult(catalogId, terminal, null, 0L, msg);
         }
 
@@ -202,10 +213,12 @@ public final class BackupRunner {
         long finishedAtMs = clock.millis();
         OplogSlice oplogSlice = null;
         if (policy.includeOplog() && oplogRel != null && oplogSha != null) {
-            oplogSlice = new OplogSlice(
-                    startedAt.getEpochSecond(),
-                    java.time.Instant.ofEpochMilli(finishedAtMs).getEpochSecond(),
-                    oplogRel, oplogSha);
+            // Guard against NTP steps making finishedAt < startedAt — the
+            // OplogSlice record rejects that, which would leak a RUNNING row.
+            long firstSec = startedAt.getEpochSecond();
+            long lastSec = Math.max(firstSec,
+                    java.time.Instant.ofEpochMilli(finishedAtMs).getEpochSecond());
+            oplogSlice = new OplogSlice(firstSec, lastSec, oplogRel, oplogSha);
         }
 
         BackupManifest manifest = new BackupManifest(
@@ -215,11 +228,14 @@ public final class BackupRunner {
                 manifestFiles, oplogSlice);
         String manifestJson = manifest.toCanonicalJson();
         String manifestSha = manifest.footerSha256();
+        byte[] manifestBytes = manifestJson.getBytes(StandardCharsets.UTF_8);
         Path manifestPath = outDir.resolve(MANIFEST_FILE);
-        Files.write(manifestPath, manifestJson.getBytes(StandardCharsets.UTF_8));
+        Files.write(manifestPath, manifestBytes);
         // Record the manifest itself as a file row so the verifier covers it.
+        // Use the UTF-8 byte length, NOT manifestJson.length() (which is the
+        // Java String char count — wrong for non-ASCII content).
         fileRows.add(new BackupFileRow(-1, catalogId,
-                relativeOutDir + "/" + MANIFEST_FILE, manifestJson.length(),
+                relativeOutDir + "/" + MANIFEST_FILE, manifestBytes.length,
                 manifestSha, null, null, "manifest"));
 
         files.insertAll(fileRows);
@@ -231,9 +247,26 @@ public final class BackupRunner {
                 "ok in " + outcome.durationMs() + " ms",
                 startedAt.toEpochMilli(), connectionId, relativeOutDir,
                 callerUser, callerHost);
+        finalised = true;
 
         return new RunResult(catalogId, BackupStatus.OK, manifestSha, totalBytes,
                 "ok");
+        } finally {
+            if (!finalised) {
+                // Catch-all: an exception bubbled past the happy path + the
+                // explicit failure branches. Flag the catalog row so the
+                // history surface doesn't lie about it, then let the throwable
+                // propagate.
+                try {
+                    finaliseFail(catalogId, connectionId, startedAt, sinkId,
+                            "runner crashed before finalisation",
+                            callerUser, callerHost);
+                } catch (Exception suppressed) {
+                    log.warn("finalise-on-crash failed for catalog {}: {}",
+                            catalogId, suppressed.getMessage());
+                }
+            }
+        }
     }
 
     /* ============================= internals ============================= */

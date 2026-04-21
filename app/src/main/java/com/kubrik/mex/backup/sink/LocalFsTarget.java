@@ -43,6 +43,11 @@ public final class LocalFsTarget implements StorageTarget {
 
     public String name() { return name; }
 
+    /** Absolute root as a {@link Path} — used by runners that need to mount
+     *  the sink into a subprocess {@code --out} / {@code --dir} arg without
+     *  re-parsing {@link #canonicalRoot()}. */
+    public Path rootPath() { return root; }
+
     @Override
     public Probe testWrite() {
         long start = System.nanoTime();
