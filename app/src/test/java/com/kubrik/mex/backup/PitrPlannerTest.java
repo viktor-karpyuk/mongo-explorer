@@ -92,6 +92,22 @@ class PitrPlannerTest {
     }
 
     @Test
+    void refuses_with_clear_message_when_no_backup_has_oplog_window() {
+        // OK catalog row but includeOplog was false — oplog_first/last_ts
+        // are null. Planner must surface a useful message, not leak the
+        // Long.MAX_VALUE sentinel from the reduce step.
+        catalog.insert(new com.kubrik.mex.backup.store.BackupCatalogRow(-1, null, "cx-a",
+                1_000L, 2_000L, BackupStatus.OK, 1L, "p/1",
+                "h".repeat(64), 0L, 0L, null, null, null, null, null));
+        RestorePlan plan = planner.plan("cx-a", 1_500);
+        assertFalse(plan.feasible());
+        assertTrue(plan.refusal().contains("no backup in the catalog captured"),
+                "expected empty-windows message, got: " + plan.refusal());
+        assertFalse(plan.refusal().contains(String.valueOf(Long.MAX_VALUE)),
+                "refusal must not leak sentinel Long.MAX_VALUE");
+    }
+
+    @Test
     void refuses_for_unknown_connection() {
         RestorePlan plan = planner.plan("cx-nobody", 1L);
         assertFalse(plan.feasible());

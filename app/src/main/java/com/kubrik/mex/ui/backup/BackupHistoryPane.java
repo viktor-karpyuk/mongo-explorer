@@ -207,17 +207,24 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
     }
 
     private void onBackupEvent(BackupEvent e) {
-        if (!(e instanceof BackupEvent.Ended end)) {
-            // Started + Progress only touch the in-memory view; the row is
-            // reloaded from the DAO on Ended so we pick up the finalised
-            // manifest + totals.
+        // Load-or-upsert the matching catalog row on Started and Ended so
+        // in-progress backups show up in the history with a RUNNING pill
+        // instead of appearing only after finalisation. Progress is
+        // frame-volume heavy and doesn't change row identity; skip it here.
+        long catalogId;
+        String eventCx;
+        if (e instanceof BackupEvent.Started s) {
+            catalogId = s.catalogId();
+            eventCx = s.connectionId();
+        } else if (e instanceof BackupEvent.Ended end) {
+            catalogId = end.catalogId();
+            eventCx = end.connectionId();
+        } else {
             return;
         }
         String cx = connection.get();
-        if (cx == null || !cx.equals(end.connectionId())) return;
-        Platform.runLater(() -> catalog.byId(end.catalogId()).ifPresent(row -> {
-            // Prepend if new, replace in place if the catalog id was already
-            // loaded (e.g., started earlier, finalised now).
+        if (cx == null || !cx.equals(eventCx)) return;
+        Platform.runLater(() -> catalog.byId(catalogId).ifPresent(row -> {
             int idx = -1;
             for (int i = 0; i < rows.size(); i++) {
                 if (rows.get(i).id() == row.id()) { idx = i; break; }

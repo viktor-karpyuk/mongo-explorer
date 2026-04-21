@@ -46,7 +46,7 @@ public final class PitrPlanner {
 
         // Diagnostic refusal: tell the user whether the target is in the
         // future vs. before the earliest oplog vs. inside a gap between
-        // backups.
+        // backups — or whether no backups carry an oplog window at all.
         long earliest = rows.stream()
                 .filter(r -> r.oplogFirstTs() != null)
                 .mapToLong(BackupCatalogRow::oplogFirstTs)
@@ -56,6 +56,14 @@ public final class PitrPlanner {
                 .mapToLong(BackupCatalogRow::oplogLastTs)
                 .max().orElse(Long.MIN_VALUE);
 
+        if (earliest == Long.MAX_VALUE || latest == Long.MIN_VALUE) {
+            // No catalog row captured an oplog slice (includeOplog = false,
+            // or pre-Q2.5-F backups). A PITR target is meaningless until a
+            // fresh backup runs with oplog capture enabled.
+            return RestorePlan.refused(
+                    "no backup in the catalog captured an oplog window — "
+                            + "enable includeOplog on the policy and run a fresh backup");
+        }
         if (targetEpochSec < earliest) {
             return RestorePlan.refused(
                     "target " + targetEpochSec + " is older than the earliest oplog window ("

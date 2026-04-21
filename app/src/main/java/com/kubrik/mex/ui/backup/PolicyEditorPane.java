@@ -356,6 +356,18 @@ public final class PolicyEditorPane extends BorderPane {
         String current = connectionPicker.getValue();
         connectionPicker.getItems().setAll(
                 connectionStore.list().stream().map(c -> c.id()).toList());
+        // Stored value is the connection id (connection.get() callers rely on
+        // that); the picker cell renders "<human name>  ·  <id>" so the user
+        // sees what they typed in the connection editor instead of a raw id.
+        connectionPicker.setConverter(new javafx.util.StringConverter<>() {
+            @Override public String toString(String id) {
+                if (id == null) return "";
+                com.kubrik.mex.model.MongoConnection c = connectionStore.get(id);
+                String name = c == null ? null : c.name();
+                return (name == null || name.isBlank()) ? id : name + "  ·  " + id;
+            }
+            @Override public String fromString(String s) { return s; }
+        });
         if (current != null && connectionPicker.getItems().contains(current)) {
             connectionPicker.setValue(current);
         } else if (!connectionPicker.getItems().isEmpty()) {
