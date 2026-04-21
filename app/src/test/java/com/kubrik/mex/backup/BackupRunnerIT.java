@@ -100,8 +100,8 @@ class BackupRunnerIT {
 
         List<com.kubrik.mex.backup.store.BackupFileRow> inventory =
                 files.listForCatalog(result.catalogId());
-        // shim drops 2 files; manifest is recorded as the third.
-        assertEquals(3, inventory.size());
+        // shim drops 2 bson files + an oplog.bson; manifest is the fourth.
+        assertEquals(4, inventory.size());
         assertTrue(inventory.stream().anyMatch(r -> r.kind().equals("manifest")));
         assertTrue(inventory.stream().allMatch(r -> r.sha256().length() == 64));
 
@@ -115,6 +115,27 @@ class BackupRunnerIT {
         // manifest.json on disk matches catalog hash.
         Path manifestFile = sinkDir.resolve(row.sinkPath()).resolve("manifest.json");
         assertTrue(Files.exists(manifestFile));
+    }
+
+    @Test
+    void oplog_slice_populated_when_include_oplog_true() throws IOException {
+        LocalFsTarget sink = new LocalFsTarget("local", sinkDir.toString());
+        // includeOplog = true and the shim drops oplog.bson — runner should
+        // capture firstTs/lastTs + record them on the catalog row.
+        BackupPolicy policy = new BackupPolicy(-1L, "cx-it", "oplog-on", true, null,
+                new Scope.WholeCluster(),
+                new ArchiveSpec(false, 0, "<policy>/<yyyy-MM-dd_HH-mm-ss>"),
+                RetentionSpec.defaults(), 99L, true, 1L, 1L);
+
+        BackupRunner.RunResult result = runner.execute(
+                "cx-it", "mongodb://host/", policy, sink, 99L, "dba", "localhost");
+        assertEquals(BackupStatus.OK, result.status());
+
+        BackupCatalogRow row = catalog.byId(result.catalogId()).orElseThrow();
+        assertNotNull(row.oplogFirstTs(), "oplog_first_ts must be populated");
+        assertNotNull(row.oplogLastTs(), "oplog_last_ts must be populated");
+        assertTrue(row.oplogLastTs() >= row.oplogFirstTs(),
+                "lastTs must be >= firstTs");
     }
 
     @Test
@@ -142,7 +163,9 @@ class BackupRunnerIT {
         Path shim = shimDir.resolve("mongodump-shim");
         String script = """
                 #!/bin/bash
-                # Fake mongodump: drop a couple of bson files into --out=<dir>
+                # Fake mongodump: drop a couple of bson files + an oplog.bson
+                # into --out=<dir>. The oplog file exercises Q2.5-F's OplogSlice
+                # capture path.
                 set -e
                 out=""
                 for arg in "$@"; do
@@ -153,6 +176,7 @@ class BackupRunnerIT {
                 mkdir -p "$out/shop"
                 echo 'bson-a' > "$out/shop/orders.bson"
                 echo 'bson-b' > "$out/shop/users.bson"
+                echo 'oplog-entries' > "$out/oplog.bson"
                 exit 0
                 """;
         Files.writeString(shim, script, StandardCharsets.UTF_8,

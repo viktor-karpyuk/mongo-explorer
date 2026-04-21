@@ -4,6 +4,7 @@ import com.kubrik.mex.backup.event.BackupEvent;
 import com.kubrik.mex.backup.manifest.BackupManifest;
 import com.kubrik.mex.backup.manifest.FileHasher;
 import com.kubrik.mex.backup.manifest.FileRecord;
+import com.kubrik.mex.backup.manifest.OplogSlice;
 import com.kubrik.mex.backup.sink.LocalFsTarget;
 import com.kubrik.mex.backup.sink.StorageTarget;
 import com.kubrik.mex.backup.spec.BackupPolicy;
@@ -168,6 +169,8 @@ public final class BackupRunner {
         List<FileRecord> manifestFiles = new ArrayList<>();
         List<BackupFileRow> fileRows = new ArrayList<>();
         long totalBytes = 0L;
+        String oplogRel = null;
+        String oplogSha = null;
         try (var stream = Files.walk(outDir)) {
             var list = stream.filter(Files::isRegularFile).toList();
             for (Path f : list) {
@@ -179,14 +182,37 @@ public final class BackupRunner {
                         relativeOutDir + "/" + rel, bytes, sha,
                         guessDb(rel), guessColl(rel), guessKind(rel)));
                 totalBytes += bytes;
+                // v2.5 Q2.5-F — capture the oplog slice path + hash for the
+                // manifest. mongodump --oplog drops either oplog.bson or
+                // oplog.bson.gz at the dump root; we pick the first such
+                // file we find.
+                if (oplogRel == null
+                        && (rel.equals("oplog.bson") || rel.equals("oplog.bson.gz"))) {
+                    oplogRel = rel;
+                    oplogSha = sha;
+                }
             }
+        }
+
+        // v2.5 Q2.5-F — approximate oplog window from run bounds. mongodump
+        // --oplog captures entries between backup start and end, so those
+        // bounds are exact modulo mongodump's internal ordering. Second
+        // precision is sufficient for PITR planning (PitrPlanner matches
+        // {oplog_first_ts, oplog_last_ts} with inclusive bounds).
+        long finishedAtMs = clock.millis();
+        OplogSlice oplogSlice = null;
+        if (policy.includeOplog() && oplogRel != null && oplogSha != null) {
+            oplogSlice = new OplogSlice(
+                    startedAt.getEpochSecond(),
+                    java.time.Instant.ofEpochMilli(finishedAtMs).getEpochSecond(),
+                    oplogRel, oplogSha);
         }
 
         BackupManifest manifest = new BackupManifest(
                 MEX_VERSION, BackupManifest.MANIFEST_VERSION,
                 startedAt, policy.id(), connectionId,
                 policy.scope(), policy.archive(),
-                manifestFiles, null);  // oplog slice wired in Q2.5-F
+                manifestFiles, oplogSlice);
         String manifestJson = manifest.toCanonicalJson();
         String manifestSha = manifest.footerSha256();
         Path manifestPath = outDir.resolve(MANIFEST_FILE);
@@ -198,8 +224,10 @@ public final class BackupRunner {
 
         files.insertAll(fileRows);
 
-        finalise(catalogId, BackupStatus.OK, clock.millis(), manifestSha,
-                totalBytes, docsCopied.get(), null, null,
+        Long oplogFirstTs = oplogSlice == null ? null : oplogSlice.firstTs();
+        Long oplogLastTs = oplogSlice == null ? null : oplogSlice.lastTs();
+        finalise(catalogId, BackupStatus.OK, finishedAtMs, manifestSha,
+                totalBytes, docsCopied.get(), oplogFirstTs, oplogLastTs,
                 "ok in " + outcome.durationMs() + " ms",
                 startedAt.toEpochMilli(), connectionId, relativeOutDir,
                 callerUser, callerHost);
