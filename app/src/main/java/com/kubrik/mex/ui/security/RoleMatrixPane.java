@@ -144,8 +144,11 @@ public final class RoleMatrixPane extends BorderPane {
     }
 
     private Region buildUsersTable() {
-        userTable.setPlaceholder(new Label(
-                "Click Refresh to read usersInfo + rolesInfo for this connection."));
+        userTable.setPlaceholder(SecurityPaneHelpers.emptyState(
+                "No users loaded",
+                "Click Refresh to read usersInfo + rolesInfo off the admin "
+                + "database. Click any user for an effective-roles + "
+                + "effective-privileges breakdown in the right pane."));
         userTable.getColumns().setAll(
                 col("User",          180, u -> u.user()),
                 col("Auth DB",       100, u -> u.db()),

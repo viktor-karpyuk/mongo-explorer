@@ -63,8 +63,16 @@ public final class CisPane extends BorderPane {
     private final ObservableList<CisFinding> rows = FXCollections.observableArrayList();
     private final TableView<CisFinding> table = new TableView<>(rows);
     private final Label scorecard = new Label("Run a scan to see findings.");
-    private final Button scanBtn = new Button("Run scan");
-    private final Button exportBtn = new Button("Export…");
+    private final Button scanBtn = SecurityPaneHelpers.withTip(
+            new Button("Run scan"),
+            "Evaluates every CIS rule against the current connection's "
+            + "users / roles / auth / encryption / cert probes. A scan "
+            + "takes seconds; long runs usually mean the probes are slow.");
+    private final Button exportBtn = SecurityPaneHelpers.withTip(
+            new Button("Export…"),
+            "Writes a signed evidence bundle (report.json + report.html + "
+            + "evidence.sig) to a directory you pick. HMAC covers the "
+            + "report.json bytes on disk.");
 
     private final AtomicReference<CisReport> lastReport = new AtomicReference<>();
     private Supplier<CisReport> scanner = () -> null;
@@ -116,20 +124,19 @@ public final class CisPane extends BorderPane {
     /* ============================= layout ============================= */
 
     private Region buildTopBar() {
-        Label title = new Label("CIS MongoDB Benchmark");
-        title.setStyle("-fx-font-size: 14px; -fx-font-weight: 700;");
         scanBtn.setOnAction(e -> doScan());
-        Region grow = new Region();
-        HBox.setHgrow(grow, Priority.ALWAYS);
-        HBox row = new HBox(10, title, grow, exportBtn, scanBtn);
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.setPadding(new Insets(0, 0, 10, 0));
-        return row;
+        return SecurityPaneHelpers.topBar(
+                SecurityPaneHelpers.paneTitle("CIS MongoDB Benchmark"),
+                exportBtn, scanBtn);
     }
 
     private Region buildTable() {
-        table.setPlaceholder(new Label(
-                "Click Run scan to evaluate every CIS rule against the current connection."));
+        table.setPlaceholder(SecurityPaneHelpers.emptyState(
+                "No scan results yet",
+                "Click Run scan to evaluate the v1.2 rule set against this "
+                + "connection. Right-click any finding to Suppress it with "
+                + "a reason + optional TTL. Export bundles the results as "
+                + "signed evidence for auditors."));
         table.getColumns().setAll(
                 col("Rule", 120, CisFinding::ruleId),
                 col("Title", 300, CisFinding::title),
@@ -191,9 +198,9 @@ public final class CisPane extends BorderPane {
         GridPane g = new GridPane();
         g.setHgap(10); g.setVgap(8); g.setPadding(new Insets(14));
         g.add(head, 0, 0, 2, 1);
-        g.add(small("Scope"), 0, 1);    g.add(scope, 1, 1);
-        g.add(small("Reason"), 0, 2);   g.add(reason, 1, 2);
-        g.add(small("TTL (days)"), 0, 3); g.add(expiryField, 1, 3);
+        g.add(SecurityPaneHelpers.small("Scope"), 0, 1);    g.add(scope, 1, 1);
+        g.add(SecurityPaneHelpers.small("Reason"), 0, 2);   g.add(reason, 1, 2);
+        g.add(SecurityPaneHelpers.small("TTL (days)"), 0, 3); g.add(expiryField, 1, 3);
 
         DialogPane pane = d.getDialogPane();
         pane.setContent(g);
@@ -375,12 +382,6 @@ public final class CisPane extends BorderPane {
     }
 
     /* ============================= helpers ============================= */
-
-    private static Label small(String s) {
-        Label l = new Label(s);
-        l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
-        return l;
-    }
 
     private void alert(String msg) {
         Alert a = new Alert(Alert.AlertType.INFORMATION);

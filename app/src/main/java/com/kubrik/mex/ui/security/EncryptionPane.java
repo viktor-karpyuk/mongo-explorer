@@ -36,8 +36,11 @@ public final class EncryptionPane extends BorderPane {
 
     private final ObservableList<EncryptionStatus> rows = FXCollections.observableArrayList();
     private final TableView<EncryptionStatus> table = new TableView<>(rows);
-    private final Button refreshBtn = new Button("Refresh");
-    private final Label footer = new Label("—");
+    private final Button refreshBtn = SecurityPaneHelpers.refreshButton(
+            "Probes serverStatus.encryptionAtRest + getCmdLineOpts.security "
+            + "on every cluster member so you can spot nodes that missed "
+            + "an enable-encryption rollout.");
+    private final Label footer = SecurityPaneHelpers.footer("—");
 
     private Supplier<List<EncryptionStatus>> loader = List::of;
 
@@ -49,7 +52,6 @@ public final class EncryptionPane extends BorderPane {
         setCenter(buildTable());
         HBox foot = new HBox(footer);
         foot.setPadding(new Insets(8, 0, 0, 0));
-        footer.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
         setBottom(foot);
     }
 
@@ -62,20 +64,17 @@ public final class EncryptionPane extends BorderPane {
     /* =========================== top bar =========================== */
 
     private Region buildTopBar() {
-        Label title = new Label("Encryption at rest");
-        title.setStyle("-fx-font-size: 14px; -fx-font-weight: 700;");
         refreshBtn.setOnAction(e -> doRefresh());
-        Region grow = new Region();
-        HBox.setHgrow(grow, Priority.ALWAYS);
-        HBox row = new HBox(10, title, grow, refreshBtn);
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.setPadding(new Insets(0, 0, 10, 0));
-        return row;
+        return SecurityPaneHelpers.topBar(
+                SecurityPaneHelpers.paneTitle("Encryption at rest"), refreshBtn);
     }
 
     private Region buildTable() {
-        table.setPlaceholder(new Label(
-                "Click Refresh to probe serverStatus + getCmdLineOpts on every member."));
+        table.setPlaceholder(SecurityPaneHelpers.emptyState(
+                "No encryption data yet",
+                "Click Refresh to probe every cluster member for "
+                + "WiredTiger encryption + KMIP / Vault / local-keyfile "
+                + "keystore info. Missing coverage raises CIS-2.1."));
         table.getColumns().setAll(
                 col("Host", 220, EncryptionStatus::host),
                 statusCol(),

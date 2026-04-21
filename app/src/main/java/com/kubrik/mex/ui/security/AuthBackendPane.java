@@ -33,8 +33,10 @@ public final class AuthBackendPane extends BorderPane {
     private final ObservableList<AuthBackend> rows = FXCollections.observableArrayList();
     private final TableView<AuthBackend> table = new TableView<>(rows);
     private final VBox detail = new VBox(8);
-    private final Button refreshBtn = new Button("Refresh");
-    private final Label footer = new Label("—");
+    private final Button refreshBtn = SecurityPaneHelpers.refreshButton(
+            "Reads authenticationMechanisms + getCmdLineOpts.security. "
+            + "Requires clusterMonitor or similar read-side role.");
+    private final Label footer = SecurityPaneHelpers.footer("—");
 
     private Supplier<AuthBackendProbe.Snapshot> loader = () -> null;
 
@@ -46,11 +48,11 @@ public final class AuthBackendPane extends BorderPane {
         setCenter(buildSplit());
         HBox foot = new HBox(footer);
         foot.setPadding(new Insets(8, 0, 0, 0));
-        footer.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
         setBottom(foot);
 
         table.getSelectionModel().selectedItemProperty().addListener((o, old, b) -> {
-            if (b == null) detail.getChildren().setAll(small("Select a mechanism above to see its config."));
+            if (b == null) detail.getChildren().setAll(SecurityPaneHelpers.small(
+                    "Select a mechanism above to see its config."));
             else renderDetail(b);
         });
     }
@@ -64,21 +66,19 @@ public final class AuthBackendPane extends BorderPane {
     /* =========================== top bar =========================== */
 
     private Region buildTopBar() {
-        Label title = new Label("Authentication backends");
-        title.setStyle("-fx-font-size: 14px; -fx-font-weight: 700;");
         refreshBtn.setOnAction(e -> doRefresh());
-        Region grow = new Region();
-        HBox.setHgrow(grow, Priority.ALWAYS);
-        HBox row = new HBox(10, title, grow, refreshBtn);
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.setPadding(new Insets(0, 0, 10, 0));
-        return row;
+        return SecurityPaneHelpers.topBar(
+                SecurityPaneHelpers.paneTitle("Authentication backends"), refreshBtn);
     }
 
     /* ============================ split ============================ */
 
     private Region buildSplit() {
-        table.setPlaceholder(new Label("Click Refresh to read authenticationMechanisms."));
+        table.setPlaceholder(SecurityPaneHelpers.emptyState(
+                "No probe data yet",
+                "Click Refresh to read the server's authenticationMechanisms "
+                + "parameter and fold in any LDAP / Kerberos / TLS config that "
+                + "getCmdLineOpts exposes."));
         table.getColumns().setAll(
                 col("Mechanism", 160, b -> b.mechanism().wire()),
                 col("Status", 90, b -> b.enabled() ? "enabled" : "disabled"),
@@ -87,7 +87,8 @@ public final class AuthBackendPane extends BorderPane {
 
         detail.setPadding(new Insets(12));
         detail.setStyle("-fx-background-color: #fafafa;");
-        detail.getChildren().setAll(small("Select a mechanism above to see its config."));
+        detail.getChildren().setAll(SecurityPaneHelpers.small(
+                "Select a mechanism above to see its config."));
 
         javafx.scene.control.SplitPane split = new javafx.scene.control.SplitPane(table, detail);
         split.setDividerPositions(0.45);
@@ -123,7 +124,7 @@ public final class AuthBackendPane extends BorderPane {
         detail.getChildren().add(head);
 
         if (b.details().isEmpty()) {
-            detail.getChildren().add(small(b.enabled()
+            detail.getChildren().add(SecurityPaneHelpers.small(b.enabled()
                     ? "No explicit config keys — built-in defaults apply."
                     : "Not advertised. Enable via authenticationMechanisms in mongod.conf."));
             return;
@@ -134,15 +135,10 @@ public final class AuthBackendPane extends BorderPane {
             row.setWrapText(true);
             detail.getChildren().add(row);
         }
-        Label redacted = small("Secret-bearing fields (passwords / key passphrases) are filtered out at the probe layer.");
+        Label redacted = SecurityPaneHelpers.small(
+                "Secret-bearing fields (passwords / key passphrases) are filtered out at the probe layer.");
         redacted.setWrapText(true);
         detail.getChildren().add(redacted);
-    }
-
-    private static Label small(String s) {
-        Label l = new Label(s);
-        l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
-        return l;
     }
 
     private static <T> TableColumn<T, String> col(String title, int width,

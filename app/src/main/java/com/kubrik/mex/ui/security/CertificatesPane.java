@@ -37,8 +37,12 @@ public final class CertificatesPane extends BorderPane {
 
     private final ObservableList<CertRecord> rows = FXCollections.observableArrayList();
     private final TableView<CertRecord> table = new TableView<>(rows);
-    private final Button refreshBtn = new Button("Refresh");
-    private final Label footer = new Label("—");
+    private final Button refreshBtn = SecurityPaneHelpers.refreshButton(
+            "Opens a TLS handshake against every cluster member and "
+            + "captures the peer cert chain. Trust-all manager — we "
+            + "inspect what the server presents, never authenticate "
+            + "traffic against it.");
+    private final Label footer = SecurityPaneHelpers.footer("—");
     private final Clock clock;
 
     private Supplier<List<CertRecord>> loader = List::of;
@@ -55,7 +59,6 @@ public final class CertificatesPane extends BorderPane {
         setTop(buildTopBar());
         setCenter(buildTable());
         HBox foot = new HBox(footer);
-        footer.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
         foot.setPadding(new Insets(8, 0, 0, 0));
         setBottom(foot);
     }
@@ -69,20 +72,18 @@ public final class CertificatesPane extends BorderPane {
     /* ============================== UI ============================== */
 
     private Region buildTopBar() {
-        Label title = new Label("TLS certificate inventory");
-        title.setStyle("-fx-font-size: 14px; -fx-font-weight: 700;");
         refreshBtn.setOnAction(e -> doRefresh());
-        Region grow = new Region();
-        HBox.setHgrow(grow, Priority.ALWAYS);
-        HBox row = new HBox(10, title, grow, refreshBtn);
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.setPadding(new Insets(0, 0, 10, 0));
-        return row;
+        return SecurityPaneHelpers.topBar(
+                SecurityPaneHelpers.paneTitle("TLS certificate inventory"), refreshBtn);
     }
 
     private Region buildTable() {
-        table.setPlaceholder(new Label(
-                "Click Refresh to capture each cluster member's presented cert."));
+        table.setPlaceholder(SecurityPaneHelpers.emptyState(
+                "No certs captured yet",
+                "Click Refresh to open a TLS handshake against every "
+                + "cluster member and record the subject / issuer / SANs / "
+                + "expiry date. Bands warn at the 30-day, 7-day, and "
+                + "already-expired thresholds."));
         table.getColumns().setAll(
                 col("Host",        190, CertRecord::host),
                 col("Subject",     180, CertRecord::subjectCn),

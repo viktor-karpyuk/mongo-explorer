@@ -38,10 +38,13 @@ public final class AuditPane extends BorderPane {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
 
     private final TextField searchField = new TextField();
-    private final Button refreshBtn = new Button("Refresh");
+    private final Button refreshBtn = SecurityPaneHelpers.refreshButton(
+            "Re-runs the current search against the audit-log FTS index. "
+            + "The index is populated by the tailer when it's wired to a "
+            + "live auditLog.path.");
     private final ObservableList<AuditEvent> rows = FXCollections.observableArrayList();
     private final TableView<AuditEvent> table = new TableView<>(rows);
-    private final Label footer = new Label("—");
+    private final Label footer = SecurityPaneHelpers.footer("—");
 
     private AuditIndex index;
     private String connectionId;
@@ -54,7 +57,6 @@ public final class AuditPane extends BorderPane {
         setCenter(buildTable());
         HBox foot = new HBox(footer);
         foot.setPadding(new Insets(8, 0, 0, 0));
-        footer.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
         setBottom(foot);
     }
 
@@ -68,33 +70,28 @@ public final class AuditPane extends BorderPane {
     /* ============================ top bar ============================ */
 
     private Region buildTopBar() {
-        Label title = new Label("Native MongoDB audit log");
-        title.setStyle("-fx-font-size: 14px; -fx-font-weight: 700;");
-
         searchField.setPromptText("FTS5 query (e.g. authenticate who:dba)");
         searchField.setPrefWidth(320);
-        searchField.setTooltip(tooltip(
+        searchField.setTooltip(SecurityPaneHelpers.tip(
                 "SQLite FTS5 match grammar. Examples:\n"
                 + "   authenticate\n"
                 + "   atype:createUser\n"
                 + "   who:dba AND atype:auth*\n"
                 + "Leave blank for the most recent events."));
         searchField.setOnAction(e -> doSearch());
-
         refreshBtn.setOnAction(e -> doSearch());
-
-        Region grow = new Region();
-        HBox.setHgrow(grow, Priority.ALWAYS);
-        HBox row = new HBox(10, title, grow, searchField, refreshBtn);
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.setPadding(new Insets(0, 0, 10, 0));
-        return row;
+        return SecurityPaneHelpers.topBar(
+                SecurityPaneHelpers.paneTitle("Native MongoDB audit log"),
+                searchField, refreshBtn);
     }
 
     private Region buildTable() {
-        table.setPlaceholder(new Label(
-                "No audited events yet — make sure the connection's auditLog.destination = file "
-                + "and the app is pointed at the log path."));
+        table.setPlaceholder(SecurityPaneHelpers.emptyState(
+                "No audited events yet",
+                "Point the server at auditLog.destination = file, then wire "
+                + "the connection's auditLog.path so the tailer populates "
+                + "the FTS index. The search field accepts FTS5 match "
+                + "grammar (atype:createUser, who:dba, …)."));
         table.getColumns().setAll(
                 col("When", 160,
                         e -> TS_FMT.format(Instant.ofEpochMilli(e.tsMs()))),
@@ -128,15 +125,6 @@ public final class AuditPane extends BorderPane {
     }
 
     /* ============================= helpers ============================= */
-
-    private static Tooltip tooltip(String body) {
-        Tooltip t = new Tooltip(body);
-        t.setShowDelay(Duration.millis(250));
-        t.setShowDuration(Duration.seconds(30));
-        t.setWrapText(true);
-        t.setMaxWidth(340);
-        return t;
-    }
 
     private static <T> TableColumn<T, String> col(String title, int width,
                                                    java.util.function.Function<T, String> getter) {

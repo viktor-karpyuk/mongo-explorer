@@ -57,12 +57,19 @@ public final class DriftPane extends BorderPane {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
     private final ChoiceBox<SecurityBaselineDao.Row> baselinePicker = new ChoiceBox<>();
-    private final Button refreshBtn = new Button("Refresh baselines");
-    private final Button recaptureBtn = new Button("Capture new baseline");
-    private final Button diffBtn = new Button("Diff against latest");
+    private final Button refreshBtn = SecurityPaneHelpers.withTip(
+            new Button("Refresh baselines"),
+            "Reloads the list of captured sec_baselines rows for this connection.");
+    private final Button recaptureBtn = SecurityPaneHelpers.withTip(
+            new Button("Capture new baseline"),
+            "Takes a fresh users + roles snapshot and diffs it against the picked baseline. "
+            + "Kick this when you want 'what's drifted since Monday?'.");
+    private final Button diffBtn = SecurityPaneHelpers.withTip(
+            new Button("Diff against latest"),
+            "Diffs the picked baseline against the most recent one captured for this connection.");
     private final ObservableList<DriftFinding> rows = FXCollections.observableArrayList();
     private final TableView<DriftFinding> table = new TableView<>(rows);
-    private final Label footer = new Label("—");
+    private final Label footer = SecurityPaneHelpers.footer("—");
 
     private final AtomicReference<List<DriftFinding>> lastFindings = new AtomicReference<>(List.of());
     private final AtomicReference<Long> lastBaselineId = new AtomicReference<>(0L);
@@ -82,7 +89,6 @@ public final class DriftPane extends BorderPane {
         setCenter(buildTable());
         HBox foot = new HBox(footer);
         foot.setPadding(new Insets(8, 0, 0, 0));
-        footer.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
         setBottom(foot);
     }
 
@@ -103,9 +109,6 @@ public final class DriftPane extends BorderPane {
     /* =========================== top bar =========================== */
 
     private Region buildTopBar() {
-        Label title = new Label("Security drift");
-        title.setStyle("-fx-font-size: 14px; -fx-font-weight: 700;");
-
         baselinePicker.setConverter(new javafx.util.StringConverter<>() {
             @Override public String toString(SecurityBaselineDao.Row r) {
                 return r == null ? "" : "#" + r.id() + "  · "
@@ -115,23 +118,25 @@ public final class DriftPane extends BorderPane {
             @Override public SecurityBaselineDao.Row fromString(String s) { return null; }
         });
         baselinePicker.setPrefWidth(320);
+        baselinePicker.setTooltip(SecurityPaneHelpers.tip(
+                "Pick the 'before' baseline for the diff. Most-recent rows appear first."));
 
         refreshBtn.setOnAction(e -> reloadBaselines());
         recaptureBtn.setOnAction(e -> recaptureAndDiff());
         diffBtn.setOnAction(e -> diffSelected());
 
-        Region grow = new Region();
-        HBox.setHgrow(grow, Priority.ALWAYS);
-        HBox row = new HBox(10, title, baselinePicker, refreshBtn, diffBtn,
-                grow, recaptureBtn);
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.setPadding(new Insets(0, 0, 10, 0));
-        return row;
+        return SecurityPaneHelpers.topBar(
+                SecurityPaneHelpers.paneTitle("Security drift"),
+                baselinePicker, refreshBtn, diffBtn, recaptureBtn);
     }
 
     private Region buildTable() {
-        table.setPlaceholder(new Label(
-                "Pick a baseline and click Diff — or Capture new baseline to open the flow."));
+        table.setPlaceholder(SecurityPaneHelpers.emptyState(
+                "No drift findings",
+                "Pick a baseline above and click Diff, or click Capture new "
+                + "baseline to snapshot the current state and diff against "
+                + "the selection. Per-row Ack/Mute actions write to "
+                + "sec_drift_acks."));
         table.getColumns().setAll(
                 col("Section", 100, DriftFinding::section),
                 kindCol(),
@@ -275,7 +280,7 @@ public final class DriftPane extends BorderPane {
         GridPane g = new GridPane();
         g.setHgap(10); g.setVgap(8); g.setPadding(new Insets(14));
         g.add(head, 0, 0, 2, 1);
-        g.add(small("Note"), 0, 1); g.add(note, 1, 1);
+        g.add(SecurityPaneHelpers.small("Note"), 0, 1); g.add(note, 1, 1);
         DialogPane pane = d.getDialogPane();
         pane.setContent(g);
         pane.getButtonTypes().setAll(ButtonType.CANCEL, ButtonType.OK);
@@ -331,11 +336,6 @@ public final class DriftPane extends BorderPane {
         return s;
     }
 
-    private static Label small(String s) {
-        Label l = new Label(s);
-        l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
-        return l;
-    }
 
     private void alert(String msg) {
         Alert a = new Alert(Alert.AlertType.INFORMATION);
