@@ -1,5 +1,6 @@
 package com.kubrik.mex.events;
 
+import com.kubrik.mex.backup.event.BackupEvent;
 import com.kubrik.mex.cluster.audit.OpsAuditRecord;
 import com.kubrik.mex.cluster.model.TopologySnapshot;
 import com.kubrik.mex.migration.events.JobEvent;
@@ -46,6 +47,8 @@ public class EventBus {
     private final ConcurrentMap<Object, Consumer<List<ProfileSampleRecord>>> profilerSampleListeners =
             new ConcurrentHashMap<>();
     private final ConcurrentMap<Object, Consumer<OpsAuditRecord>> opsAuditListeners =
+            new ConcurrentHashMap<>();
+    private final ConcurrentMap<Object, Consumer<BackupEvent>> backupListeners =
             new ConcurrentHashMap<>();
 
     /** Latest topology snapshot per connection — delivered to late subscribers so newly-mounted
@@ -225,6 +228,28 @@ public class EventBus {
         if (r == null) return;
         for (Consumer<OpsAuditRecord> l : opsAuditListeners.values()) {
             try { l.accept(r); } catch (Exception ignored) {}
+        }
+    }
+
+    /**
+     * Backup lifecycle feed (v2.5 BKP-RUN-4). Publishes {@code Started},
+     * {@code Progress}, and {@code Ended} events from the runner so the
+     * catalog pane + status bar can track active backups without polling
+     * the DAO. No replay — new subscribers page historical rows from
+     * {@code BackupCatalogDao}. Delivery is synchronous on the producer
+     * thread; UI subscribers must re-post to the JavaFX thread before
+     * touching scene nodes.
+     */
+    public Subscription onBackup(Consumer<BackupEvent> l) {
+        Object key = new Object();
+        backupListeners.put(key, l);
+        return () -> backupListeners.remove(key);
+    }
+
+    public void publishBackup(BackupEvent e) {
+        if (e == null) return;
+        for (Consumer<BackupEvent> l : backupListeners.values()) {
+            try { l.accept(e); } catch (Exception ignored) {}
         }
     }
 }
