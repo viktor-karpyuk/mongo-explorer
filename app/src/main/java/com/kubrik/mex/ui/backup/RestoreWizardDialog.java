@@ -56,6 +56,16 @@ public final class RestoreWizardDialog {
 
     public static void show(Window owner, BackupCatalogRow row, RestoreService service,
                              String callerUser, String callerHost) {
+        show(owner, row, service, /*oplogLimitSecs=*/null, callerUser, callerHost);
+    }
+
+    /** v2.6 Q2.6-L5 overload — PITR handoff path. When {@code oplogLimitSecs}
+     *  is non-null, the wizard shows the cut-off in the banner and threads
+     *  it through to {@code RestoreService.execute} so mongorestore stops
+     *  applying oplog entries at the planner-picked boundary. */
+    public static void show(Window owner, BackupCatalogRow row, RestoreService service,
+                             Long oplogLimitSecs,
+                             String callerUser, String callerHost) {
         Stage stage = new Stage();
         if (owner != null) stage.initOwner(owner);
         stage.setTitle("Restore backup #" + row.id());
@@ -85,7 +95,10 @@ public final class RestoreWizardDialog {
         banner.setStyle("-fx-text-fill: #92400e; -fx-font-size: 11px;");
         banner.setText("Rehearse runs with --dryRun; no namespaces are modified. "
                 + "Execute requires a typed confirmation and respects the "
-                + "kill-switch.");
+                + "kill-switch."
+                + (oplogLimitSecs == null ? ""
+                        : "\nPITR handoff — oplog replay stops at epoch "
+                        + oplogLimitSecs + "s (planner-picked cut-off)."));
 
         ProgressBar progress = new ProgressBar(0);
         progress.setPrefWidth(Double.MAX_VALUE);
@@ -125,7 +138,8 @@ public final class RestoreWizardDialog {
             boolean oplog = oplogBox.isSelected();
             Thread.startVirtualThread(() -> {
                 RestoreService.RestoreResult r = service.execute(row.id(), uri,
-                        mode, prefix, drop, oplog, callerUser, callerHost);
+                        mode, prefix, drop, oplog, oplogLimitSecs,
+                        callerUser, callerHost);
                 Platform.runLater(() -> {
                     progress.setVisible(false);
                     startBtn.setDisable(false);

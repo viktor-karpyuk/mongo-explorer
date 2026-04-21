@@ -107,6 +107,17 @@ public final class RestoreService {
                                   String rehearsePrefix, boolean dropBeforeRestore,
                                   boolean oplogReplay,
                                   String callerUser, String callerHost) {
+        return execute(catalogId, targetUri, mode, rehearsePrefix, dropBeforeRestore,
+                oplogReplay, /*oplogLimitSecs=*/null, callerUser, callerHost);
+    }
+
+    /** v2.6 Q2.6-L5 overload — {@code oplogLimitSecs} wires into mongorestore's
+     *  {@code --oplogLimit} flag when PITR-handoff is in play. Null preserves
+     *  v2.5 behaviour (replay full slice). */
+    public RestoreResult execute(long catalogId, String targetUri, Mode mode,
+                                  String rehearsePrefix, boolean dropBeforeRestore,
+                                  boolean oplogReplay, Long oplogLimitSecs,
+                                  String callerUser, String callerHost) {
         BackupCatalogRow row = catalog.byId(catalogId).orElse(null);
         if (row == null) {
             return new RestoreResult(Outcome.FAIL, 0, 0, "catalog row not found");
@@ -150,7 +161,8 @@ public final class RestoreService {
         boolean drop = mode == Mode.EXECUTE && dropBeforeRestore;
 
         MongorestoreOptions opts = new MongorestoreOptions(targetUri, sourceDir,
-                nsRename, drop, dryRun, /*gzip=*/false, oplogReplay, 4);
+                nsRename, drop, dryRun, /*gzip=*/false, oplogReplay, 4,
+                oplogLimitSecs);
 
         AtomicLong docsRestored = new AtomicLong();
         AtomicLong failures = new AtomicLong();

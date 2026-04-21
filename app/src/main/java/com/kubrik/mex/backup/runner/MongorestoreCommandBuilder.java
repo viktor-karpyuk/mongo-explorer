@@ -34,6 +34,13 @@ public final class MongorestoreCommandBuilder {
         argv.add("--dir=" + opts.sourceDir().toString());
         if (opts.gzip()) argv.add("--gzip");
         if (opts.oplogReplay()) argv.add("--oplogReplay");
+        // v2.6 Q2.6-L5 — thread PITR target into the argv. mongorestore
+        // expects --oplogLimit <secs>:<ord> where ord is the ordinal
+        // within that second (0 is safe for PITR handoffs because
+        // PitrPlanner's target is second-precision).
+        if (opts.oplogReplay() && opts.oplogLimitTsSecs() != null) {
+            argv.add("--oplogLimit=" + opts.oplogLimitTsSecs() + ":0");
+        }
         if (opts.dryRun()) argv.add("--dryRun");
         if (opts.dropBeforeRestore()) argv.add("--drop");
         for (Map.Entry<String, String> e : opts.nsRename().entrySet()) {

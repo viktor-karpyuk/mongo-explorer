@@ -20,12 +20,26 @@ public record MongorestoreOptions(
         boolean dryRun,
         boolean gzip,
         boolean oplogReplay,
-        int parallelCollections
+        int parallelCollections,
+        /** v2.6 Q2.6-L5 — oplog replay cut-off timestamp in seconds.
+         *  When non-null (and {@link #oplogReplay} is true), mongorestore
+         *  stops applying oplog entries at this BSON-timestamp (t:ord).
+         *  Set by the PITR wizard from {@code PitrPlanner#oplogLimitTs}.
+         *  Null means "replay the entire slice" (pre-v2.6 behaviour). */
+        Long oplogLimitTsSecs
 ) {
     public MongorestoreOptions {
         if (uri == null || uri.isBlank()) throw new IllegalArgumentException("uri");
         if (sourceDir == null) throw new IllegalArgumentException("sourceDir");
         nsRename = nsRename == null ? Map.of() : Map.copyOf(nsRename);
         if (parallelCollections < 1) parallelCollections = 4;
+    }
+
+    /** Back-compat constructor for callers that don't care about oplogLimit. */
+    public MongorestoreOptions(String uri, Path sourceDir, Map<String, String> nsRename,
+                                boolean dropBeforeRestore, boolean dryRun, boolean gzip,
+                                boolean oplogReplay, int parallelCollections) {
+        this(uri, sourceDir, nsRename, dropBeforeRestore, dryRun, gzip,
+                oplogReplay, parallelCollections, null);
     }
 }

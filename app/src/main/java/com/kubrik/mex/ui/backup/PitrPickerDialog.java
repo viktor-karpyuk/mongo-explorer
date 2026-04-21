@@ -104,8 +104,12 @@ public final class PitrPickerDialog {
         restoreBtn.setOnAction(e -> {
             RestorePlan plan = lastPlan.get();
             if (plan == null || !plan.feasible() || restoreService == null) return;
+            // v2.6 Q2.6-L5 — pass the planner-picked oplog cut-off so
+            // mongorestore stops applying oplog entries at the target
+            // timestamp instead of replaying the full slice.
             RestoreWizardDialog.show(stage, plan.source().orElseThrow(),
-                    restoreService, callerUser, callerHost);
+                    restoreService, plan.oplogLimitTs(),
+                    callerUser, callerHost);
         });
 
         GridPane g = new GridPane();
