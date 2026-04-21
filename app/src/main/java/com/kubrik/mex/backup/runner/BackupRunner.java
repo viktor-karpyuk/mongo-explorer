@@ -138,31 +138,47 @@ public final class BackupRunner {
         boolean finalised = false;
         try {
 
-        MongodumpOptions opts = new MongodumpOptions(uri, outDir, policy.scope(),
-                policy.archive(), policy.includeOplog(), 4);
+        // v2.6 Q2.6-L6 — fan multi-entry scopes out into one mongodump
+        // invocation per entry. WholeCluster and single-entry scopes are a
+        // one-element list, so the previous single-run path is the
+        // default. Each sub-scope writes into its own subdirectory of
+        // outDir so their manifests don't collide; the post-run file walk
+        // below is already directory-recursive and picks them all up.
+        List<com.kubrik.mex.backup.spec.Scope> fanned =
+                com.kubrik.mex.backup.spec.Scope.fanOut(policy.scope());
 
         AtomicLong docsCopied = new AtomicLong();
         AtomicReference<String> lastNs = new AtomicReference<>("");
 
-        MongodumpRunner mongo = new MongodumpRunner(mongodumpBinary, opts, progress -> {
-            docsCopied.set(progress.docsProcessed());
-            lastNs.set(progress.namespace());
-            bus.publishBackup(new BackupEvent.Progress(catalogId, connectionId,
-                    0L, docsCopied.get(), lastNs.get()));
-        });
-
-        DumpOutcome outcome;
-        try {
-            outcome = mongo.run();
-        } catch (IOException ioe) {
-            finaliseFail(catalogId, connectionId, startedAt, sinkId,
-                    "mongodump spawn failed: " + ioe.getMessage(),
-                    callerUser, callerHost);
-            finalised = true;
-            throw ioe;
+        DumpOutcome outcome = null;
+        for (int i = 0; i < fanned.size(); i++) {
+            com.kubrik.mex.backup.spec.Scope sub = fanned.get(i);
+            // Single-run scopes share the top-level outDir (back-compat).
+            // Multi-run scopes scope into shard-0 / shard-1 style subdirs
+            // named after index so mongodump's --db collision is avoided.
+            Path subOut = fanned.size() == 1 ? outDir : outDir.resolve("scope-" + i);
+            if (fanned.size() > 1) Files.createDirectories(subOut);
+            MongodumpOptions subOpts = new MongodumpOptions(uri, subOut, sub,
+                    policy.archive(), policy.includeOplog(), 4);
+            MongodumpRunner mongo = new MongodumpRunner(mongodumpBinary, subOpts, progress -> {
+                docsCopied.set(progress.docsProcessed());
+                lastNs.set(progress.namespace());
+                bus.publishBackup(new BackupEvent.Progress(catalogId, connectionId,
+                        0L, docsCopied.get(), lastNs.get()));
+            });
+            try {
+                outcome = mongo.run();
+            } catch (IOException ioe) {
+                finaliseFail(catalogId, connectionId, startedAt, sinkId,
+                        "mongodump spawn failed: " + ioe.getMessage(),
+                        callerUser, callerHost);
+                finalised = true;
+                throw ioe;
+            }
+            if (!outcome.ok()) break;  // fail-fast on first sub-scope failure
         }
 
-        if (!outcome.ok()) {
+        if (outcome != null && !outcome.ok()) {
             String msg = outcome.killed()
                     ? "cancelled after " + outcome.durationMs() + " ms"
                     : "exit code " + outcome.exitCode();
