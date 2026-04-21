@@ -170,7 +170,19 @@ public class MainView extends BorderPane {
         SplitPane split = new SplitPane(connTree, tabs);
         split.setDividerPositions(0.22);
 
-        // Welcome tab
+        // Welcome tab — v2.6 chip provider folds SecuritySignals into each
+        // card; DAOs are lazy-initialised so the welcome screen doesn't
+        // pay startup cost until a connection actually has security data.
+        com.kubrik.mex.security.cert.CertCacheDao certCacheDao =
+                new com.kubrik.mex.security.cert.CertCacheDao(database);
+        java.util.function.Function<String, com.kubrik.mex.security.SecuritySignals.Summary>
+                signalProvider = cxId -> {
+            ensureSecurityDaos();
+            return com.kubrik.mex.security.SecuritySignals.compute(
+                    cxId, securityBaselineDao, driftAckDao, certCacheDao,
+                    System.currentTimeMillis());
+        };
+
         welcomeView = new WelcomeView(
                 manager, connectionStore, events,
                 () -> openEditor(null),
@@ -183,7 +195,8 @@ public class MainView extends BorderPane {
                     }
                     connTree.reloadAll();
                 },
-                this::openEditor);
+                this::openEditor,
+                signalProvider);
         Tab welcome = new Tab("Welcome", welcomeView);
         welcome.setClosable(false);
         tabs.getTabs().add(welcome);

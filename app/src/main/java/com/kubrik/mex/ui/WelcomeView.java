@@ -19,6 +19,11 @@ import javafx.scene.layout.VBox;
 import org.kordamp.ikonli.javafx.FontIcon;
 
 import java.util.function.Consumer;
+import java.util.function.Function;
+
+import com.kubrik.mex.security.SecuritySignals;
+import javafx.scene.control.Tooltip;
+import javafx.util.Duration;
 
 /**
  * Welcome / "home" tab — quick actions plus a card grid of saved connections.
@@ -29,6 +34,7 @@ public class WelcomeView extends VBox {
     private final ConnectionStore store;
     private final FlowPane cards = new FlowPane(16, 16);
     private final Consumer<MongoConnection> onConnectAndOpen;
+    private final Function<String, SecuritySignals.Summary> securitySignals;
 
     public WelcomeView(ConnectionManager manager,
                        ConnectionStore store,
@@ -39,9 +45,29 @@ public class WelcomeView extends VBox {
                        Runnable onOpenMonitoring,
                        Consumer<MongoConnection> onConnectAndOpen,
                        Consumer<MongoConnection> onEditConnection) {
+        this(manager, store, events, onNewConnection, onManageConnections,
+                onOpenLogs, onOpenMonitoring, onConnectAndOpen, onEditConnection,
+                /*securitySignals=*/null);
+    }
+
+    /** v2.6 overload — {@code securitySignals} produces a compact summary
+     *  per connection; when non-null, each card renders a small chip for
+     *  expiring certs / unacked drift. {@code null} preserves v2.5
+     *  welcome-card rendering. */
+    public WelcomeView(ConnectionManager manager,
+                       ConnectionStore store,
+                       EventBus events,
+                       Runnable onNewConnection,
+                       Runnable onManageConnections,
+                       Runnable onOpenLogs,
+                       Runnable onOpenMonitoring,
+                       Consumer<MongoConnection> onConnectAndOpen,
+                       Consumer<MongoConnection> onEditConnection,
+                       Function<String, SecuritySignals.Summary> securitySignals) {
         this.manager = manager;
         this.store = store;
         this.onConnectAndOpen = onConnectAndOpen;
+        this.securitySignals = securitySignals;
 
         setSpacing(20);
         setPadding(new Insets(32, 40, 32, 40));
@@ -118,7 +144,13 @@ public class WelcomeView extends VBox {
         dot.setStyle("-fx-text-fill: " + dotColor + "; -fx-font-size: 14px;");
         Region sp = new Region();
         HBox.setHgrow(sp, Priority.ALWAYS);
-        HBox top = new HBox(8, icon, sp, dot);
+        // v2.6 Q2.6-D4 + E4 — security chip between the icon and the
+        // connection status dot. Only rendered when the signal provider
+        // is wired AND the connection has something worth flagging.
+        Label securityChip = securityChipFor(c);
+        HBox top = securityChip == null
+                ? new HBox(8, icon, sp, dot)
+                : new HBox(8, icon, sp, securityChip, dot);
         top.setAlignment(Pos.CENTER_LEFT);
 
         Label name = new Label(c.name());
@@ -169,6 +201,52 @@ public class WelcomeView extends VBox {
             if (e.getClickCount() == 2) onConnectAndOpen.accept(c);
         });
         return card;
+    }
+
+    /**
+     * v2.6 Q2.6-D4 + E4 — Renders a small coloured chip when the
+     * connection has certs within 30 days, expired certs, or unacked
+     * drift. Returns {@code null} when there's nothing worth flagging
+     * or when no signal provider was wired.
+     */
+    private Label securityChipFor(MongoConnection c) {
+        if (securitySignals == null) return null;
+        SecuritySignals.Summary s;
+        try { s = securitySignals.apply(c.id()); }
+        catch (Exception e) { return null; }
+        if (s == null || s.clean()) return null;
+
+        boolean critical = s.expiredCerts() > 0;
+        boolean warn = s.expiringSoonCerts() > 0 || s.unackedDrifts() > 0;
+        String bg = critical ? "#fee2e2" : (warn ? "#fef3c7" : "#f3f4f6");
+        String fg = critical ? "#991b1b" : (warn ? "#92400e" : "#4b5563");
+
+        StringBuilder label = new StringBuilder();
+        if (s.expiredCerts() > 0) label.append(s.expiredCerts()).append(" expired · ");
+        if (s.expiringSoonCerts() > 0) label.append(s.expiringSoonCerts()).append(" soon · ");
+        if (s.unackedDrifts() > 0) label.append(s.unackedDrifts()).append(" drift");
+        String text = label.toString().replaceAll(" · $", "");
+
+        Label chip = new Label(text);
+        chip.setStyle("-fx-background-color: " + bg + "; -fx-text-fill: " + fg + "; "
+                + "-fx-padding: 2 6 2 6; -fx-background-radius: 10; -fx-font-size: 10px; "
+                + "-fx-font-weight: 700;");
+
+        StringBuilder tt = new StringBuilder();
+        if (s.expiredCerts() > 0)
+            tt.append(s.expiredCerts()).append(" TLS cert(s) expired.\n");
+        if (s.expiringSoonCerts() > 0)
+            tt.append(s.expiringSoonCerts()).append(" TLS cert(s) expire within 30 days.\n");
+        if (s.unackedDrifts() > 0)
+            tt.append(s.unackedDrifts()).append(" security drift(s) since the last baseline.\n");
+        tt.append("\nCmd/Ctrl+Alt+S for the Security tab.");
+        Tooltip tip = new Tooltip(tt.toString());
+        tip.setShowDelay(Duration.millis(200));
+        tip.setShowDuration(Duration.seconds(20));
+        tip.setWrapText(true);
+        tip.setMaxWidth(320);
+        chip.setTooltip(tip);
+        return chip;
     }
 
     private static Button primaryButton(String iconLit, String text) {
