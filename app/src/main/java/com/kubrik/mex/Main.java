@@ -266,6 +266,18 @@ public class Main extends Application {
                 new com.kubrik.mex.security.audit.AuditTailerService(
                         connectionManager, eventBus, auditIndex);
 
+        // v2.6 Q2.6-E3 — daily cert-expiry sweep. First tick ~30 s after
+        // start so the welcome chip hydrates shortly after the first
+        // connect, then every 24 h.
+        com.kubrik.mex.security.cert.CertCacheDao certCacheDao =
+                new com.kubrik.mex.security.cert.CertCacheDao(db);
+        com.kubrik.mex.security.cert.CertExpiryScheduler certScheduler =
+                new com.kubrik.mex.security.cert.CertExpiryScheduler(
+                        connectionManager, connectionStore,
+                        new com.kubrik.mex.security.cert.CertFetcher(),
+                        certCacheDao, eventBus, java.time.Clock.systemUTC());
+        certScheduler.start();
+
         MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
                 migrationService, monitoringService, db, killOpHandler, rsAdminHandler,
                 opsAuditDao, opsExecutor, balancerHandler, zonesHandler, killSwitch,

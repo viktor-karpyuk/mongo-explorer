@@ -10,6 +10,7 @@ import com.kubrik.mex.monitoring.alerting.AlertEvent;
 import com.kubrik.mex.monitoring.model.MetricSample;
 import com.kubrik.mex.monitoring.recording.RecordingEvent;
 import com.kubrik.mex.monitoring.store.ProfileSampleRecord;
+import com.kubrik.mex.security.cert.CertExpiryEvent;
 
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -52,6 +53,8 @@ public class EventBus {
     private final ConcurrentMap<Object, Consumer<BackupEvent>> backupListeners =
             new ConcurrentHashMap<>();
     private final ConcurrentMap<Object, Consumer<RestoreEvent>> restoreListeners =
+            new ConcurrentHashMap<>();
+    private final ConcurrentMap<Object, Consumer<CertExpiryEvent>> certExpiryListeners =
             new ConcurrentHashMap<>();
 
     /** Latest topology snapshot per connection — delivered to late subscribers so newly-mounted
@@ -271,6 +274,23 @@ public class EventBus {
     public void publishRestore(RestoreEvent e) {
         if (e == null) return;
         for (Consumer<RestoreEvent> l : restoreListeners.values()) {
+            try { l.accept(e); } catch (Exception ignored) {}
+        }
+    }
+
+    /** v2.6 Q2.6-E3 — cert-expiry sweep result, emitted once per connection
+     *  per sweep. WelcomeView subscribes so its security chip refreshes
+     *  after the scheduled fetch without the operator opening the
+     *  Security tab. */
+    public Subscription onCertExpiry(Consumer<CertExpiryEvent> l) {
+        Object key = new Object();
+        certExpiryListeners.put(key, l);
+        return () -> certExpiryListeners.remove(key);
+    }
+
+    public void publishCertExpiry(CertExpiryEvent e) {
+        if (e == null) return;
+        for (Consumer<CertExpiryEvent> l : certExpiryListeners.values()) {
             try { l.accept(e); } catch (Exception ignored) {}
         }
     }

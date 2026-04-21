@@ -113,6 +113,10 @@ public class WelcomeView extends VBox {
 
         // Each card is rebuilt on state changes so the status dot stays fresh.
         events.onState(s -> Platform.runLater(this::refresh));
+        // v2.6 Q2.6-E3 — cert-expiry sweep result re-renders cards so the
+        // security chip picks up newly-expiring certs without opening the
+        // Security tab.
+        events.onCertExpiry(e -> Platform.runLater(this::refresh));
 
         // Capture editing handler for cards
         this.onEditConnection = onEditConnection;
