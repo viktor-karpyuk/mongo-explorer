@@ -91,7 +91,12 @@ runtime {
     jpackage {
         imageName = "Mongo Explorer"
         installerName = "Mongo Explorer"
-        appVersion = project.version.toString()
+        // jpackage requires a purely numeric macOS app-version
+        // (major[.minor[.patch]]). Strip any pre-release suffix
+        // like "-alpha" so "2.6.0-alpha" becomes "2.6.0" for the
+        // bundle, while the Gradle project.version continues to
+        // carry the full label everywhere else.
+        appVersion = project.version.toString().replaceFirst(Regex("-.*$"), "")
         jvmArgs = listOf("--add-opens=java.base/java.lang=ALL-UNNAMED")
         val os = org.gradle.internal.os.OperatingSystem.current()
         val iconBase = "${projectDir}/src/main/resources/icons/app"
