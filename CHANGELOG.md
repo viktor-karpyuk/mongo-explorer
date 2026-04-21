@@ -1,5 +1,42 @@
 # Changelog
 
+## v2.6.0-alpha — Security, Audit & Compliance (preview)
+
+Preview of the v2.6 Security milestone. **Not production-ready** — UI polish (Q2.6-J), hardening + soak (Q2.6-K), and cloud-sink impls (Q2.6-L1-L4) are still outstanding. Wire-up lives behind the Tools → Security menu (`Cmd/Ctrl+Alt+S`); no existing surface changes behaviour.
+
+### What's new
+
+- **Security tab** (per-connection) hosting seven sub-tabs: Roles, Audit, Drift, Certificates, Auth, Encryption, CIS.
+- **Role matrix + user detail drawer** — users × roles × databases with effective-privilege resolution; captures a `sec_baselines` snapshot for later diffing.
+- **Native audit log viewer** — tails `auditLog.destination = file`, parses 4.x→7.x JSON shapes, indexes into SQLite FTS5 (`authenticate who:dba`, `atype:createUser`).
+- **Drift diff + ack / mute workflow** — path-scoped diff between two baselines; ACK hides a finding for that baseline only, MUTE hides a path across every future diff.
+- **TLS cert inventory** — per-member handshake capture with green/amber/red/expired bands at 30-day / 7-day / 0-day thresholds.
+- **Auth-backend probe** — SCRAM-SHA-256/1, MONGODB-X509, LDAP (PLAIN), Kerberos (GSSAPI); secret-bearing config keys (passwords, keyfile passphrases) redacted at the probe boundary.
+- **Encryption-at-rest probe** — per-node status with KMIP / Vault / local-keyfile detection.
+- **CIS MongoDB v1.2 scanner** — five starter rules (SCRAM-256, SCRAM-1, encryption-at-rest, cert expiry, root-without-restrictions) with suppression + signed evidence-bundle export (JSON + HTML + HMAC-SHA-256 `.sig`).
+- **Welcome-card security chip** — small coloured pill per connection flagging expired / expiring certs + unacked drift, with a pointer to `Cmd/Ctrl+Alt+S`.
+
+### Schema additions
+
+All additive via `Database.migrate()`:
+- `sec_baselines`, `sec_drift_acks`, `sec_cert_cache`, `cis_suppressions`, `cis_reports`
+- `evidence_key` (singleton AES-wrapped HMAC-SHA-256 key, distinct from the connection-password key so signed reports are shareable)
+- `audit_native_fts` (FTS5 virtual table, porter + ascii tokenizer)
+
+### v2.5 backup-tail completions rolled into v2.6
+
+- **`--oplogLimit`** threading from `PitrPlanner` → `MongorestoreRunner` argv. PITR handoff now stops oplog replay at the planner-picked cut-off instead of replaying the full captured slice.
+- **Multi-DB / multi-namespace backup fan-out** — `BackupRunner` now loops mongodump once per entry in `Databases(N>1)` / `Namespaces(N>1)` scopes and aggregates the manifest.
+
+### Still to land before v2.6.0 GA
+
+- **Cloud sinks (S3 / GCS / Azure / SFTP)** — permit-list entries exist; SDK impls still throw `CloudSinkUnavailableException`.
+- **Daily cert-expiry background check** emitting `onCertExpiry`.
+- **Polish** — a11y pass, dark-mode audit, empty-state copy review, screenshot matrix.
+- **Hardening** — adversarial audit-log-parser fuzz corpus, 72 h soak tailing a rotating log, per-node `TopologySnapshot.members` expansion for encryption + cert probes.
+
+100+ new tests pin the headless contracts for every subsystem.
+
 ## v2.5.1 — Backup polish + UX overhaul
 
 Patch release closing the issues raised in the post-v2.5.0 deep review plus the "Backups UI is totally broken" + rs.conf modal feedback. No schema changes; drops cleanly onto a v2.5.0 install.
