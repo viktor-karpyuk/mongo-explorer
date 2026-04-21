@@ -93,6 +93,10 @@ public final class CertificatesPane extends BorderPane {
                 daysCol(),
                 bandCol(),
                 col("SANs", 220, c -> String.join(", ", c.sans())));
+        SecurityPaneHelpers.describe(table,
+                "TLS certificate inventory. Band column colours rows by expiry "
+                + "proximity: green > 30 days, amber ≤ 30 days, red ≤ 7 days, "
+                + "white-on-red EXPIRED.");
         return table;
     }
 

@@ -97,9 +97,13 @@ public final class SecurityPaneHelpers {
         return t;
     }
 
-    /** Install a help tooltip on a button (idempotent). */
+    /** Install a help tooltip on a control AND mirror the body into the
+     *  JavaFX accessibility tree ({@code accessibleHelp}) so screen
+     *  readers / VoiceOver pick up the same explanation sighted users
+     *  see on hover. Idempotent. */
     public static <T extends javafx.scene.control.Control> T withTip(T control, String body) {
         control.setTooltip(tip(body));
+        if (body != null && !body.isBlank()) control.setAccessibleHelp(body);
         return control;
     }
 
@@ -115,10 +119,27 @@ public final class SecurityPaneHelpers {
         return row;
     }
 
-    /** Factory for the standard "Refresh" button with a consistent tip. */
+    /** Factory for the standard "Refresh" button with a consistent tip.
+     *  Tooltip body is also surfaced as {@code accessibleHelp} so screen
+     *  readers announce the same explanation. */
     public static Button refreshButton(String tip) {
         Button b = new Button("Refresh");
-        b.setTooltip(tip(tip == null ? "Reload this pane's data." : tip));
+        String body = tip == null ? "Reload this pane's data." : tip;
+        b.setTooltip(tip(body));
+        b.setAccessibleHelp(body);
         return b;
+    }
+
+    /** Install an accessible description on a Region / Control (tables,
+     *  TextFields) — JavaFX's accessibility tree picks this up for
+     *  screen readers in addition to the visual label. */
+    public static <T extends javafx.scene.Node> T describe(T node, String description) {
+        if (description != null && !description.isBlank()) {
+            node.setAccessibleText(description);
+            if (node instanceof javafx.scene.control.Control c) {
+                c.setAccessibleHelp(description);
+            }
+        }
+        return node;
     }
 }

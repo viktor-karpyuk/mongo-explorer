@@ -84,6 +84,9 @@ public final class AuthBackendPane extends BorderPane {
                 col("Status", 90, b -> b.enabled() ? "enabled" : "disabled"),
                 col("Config fields", 110,
                         b -> b.details().isEmpty() ? "(none)" : b.details().size() + " field(s)"));
+        SecurityPaneHelpers.describe(table,
+                "Authentication mechanisms advertised by the server. "
+                + "Click a row to inspect the config fields in the side pane.");
 
         detail.setPadding(new Insets(12));
         detail.setStyle("-fx-background-color: #fafafa;");

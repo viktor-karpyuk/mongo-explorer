@@ -72,12 +72,13 @@ public final class AuditPane extends BorderPane {
     private Region buildTopBar() {
         searchField.setPromptText("FTS5 query (e.g. authenticate who:dba)");
         searchField.setPrefWidth(320);
-        searchField.setTooltip(SecurityPaneHelpers.tip(
-                "SQLite FTS5 match grammar. Examples:\n"
+        String searchHelp = "SQLite FTS5 match grammar. Examples:\n"
                 + "   authenticate\n"
                 + "   atype:createUser\n"
                 + "   who:dba AND atype:auth*\n"
-                + "Leave blank for the most recent events."));
+                + "Leave blank for the most recent events.";
+        searchField.setTooltip(SecurityPaneHelpers.tip(searchHelp));
+        SecurityPaneHelpers.describe(searchField, "Audit log search. " + searchHelp);
         searchField.setOnAction(e -> doSearch());
         refreshBtn.setOnAction(e -> doSearch());
         return SecurityPaneHelpers.topBar(
@@ -92,6 +93,8 @@ public final class AuditPane extends BorderPane {
                 + "the connection's auditLog.path so the tailer populates "
                 + "the FTS index. The search field accepts FTS5 match "
                 + "grammar (atype:createUser, who:dba, …)."));
+        SecurityPaneHelpers.describe(table,
+                "Audit log events table. Columns: when, atype, who, from, raw.");
         table.getColumns().setAll(
                 col("When", 160,
                         e -> TS_FMT.format(Instant.ofEpochMilli(e.tsMs()))),

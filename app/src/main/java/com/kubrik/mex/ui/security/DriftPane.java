@@ -143,6 +143,9 @@ public final class DriftPane extends BorderPane {
                 col("Path", 440, DriftFinding::path),
                 col("Before", 200, f -> f.before() == null ? "—" : trim(f.before())),
                 col("After", 200, f -> f.after() == null ? "—" : trim(f.after())));
+        SecurityPaneHelpers.describe(table,
+                "Drift findings. Right-click a row to Ack (this baseline only) "
+                + "or Mute (hide the path across every future diff).");
 
         table.setRowFactory(tv -> {
             var r = new javafx.scene.control.TableRow<DriftFinding>();

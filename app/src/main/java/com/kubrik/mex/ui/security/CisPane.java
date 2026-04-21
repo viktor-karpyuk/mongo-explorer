@@ -144,6 +144,9 @@ public final class CisPane extends BorderPane {
                 verdictCol(),
                 col("Scope", 100, CisFinding::scope),
                 col("Detail", 420, CisFinding::detail));
+        SecurityPaneHelpers.describe(table,
+                "CIS scan findings. Right-click a row to suppress a FAIL with a "
+                + "reason and optional TTL.");
         return table;
     }
 

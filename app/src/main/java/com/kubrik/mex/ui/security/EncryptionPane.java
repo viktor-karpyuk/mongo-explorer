@@ -84,6 +84,8 @@ public final class EncryptionPane extends BorderPane {
                 col("Rotated", 160,
                         s -> s.rotatedAtMs() == null ? "—"
                                 : TS_FMT.format(Instant.ofEpochMilli(s.rotatedAtMs()))));
+        SecurityPaneHelpers.describe(table,
+                "Per-node encryption-at-rest status. Disabled nodes appear red.");
         return table;
     }
 

@@ -102,6 +102,9 @@ public final class RoleMatrixPane extends BorderPane {
         searchField.setPromptText("Search user or role");
         searchField.setPrefWidth(240);
         searchField.textProperty().bindBidirectional(model.textFilterProperty());
+        SecurityPaneHelpers.describe(searchField,
+                "Filters the users table by user or bound role name. "
+                + "Case-insensitive substring match.");
 
         includeBuiltin.selectedProperty().bindBidirectional(
                 model.includeBuiltinRolesProperty());
@@ -154,6 +157,9 @@ public final class RoleMatrixPane extends BorderPane {
                 col("Auth DB",       100, u -> u.db()),
                 col("Roles",         220, u -> roleSummary(u)),
                 col("Privileges",    110, u -> u.inheritedPrivileges().size() + ""));
+        SecurityPaneHelpers.describe(userTable,
+                "MongoDB users + their role bindings. Click a row to see "
+                + "effective roles and privileges in the right-hand drawer.");
         userTable.getSelectionModel().selectedItemProperty().addListener((o, old, u) -> {
             if (u == null) renderEmptyDetail();
             else renderDetail(u);
