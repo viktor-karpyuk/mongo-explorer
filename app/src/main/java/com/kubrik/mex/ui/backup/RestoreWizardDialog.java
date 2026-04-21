@@ -3,6 +3,11 @@ package com.kubrik.mex.ui.backup;
 import com.kubrik.mex.backup.runner.RestoreService;
 import com.kubrik.mex.backup.store.BackupCatalogRow;
 import com.kubrik.mex.cluster.audit.Outcome;
+import com.kubrik.mex.cluster.dryrun.CommandJson;
+import com.kubrik.mex.cluster.dryrun.DryRunRenderer;
+import com.kubrik.mex.cluster.safety.DryRunResult;
+import com.kubrik.mex.cluster.safety.TypedConfirmDialog;
+import com.kubrik.mex.cluster.safety.TypedConfirmModel;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -24,7 +29,10 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import javafx.stage.Window;
+import org.bson.Document;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -98,7 +106,8 @@ public final class RestoreWizardDialog {
             }
             RestoreService.Mode mode = execute.isSelected()
                     ? RestoreService.Mode.EXECUTE : RestoreService.Mode.REHEARSE;
-            if (mode == RestoreService.Mode.EXECUTE && !confirmExecute(stage, row)) {
+            if (mode == RestoreService.Mode.EXECUTE
+                    && !confirmExecute(stage, row, uri, dropBox.isSelected(), oplogBox.isSelected())) {
                 status.setText("Cancelled.");
                 status.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 12px;");
                 return;
@@ -172,14 +181,32 @@ public final class RestoreWizardDialog {
 
     /* =========================== confirm step =========================== */
 
-    private static boolean confirmExecute(Window owner, BackupCatalogRow row) {
-        javafx.scene.control.TextInputDialog d = new javafx.scene.control.TextInputDialog();
-        d.initOwner(owner);
-        d.setTitle("Execute restore");
-        d.setHeaderText("Type the backup's sink path to confirm:");
-        d.setContentText(row.sinkPath());
-        Optional<String> picked = d.showAndWait();
-        return picked.isPresent() && row.sinkPath().equals(picked.get().trim());
+    /** Reuses the v2.4 three-gate surface: typed-confirm dialog + preview
+     *  JSON + hash footer. Expected string is the catalog row's sink path
+     *  so operators have to look at which backup they're about to restore
+     *  from before they can enable Execute. */
+    private static boolean confirmExecute(Window owner, BackupCatalogRow row,
+                                          String targetUri, boolean drop, boolean oplog) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("mongorestore", row.sinkPath());
+        body.put("target", targetUri);
+        body.put("drop", drop);
+        body.put("oplogReplay", oplog);
+        String json = CommandJson.render(body);
+        String hash = DryRunRenderer.sha256(json);
+        String summary = "Execute restore from " + row.sinkPath() + " → " + targetUri;
+        String predicted = "mongorestore reads the backup tree and writes into the target cluster. "
+                + "Kill-switch and role gate still apply at dispatch. "
+                + (drop ? "Existing target namespaces are dropped first. "
+                        : "Existing documents are upserted; no drop. ")
+                + (oplog ? "Oplog slice is replayed after restore for point-in-time consistency."
+                        : "Oplog replay skipped.");
+        DryRunResult preview = new DryRunResult("mongorestore",
+                new Document(body), json, summary, predicted, hash);
+        TypedConfirmModel model = new TypedConfirmModel(row.sinkPath(), preview);
+        Optional<TypedConfirmModel.Outcome> outcome =
+                TypedConfirmDialog.showAndWait(owner, model);
+        return outcome.isPresent() && outcome.get() == TypedConfirmModel.Outcome.CONFIRMED;
     }
 
     private static void info(Window owner, String title, String body) {
