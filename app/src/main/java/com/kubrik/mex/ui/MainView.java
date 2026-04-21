@@ -71,7 +71,9 @@ public class MainView extends BorderPane {
     private BackupsTab backupsView;
     private final com.kubrik.mex.backup.store.BackupPolicyDao backupPolicyDao;
     private final com.kubrik.mex.backup.store.BackupCatalogDao backupCatalogDao;
+    private final com.kubrik.mex.backup.store.BackupFileDao backupFileDao;
     private final com.kubrik.mex.backup.store.SinkDao sinkDao;
+    private final com.kubrik.mex.backup.verify.CatalogVerifier catalogVerifier;
 
     private final ConnectionTree connTree;
     private final TabPane tabs = new TabPane();
@@ -105,7 +107,9 @@ public class MainView extends BorderPane {
                     KillSwitch killSwitch,
                     com.kubrik.mex.backup.store.BackupPolicyDao backupPolicyDao,
                     com.kubrik.mex.backup.store.BackupCatalogDao backupCatalogDao,
-                    com.kubrik.mex.backup.store.SinkDao sinkDao) {
+                    com.kubrik.mex.backup.store.BackupFileDao backupFileDao,
+                    com.kubrik.mex.backup.store.SinkDao sinkDao,
+                    com.kubrik.mex.backup.verify.CatalogVerifier catalogVerifier) {
         this.manager = manager;
         this.connectionStore = connectionStore;
         this.historyStore = historyStore;
@@ -122,7 +126,9 @@ public class MainView extends BorderPane {
         this.killSwitch = killSwitch;
         this.backupPolicyDao = backupPolicyDao;
         this.backupCatalogDao = backupCatalogDao;
+        this.backupFileDao = backupFileDao;
         this.sinkDao = sinkDao;
+        this.catalogVerifier = catalogVerifier;
 
         this.connTree = new ConnectionTree(manager, connectionStore, events);
         this.connTree.setOpenHandler(new ConnectionTree.OpenHandler() {
@@ -545,8 +551,8 @@ public class MainView extends BorderPane {
             return;
         }
         if (backupsView == null) {
-            backupsView = new BackupsTab(backupPolicyDao, backupCatalogDao, sinkDao,
-                    events, manager, connectionStore);
+            backupsView = new BackupsTab(backupPolicyDao, backupCatalogDao, backupFileDao,
+                    sinkDao, catalogVerifier, events, manager, connectionStore);
         }
         backupsTab = new Tab("Backups", backupsView);
         backupsTab.setOnClosed(e -> {

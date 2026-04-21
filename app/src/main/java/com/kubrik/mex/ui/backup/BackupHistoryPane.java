@@ -3,7 +3,9 @@ package com.kubrik.mex.ui.backup;
 import com.kubrik.mex.backup.event.BackupEvent;
 import com.kubrik.mex.backup.store.BackupCatalogDao;
 import com.kubrik.mex.backup.store.BackupCatalogRow;
+import com.kubrik.mex.backup.store.BackupFileDao;
 import com.kubrik.mex.backup.store.BackupStatus;
+import com.kubrik.mex.backup.verify.CatalogVerifier;
 import com.kubrik.mex.events.EventBus;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleObjectProperty;
@@ -49,6 +51,8 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
 
     private final BackupCatalogDao catalog;
+    private final BackupFileDao files;
+    private final CatalogVerifier verifier;
     private final EventBus bus;
     private final EventBus.Subscription sub;
     private final SimpleObjectProperty<String> connection = new SimpleObjectProperty<>();
@@ -61,8 +65,11 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
     private final TextField searchField = new TextField();
     private final Label footer = new Label("—");
 
-    public BackupHistoryPane(BackupCatalogDao catalog, EventBus bus) {
+    public BackupHistoryPane(BackupCatalogDao catalog, BackupFileDao files,
+                             CatalogVerifier verifier, EventBus bus) {
         this.catalog = catalog;
+        this.files = files;
+        this.verifier = verifier;
         this.bus = bus;
 
         setStyle("-fx-background-color: white;");
@@ -127,6 +134,13 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
         table.setPlaceholder(new Label(
                 "No backups recorded for this connection yet."));
         sorted.comparatorProperty().bind(table.comparatorProperty());
+        table.setRowFactory(tv -> {
+            var r = new javafx.scene.control.TableRow<BackupCatalogRow>();
+            r.setOnMouseClicked(e -> {
+                if (e.getClickCount() == 2 && !r.isEmpty()) openArtefactExplorer(r.getItem());
+            });
+            return r;
+        });
 
         table.getColumns().setAll(
                 tsCol("started", 170, BackupCatalogRow::startedAt),
@@ -183,6 +197,21 @@ public final class BackupHistoryPane extends BorderPane implements AutoCloseable
     private void updateFooter() {
         footer.setText(rows.size() + " rows loaded · " + filtered.size()
                 + " visible  ·  newest first");
+    }
+
+    private void openArtefactExplorer(BackupCatalogRow row) {
+        javafx.stage.Window win = getScene() == null ? null : getScene().getWindow();
+        ArtefactExplorerDialog.show(win, row, files, verifier, report -> {
+            // Refresh the table row with the new verify_outcome after verify.
+            catalog.byId(row.id()).ifPresent(updated -> Platform.runLater(() -> {
+                for (int i = 0; i < rows.size(); i++) {
+                    if (rows.get(i).id() == updated.id()) {
+                        rows.set(i, updated);
+                        break;
+                    }
+                }
+            }));
+        });
     }
 
     /* ============================= helpers =============================== */

@@ -1,8 +1,10 @@
 package com.kubrik.mex.ui.backup;
 
 import com.kubrik.mex.backup.store.BackupCatalogDao;
+import com.kubrik.mex.backup.store.BackupFileDao;
 import com.kubrik.mex.backup.store.BackupPolicyDao;
 import com.kubrik.mex.backup.store.SinkDao;
+import com.kubrik.mex.backup.verify.CatalogVerifier;
 import com.kubrik.mex.core.ConnectionManager;
 import com.kubrik.mex.events.EventBus;
 import com.kubrik.mex.store.ConnectionStore;
@@ -24,10 +26,11 @@ public final class BackupsTab extends BorderPane implements AutoCloseable {
     private final BackupHistoryPane historyPane;
 
     public BackupsTab(BackupPolicyDao policyDao, BackupCatalogDao catalogDao,
-                      SinkDao sinkDao, EventBus bus,
+                      BackupFileDao fileDao, SinkDao sinkDao,
+                      CatalogVerifier verifier, EventBus bus,
                       ConnectionManager connManager, ConnectionStore connectionStore) {
         this.policyPane = new PolicyEditorPane(policyDao, sinkDao, connManager, connectionStore);
-        this.historyPane = new BackupHistoryPane(catalogDao, bus);
+        this.historyPane = new BackupHistoryPane(catalogDao, fileDao, verifier, bus);
         // Share the connection selection across both sub-tabs.
         policyPane.connectionProperty().addListener((obs, o, n) ->
                 historyPane.connectionProperty().set(n));

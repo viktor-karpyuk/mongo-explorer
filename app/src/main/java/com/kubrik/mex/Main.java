@@ -3,8 +3,10 @@ package com.kubrik.mex;
 import atlantafx.base.theme.PrimerLight;
 import com.kubrik.mex.backup.runner.BackupScheduler;
 import com.kubrik.mex.backup.store.BackupCatalogDao;
+import com.kubrik.mex.backup.store.BackupFileDao;
 import com.kubrik.mex.backup.store.BackupPolicyDao;
 import com.kubrik.mex.backup.store.SinkDao;
+import com.kubrik.mex.backup.verify.CatalogVerifier;
 import com.kubrik.mex.cluster.ClusterWiring;
 import com.kubrik.mex.cluster.audit.AuditJanitor;
 import com.kubrik.mex.cluster.safety.KillSwitch;
@@ -218,7 +220,15 @@ public class Main extends Application {
         // later milestone phase (Q2.5-E handles the restore counterpart too).
         BackupPolicyDao backupPolicyDao = new BackupPolicyDao(db);
         BackupCatalogDao backupCatalogDao = new BackupCatalogDao(db);
+        BackupFileDao backupFileDao = new BackupFileDao(db);
         SinkDao sinkDao = new SinkDao(db, crypto);
+        // Verifier resolves relative catalog paths against the user's home
+        // as the default sink root; production installs should switch to a
+        // per-sink root once the Q2.5-H cloud sinks land.
+        CatalogVerifier catalogVerifier = new CatalogVerifier(backupCatalogDao, backupFileDao,
+                java.nio.file.Paths.get(System.getProperty("user.home", "."),
+                        "mongo-explorer", "backups"),
+                java.time.Clock.systemUTC());
         backupScheduler = new BackupScheduler(backupPolicyDao, backupCatalogDao,
                 policy -> log.info("scheduler: would dispatch policy {} (runner wiring in Q2.5-E)",
                         policy.id()),
@@ -228,7 +238,7 @@ public class Main extends Application {
         MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
                 migrationService, monitoringService, db, killOpHandler, rsAdminHandler,
                 opsAuditDao, opsExecutor, balancerHandler, zonesHandler, killSwitch,
-                backupPolicyDao, backupCatalogDao, sinkDao);
+                backupPolicyDao, backupCatalogDao, backupFileDao, sinkDao, catalogVerifier);
 
         // If a previous session left unfinished migrations behind, surface the recovery panel
         // as soon as the UI is up. See docs/mvp-functional-spec.md §4.6.
