@@ -126,39 +126,11 @@ public class ConnectionStore {
     }
 
     public void delete(String id) {
-        // Cascade delete: SQLite's FK constraints are off by default, so we
-        // perform the v2.4 cluster-table cleanup manually inside a single
-        // transaction (spec §3.1 AUD-RET / TOPO / ROLE). Older tables that
-        // reference the connection id (migrations, monitoring) are expected
-        // to cope with stale rows pointing at a removed id — none of them
-        // treats the id as a foreign key.
-        java.sql.Connection c = db.connection();
-        try {
-            boolean prevAuto = c.getAutoCommit();
-            c.setAutoCommit(false);
-            try {
-                deleteFrom(c, "ops_audit", id);
-                deleteFrom(c, "topology_snapshots", id);
-                deleteFrom(c, "role_cache", id);
-                deleteFrom(c, "connections", id);
-                c.commit();
-            } catch (SQLException inner) {
-                try { c.rollback(); } catch (SQLException ignored) {}
-                throw inner;
-            } finally {
-                c.setAutoCommit(prevAuto);
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private static void deleteFrom(java.sql.Connection c, String table, String id) throws SQLException {
-        String sql = "DELETE FROM " + table + " WHERE "
-                + ("connections".equals(table) ? "id" : "connection_id") + " = ?";
-        try (PreparedStatement ps = c.prepareStatement(sql)) {
+        try (PreparedStatement ps = db.connection().prepareStatement("DELETE FROM connections WHERE id=?")) {
             ps.setString(1, id);
             ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
         }
     }
 

@@ -1,46 +1,9 @@
 package com.kubrik.mex;
 
 import atlantafx.base.theme.PrimerLight;
-import com.kubrik.mex.backup.pitr.PitrPlanner;
-import com.kubrik.mex.backup.rehearse.DrRehearsalReport;
-import com.kubrik.mex.backup.runner.BackupScheduler;
-import com.kubrik.mex.backup.runner.RestoreService;
-import com.kubrik.mex.backup.store.BackupCatalogDao;
-import com.kubrik.mex.backup.store.BackupFileDao;
-import com.kubrik.mex.backup.store.BackupPolicyDao;
-import com.kubrik.mex.backup.store.SinkDao;
-import com.kubrik.mex.backup.verify.CatalogVerifier;
-import com.kubrik.mex.cluster.ClusterWiring;
-import com.kubrik.mex.cluster.audit.AuditJanitor;
-import com.kubrik.mex.cluster.safety.KillSwitch;
-import com.kubrik.mex.cluster.safety.RoleSet;
-import com.kubrik.mex.cluster.service.ClusterTopologyService;
-import com.kubrik.mex.cluster.service.OpsExecutor;
-import com.kubrik.mex.cluster.service.RoleProbeService;
-import com.kubrik.mex.cluster.store.OpsAuditDao;
-import com.kubrik.mex.cluster.store.RoleCacheDao;
-import com.kubrik.mex.cluster.store.TopologySnapshotDao;
 import com.kubrik.mex.core.ConnectionManager;
 import com.kubrik.mex.core.Crypto;
 import com.kubrik.mex.events.EventBus;
-import com.kubrik.mex.ui.cluster.BalancerPane;
-import com.kubrik.mex.ui.cluster.CurrentOpPane;
-import com.kubrik.mex.ui.cluster.FreezeDialog;
-import com.kubrik.mex.ui.cluster.KillOpDialog;
-import com.kubrik.mex.ui.cluster.StepDownDialog;
-import com.kubrik.mex.ui.cluster.TopologyPane;
-import com.kubrik.mex.ui.cluster.ZonesPane;
-import com.kubrik.mex.migration.MigrationService;
-import com.kubrik.mex.migration.gate.PreconditionGate;
-import com.kubrik.mex.migration.schedule.MigrationScheduler;
-import com.kubrik.mex.migration.sink.PluginLoader;
-import com.kubrik.mex.store.AppPaths;
-import com.kubrik.mex.monitoring.MonitoringService;
-import com.kubrik.mex.monitoring.MonitoringWiring;
-import com.kubrik.mex.monitoring.recording.RecordingCaptureSubscriber;
-import com.kubrik.mex.monitoring.recording.RecordingService;
-import com.kubrik.mex.monitoring.recording.store.RecordingProfileSampleDao;
-import com.kubrik.mex.monitoring.recording.store.RecordingSampleDao;
 import com.kubrik.mex.store.ConnectionStore;
 import com.kubrik.mex.store.Database;
 import com.kubrik.mex.store.HistoryStore;
@@ -76,196 +39,19 @@ public class Main extends Application {
 
     private Database db;
     private ConnectionManager connectionManager;
-    private MigrationService migrationService;
-    private MigrationScheduler migrationScheduler;
-    private MonitoringService monitoringService;
-    private MonitoringWiring monitoringWiring;
-    private RecordingService recordingService;
-    private RecordingCaptureSubscriber recordingCapture;
-    private ClusterTopologyService clusterTopologyService;
-    private ClusterWiring clusterWiring;
-    private RoleProbeService roleProbeService;
-    private OpsExecutor opsExecutor;
-    private KillSwitch killSwitch;
-    private AuditJanitor auditJanitor;
-    private BackupScheduler backupScheduler;
 
     @Override
     public void start(Stage stage) throws Exception {
         Application.setUserAgentStylesheet(new PrimerLight().getUserAgentStylesheet());
 
         db = new Database();
-
-        // EXT-1 — load sink plugins once, before anything touches the sink registry.
-        // Missing plugins dir is a no-op; loader failures are logged, not fatal.
-        PluginLoader.loadFrom(AppPaths.pluginsDir());
-
         ConnectionStore connectionStore = new ConnectionStore(db);
         HistoryStore historyStore = new HistoryStore(db);
         EventBus eventBus = new EventBus();
         Crypto crypto = new Crypto();
         connectionManager = new ConnectionManager(connectionStore, eventBus, crypto);
 
-        PreconditionGate preconditionGate = new PreconditionGate(connectionStore, connectionManager);
-        migrationService = new MigrationService(connectionManager, connectionStore, db, eventBus, preconditionGate);
-
-        // UX-7 — local scheduler. Wakes every 30s, dispatches due profiles via
-        // MigrationService.start. Local-only — the app must be running for schedules to fire.
-        migrationScheduler = new MigrationScheduler(
-                migrationService.schedules(), migrationService.profiles(),
-                spec -> migrationService.start(spec));
-        migrationScheduler.start();
-
-        // v2.1.0 — monitoring subsystem. Lifecycle is managed here so samplers stop
-        // cleanly before the Mongo client / Database close in stop().
-        monitoringService = new MonitoringService(db, eventBus);
-        monitoringService.startBackgroundWorkers();
-        monitoringWiring = new MonitoringWiring(monitoringService, connectionManager, eventBus);
-
-        // v2.3.0 — recording subsystem. RecordingService owns lifecycle + auto-stop tick;
-        // RecordingCaptureSubscriber double-writes EventBus metric/profiler samples into
-        // the recording tables for any active recording. Auto-stop on disconnect uses the
-        // ConnectionManager so REC-AUTO-2 fires accurately in production.
-        recordingService = new RecordingService(db, eventBus, java.time.Clock.systemUTC(),
-                id -> connectionManager.service(id) != null,
-                () -> RecordingService.DEFAULT_STORAGE_CAP_BYTES);
-        recordingService.init();
-        recordingCapture = new RecordingCaptureSubscriber(
-                new RecordingSampleDao(db.connection()),
-                new RecordingProfileSampleDao(db.connection()),
-                eventBus,
-                db.writeLock());
-
-        // v2.4 — cluster topology sampler. Lives outside MonitoringWiring because
-        // its cadence (300 ms heartbeat / 2 s visible) and consumers (Cluster tab,
-        // connection card health pill) are orthogonal to monitoring samplers.
-        clusterTopologyService = new ClusterTopologyService(
-                connectionManager::service,
-                new TopologySnapshotDao(db),
-                eventBus,
-                java.time.Clock.systemUTC());
-        clusterWiring = new ClusterWiring(clusterTopologyService, connectionManager, eventBus);
-
-        // v2.4 destructive-ops stack — kill-switch is process-wide, role probe
-        // caches per-connection (5 min freshness), OpsExecutor dispatches +
-        // audits every destructive command.
-        killSwitch = new KillSwitch();
-        roleProbeService = new RoleProbeService(
-                connectionManager::service, new RoleCacheDao(db), java.time.Clock.systemUTC());
-        final OpsAuditDao opsAuditDao = new OpsAuditDao(db);
-        opsExecutor = new OpsExecutor(connectionManager, opsAuditDao, eventBus,
-                killSwitch, roleProbeService, java.time.Clock.systemUTC());
-
-        // v2.4 AUD-RET — daily ops_audit purge, OK rows older than 180 days
-        // deleted, FAIL + root/clusterAdmin rows kept indefinitely.
-        auditJanitor = new AuditJanitor(db, java.time.Clock.systemDefaultZone(), 180);
-        auditJanitor.start();
-
-        String callerUser = System.getProperty("user.name", "unknown");
-        String callerHost;
-        try { callerHost = java.net.InetAddress.getLocalHost().getHostName(); }
-        catch (Exception ignored) { callerHost = "unknown"; }
-        String finalCallerUser = callerUser;
-        String finalCallerHost = callerHost;
-        CurrentOpPane.KillOpHandler killOpHandler = new CurrentOpPane.KillOpHandler() {
-            @Override public boolean allowed(String connectionId) {
-                RoleSet roles = roleProbeService.currentOrProbe(connectionId);
-                return roles.hasAny(java.util.List.of("killAnyCursor", "root"));
-            }
-            @Override public KillOpDialog.Result handle(javafx.stage.Window owner,
-                                                       String connectionId,
-                                                       com.kubrik.mex.cluster.ops.CurrentOpRow row) {
-                return KillOpDialog.show(owner, connectionId, row, opsExecutor,
-                        finalCallerUser, finalCallerHost);
-            }
-        };
-
-        TopologyPane.RsAdminHandler rsAdminHandler = new TopologyPane.RsAdminHandler() {
-            @Override public boolean stepDownAllowed(String connectionId) {
-                return roleProbeService.currentOrProbe(connectionId)
-                        .hasAny(java.util.List.of("clusterManager", "root"));
-            }
-            @Override public boolean freezeAllowed(String connectionId) {
-                return roleProbeService.currentOrProbe(connectionId)
-                        .hasAny(java.util.List.of("clusterManager", "root"));
-            }
-            @Override public KillOpDialog.Result stepDown(javafx.stage.Window owner,
-                                                          String connectionId, String host) {
-                return StepDownDialog.show(owner, connectionId, host, opsExecutor,
-                        finalCallerUser, finalCallerHost);
-            }
-            @Override public KillOpDialog.Result freeze(javafx.stage.Window owner,
-                                                        String connectionId, String host) {
-                return FreezeDialog.show(owner, connectionId, host, opsExecutor,
-                        finalCallerUser, finalCallerHost);
-            }
-        };
-
-        BalancerPane.BalancerHandler balancerHandler = new BalancerPane.BalancerHandler() {
-            @Override public boolean allowed(String connectionId) {
-                return roleProbeService.currentOrProbe(connectionId)
-                        .hasAny(java.util.List.of("clusterManager", "root"));
-            }
-            @Override public String callerUser() { return finalCallerUser; }
-            @Override public String callerHost() { return finalCallerHost; }
-        };
-        ZonesPane.ZonesHandler zonesHandler = new ZonesPane.ZonesHandler() {
-            @Override public boolean allowed(String connectionId) {
-                return roleProbeService.currentOrProbe(connectionId)
-                        .hasAny(java.util.List.of("clusterManager", "root"));
-            }
-            @Override public String callerUser() { return finalCallerUser; }
-            @Override public String callerHost() { return finalCallerHost; }
-        };
-
-        // v2.5 — backup DAOs shared between the Backups tab UI and the
-        // scheduler. The scheduler's dispatcher logs for now; wiring to
-        // BackupRunner needs per-policy URI resolution which lands with a
-        // later milestone phase (Q2.5-E handles the restore counterpart too).
-        BackupPolicyDao backupPolicyDao = new BackupPolicyDao(db);
-        BackupCatalogDao backupCatalogDao = new BackupCatalogDao(db);
-        BackupFileDao backupFileDao = new BackupFileDao(db);
-        SinkDao sinkDao = new SinkDao(db, crypto);
-        // Verifier resolves relative catalog paths against the user's home
-        // as the default sink root; production installs should switch to a
-        // per-sink root once the Q2.5-H cloud sinks land.
-        CatalogVerifier catalogVerifier = new CatalogVerifier(backupCatalogDao, backupFileDao,
-                java.nio.file.Paths.get(System.getProperty("user.home", "."),
-                        "mongo-explorer", "backups"),
-                java.time.Clock.systemUTC());
-        backupScheduler = new BackupScheduler(backupPolicyDao, backupCatalogDao,
-                policy -> log.info("scheduler: would dispatch policy {} (runner wiring in Q2.5-E)",
-                        policy.id()),
-                java.time.Clock.systemUTC());
-        backupScheduler.start();
-
-        // Q2.5-E — restore orchestrator shares the kill-switch with the
-        // cluster executor so engaging it blocks Execute-mode restores too.
-        RestoreService restoreService = new RestoreService(backupCatalogDao, opsAuditDao,
-                eventBus, killSwitch, java.time.Clock.systemUTC(),
-                java.nio.file.Paths.get(System.getProperty("user.home", "."),
-                        "mongo-explorer", "backups"),
-                "mongorestore");
-
-        // Q2.5-F — PITR planner walks the catalog's oplog windows to pick
-        // the covering backup for a target timestamp.
-        PitrPlanner pitrPlanner = new PitrPlanner(backupCatalogDao);
-        // Q2.5-G — DR rehearsal report compiles ops_audit.restore.rehearse
-        // rows into JSON / HTML bundles.
-        DrRehearsalReport rehearsalReport = new DrRehearsalReport(opsAuditDao);
-
-        MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
-                migrationService, monitoringService, db, killOpHandler, rsAdminHandler,
-                opsAuditDao, opsExecutor, balancerHandler, zonesHandler, killSwitch,
-                backupPolicyDao, backupCatalogDao, backupFileDao, sinkDao, catalogVerifier,
-                restoreService, pitrPlanner, rehearsalReport,
-                finalCallerUser, finalCallerHost);
-
-        // If a previous session left unfinished migrations behind, surface the recovery panel
-        // as soon as the UI is up. See docs/mvp-functional-spec.md §4.6.
-        if (!migrationService.unfinishedOnStartup().isEmpty()) {
-            Platform.runLater(root::openMigrationsTabPublic);
-        }
+        MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus);
         Scene scene = new Scene(root, 1200, 750);
         stage.setTitle("Mongo Explorer");
         try {
@@ -330,15 +116,6 @@ public class Main extends Application {
         // MongoClient.close() and driver shutdown hooks can stall for seconds;
         // halt(0) bypasses all of that so the app exits instantly.
         Thread cleanup = new Thread(() -> {
-            try { if (migrationScheduler != null) migrationScheduler.close(); } catch (Exception ignored) {}
-            try { if (recordingCapture != null) recordingCapture.close(); } catch (Exception ignored) {}
-            try { if (recordingService != null) recordingService.close(); } catch (Exception ignored) {}
-            try { if (auditJanitor != null) auditJanitor.close(); } catch (Exception ignored) {}
-            try { if (backupScheduler != null) backupScheduler.close(); } catch (Exception ignored) {}
-            try { if (clusterWiring != null) clusterWiring.close(); } catch (Exception ignored) {}
-            try { if (clusterTopologyService != null) clusterTopologyService.close(); } catch (Exception ignored) {}
-            try { if (monitoringWiring != null) monitoringWiring.close(); } catch (Exception ignored) {}
-            try { if (monitoringService != null) monitoringService.close(); } catch (Exception ignored) {}
             try { if (connectionManager != null) connectionManager.closeAll(); } catch (Exception ignored) {}
             try { if (db != null) db.close(); } catch (Exception ignored) {}
         }, "shutdown-cleanup");
