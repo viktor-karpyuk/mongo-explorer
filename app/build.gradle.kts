@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.kubrik.mex"
-version = "2.6.1-alpha"
+version = "2.6.2-alpha"
 
 java {
     toolchain {
