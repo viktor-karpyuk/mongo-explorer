@@ -220,7 +220,10 @@ public final class GcsTarget implements StorageTarget {
     public static Parsed parseBucketUri(String uri) {
         if (uri == null || uri.isBlank())
             throw new IllegalArgumentException("bucketUri is blank");
-        String s = uri.trim();
+        // Strip ?query / #fragment tails a user may paste from a
+        // browser URL — without this the tail lands in the key prefix
+        // and every PUT later fails with an opaque error.
+        String s = S3Target.stripQueryAndFragment(uri.trim());
         if (!s.regionMatches(true, 0, "gs://", 0, 5))
             throw new IllegalArgumentException("bucketUri must start with gs://");
         s = s.substring(5);

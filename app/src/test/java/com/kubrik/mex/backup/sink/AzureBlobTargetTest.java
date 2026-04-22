@@ -78,6 +78,37 @@ class AzureBlobTargetTest {
                         "https://mystorage.blob.core.windows.net"));
     }
 
+    @Test
+    void gov_cloud_host_suffix_is_preserved_from_https_uri() {
+        // Gov Cloud (and China Cloud) customers paste the full https
+        // URL; the parser captures the suffix so buildClient routes to
+        // the correct regional endpoint instead of the commercial
+        // .blob.core.windows.net hardcode.
+        AzureBlobTarget.Parsed p = AzureBlobTarget.parseUri(
+                "https://mystorage.blob.core.usgovcloudapi.net/container/daily");
+        assertEquals("mystorage", p.account());
+        assertEquals("container", p.container());
+        assertEquals("daily/", p.keyPrefix());
+        assertEquals("blob.core.usgovcloudapi.net", p.hostSuffix());
+    }
+
+    @Test
+    void azblob_shortform_assumes_commercial_host_suffix() {
+        AzureBlobTarget.Parsed p = AzureBlobTarget.parseUri(
+                "azblob://mystorage/container");
+        assertEquals(AzureBlobTarget.DEFAULT_HOST_SUFFIX, p.hostSuffix());
+    }
+
+    @Test
+    void strips_query_string_so_embedded_SAS_doesnt_land_in_prefix() {
+        // Users sometimes paste the portal URL with the SAS appended
+        // as a query string. The parser strips it so the prefix is
+        // clean; the credentials field owns the SAS token.
+        AzureBlobTarget.Parsed p = AzureBlobTarget.parseUri(
+                "https://mystorage.blob.core.windows.net/container/daily?sv=2022&sig=abc");
+        assertEquals("daily/", p.keyPrefix());
+    }
+
     /* ======================== classifyCredentials ======================== */
 
     @Test

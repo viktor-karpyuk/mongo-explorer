@@ -217,7 +217,10 @@ public final class AzureBlobTarget implements StorageTarget {
     public static Parsed parseUri(String uri) {
         if (uri == null || uri.isBlank())
             throw new IllegalArgumentException("uri is blank");
-        String u = uri.trim();
+        // Strip ?query / #fragment tails (e.g., SAS tokens pasted
+        // directly into the URI instead of the credentials field —
+        // an easy mistake from the Azure portal).
+        String u = com.kubrik.mex.backup.sink.S3Target.stripQueryAndFragment(uri.trim());
         String account;
         String hostSuffix;
         String tail;

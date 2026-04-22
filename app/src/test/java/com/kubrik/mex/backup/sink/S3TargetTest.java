@@ -82,4 +82,34 @@ class S3TargetTest {
         assertThrows(IllegalArgumentException.class,
                 () -> S3Target.parseBucketUri("s3:///////"));
     }
+
+    @Test
+    void strips_query_string_from_pasted_browser_url() {
+        // Pasted from the AWS console with a versioning query param.
+        // Without the strip the '?version=123' landed inside the key
+        // prefix and every later PUT failed with an opaque InvalidKey.
+        S3Target.Parsed p = S3Target.parseBucketUri(
+                "s3://my-bucket/daily?version=123");
+        assertEquals("my-bucket", p.bucket());
+        assertEquals("daily/", p.keyPrefix());
+    }
+
+    @Test
+    void strips_fragment_from_pasted_url() {
+        S3Target.Parsed p = S3Target.parseBucketUri(
+                "s3://my-bucket/daily#sectionRef");
+        assertEquals("daily/", p.keyPrefix());
+    }
+
+    @Test
+    void strips_whichever_of_query_or_fragment_comes_first() {
+        // Either order is fine — we cut at whichever appears earliest.
+        S3Target.Parsed p1 = S3Target.parseBucketUri(
+                "s3://my-bucket/daily?v=1#anchor");
+        assertEquals("daily/", p1.keyPrefix());
+
+        S3Target.Parsed p2 = S3Target.parseBucketUri(
+                "s3://my-bucket/daily#anchor?v=1");
+        assertEquals("daily/", p2.keyPrefix());
+    }
 }

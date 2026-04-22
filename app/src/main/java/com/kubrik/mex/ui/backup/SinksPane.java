@@ -228,8 +228,9 @@ public final class SinksPane extends BorderPane {
         statusLabel.setStyle("-fx-text-fill: #2563eb; -fx-font-size: 11px;");
         Thread.startVirtualThread(() -> {
             StorageTarget.Probe verdict;
+            StorageTarget target = null;
             try {
-                StorageTarget target = buildTarget(k, probeName, uri, creds);
+                target = buildTarget(k, probeName, uri, creds);
                 verdict = target.testWrite();
             } catch (Throwable bad) {
                 // Throwable, not Exception — an Error (OOM, linkage)
@@ -239,6 +240,14 @@ public final class SinksPane extends BorderPane {
                 verdict = new StorageTarget.Probe(false, 0L,
                         java.util.Optional.of(bad.getClass().getSimpleName()
                                 + ": " + bad.getMessage()));
+            } finally {
+                // Each click builds a fresh SDK client; without close()
+                // a user who tweaks credentials across 10 test-connection
+                // clicks leaks 10 HTTP pools / gRPC channels. close() is
+                // idempotent + no-op on the targets that hold nothing.
+                if (target != null) {
+                    try { target.close(); } catch (Exception ignored) {}
+                }
             }
             StorageTarget.Probe v = verdict;
             Platform.runLater(() -> {
@@ -287,13 +296,12 @@ public final class SinksPane extends BorderPane {
         SinkRecord saved = sinkDao.insert(new SinkRecord(-1, k.name(), name, uri,
                 creds == null || creds.isBlank() ? null : creds,
                 null, now, now));
+        reload();
+        // Clear the form so the next add doesn't accidentally reuse
+        // creds from the just-saved row.
+        clearForm();
         statusLabel.setText("Saved sink #" + saved.id());
         statusLabel.setStyle("-fx-text-fill: #166534; -fx-font-size: 11px;");
-        reload();
-        // Clear the form so the next add doesn't accidentally reuse creds.
-        nameField.clear();
-        rootPathField.clear();
-        forms.get(k).clear();
     }
 
     private void onDelete() {
@@ -308,14 +316,36 @@ public final class SinksPane extends BorderPane {
             if (b == javafx.scene.control.ButtonType.OK) {
                 sinkDao.delete(sel.id());
                 reload();
+                // Clear the form so the now-dead row's values don't
+                // linger. Clicking Save right after would otherwise
+                // recreate a near-duplicate of the sink the operator
+                // just removed.
+                clearForm();
             }
         });
+    }
+
+    /** Shared reset used by onDelete + onSave so both exits land on a
+     *  clean form. */
+    private void clearForm() {
+        nameField.clear();
+        rootPathField.clear();
+        forms.values().forEach(CredentialsForm::clear);
+        statusLabel.setText("—");
+        statusLabel.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
     }
 
     private void populateForm(SinkRecord r) {
         Kind k;
         try { k = Kind.valueOf(r.kind()); }
         catch (IllegalArgumentException bad) { k = Kind.LOCAL_FS; }
+        // setValue is a no-op for JavaFX listeners when the new value
+        // equals the current, so the kind-switch clear hook doesn't
+        // fire on same-kind transitions. Always clear the target form
+        // ourselves before populate so clicking one S3 row after
+        // another doesn't leave the previous row's credentials mixed
+        // into the current display.
+        forms.get(k).clear();
         kindPicker.setValue(k);
         nameField.setText(r.name());
         rootPathField.setText(r.rootPath());

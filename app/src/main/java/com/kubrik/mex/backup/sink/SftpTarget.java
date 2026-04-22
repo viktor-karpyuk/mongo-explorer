@@ -299,13 +299,25 @@ public final class SftpTarget implements StorageTarget {
     public static Parsed parseUri(String uri) {
         if (uri == null || uri.isBlank())
             throw new IllegalArgumentException("uri is blank");
-        String u = uri.trim();
+        // Strip ?query / #fragment — uncommon for sftp:// but a user
+        // who pastes a file manager's bookmark URL might have them.
+        String u = com.kubrik.mex.backup.sink.S3Target.stripQueryAndFragment(uri.trim());
         if (!u.regionMatches(true, 0, "sftp://", 0, 7))
             throw new IllegalArgumentException("uri must start with sftp://");
         String tail = u.substring(7);
         int at = tail.indexOf('@');
         if (at <= 0) throw new IllegalArgumentException("sftp:// missing user@");
         String user = tail.substring(0, at);
+        // Reject userinfo with an embedded password — the form gives
+        // us a dedicated credentials field, and letting user:pass@host
+        // through would both break JSch (it expects a bare username)
+        // AND put the password at risk of leaking into log / status
+        // strings that include the URI.
+        if (user.indexOf(':') >= 0) {
+            throw new IllegalArgumentException(
+                    "sftp:// must not embed a password; use the credentials "
+                    + "form for password or private-key auth");
+        }
         String hostPart = tail.substring(at + 1);
         int slash = hostPart.indexOf('/');
         String hostPortPart = slash < 0 ? hostPart : hostPart.substring(0, slash);

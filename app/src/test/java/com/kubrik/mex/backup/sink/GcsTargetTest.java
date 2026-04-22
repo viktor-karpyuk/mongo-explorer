@@ -70,4 +70,12 @@ class GcsTargetTest {
         assertThrows(IllegalArgumentException.class,
                 () -> GcsTarget.parseBucketUri("gs:///"));
     }
+
+    @Test
+    void strips_query_and_fragment_from_pasted_url() {
+        GcsTarget.Parsed p = GcsTarget.parseBucketUri(
+                "gs://my-bucket/daily?generation=42#ref");
+        assertEquals("my-bucket", p.bucket());
+        assertEquals("daily/", p.keyPrefix());
+    }
 }

@@ -63,6 +63,24 @@ class SftpTargetTest {
                 () -> SftpTarget.parseUri("sftp://bkp@h:not-a-number/path"));
     }
 
+    @Test
+    void rejects_password_embedded_in_userinfo() {
+        // sftp://user:password@host would both break JSch (which
+        // expects a bare username) AND put the password at risk of
+        // leaking into log / status strings. Parser rejects with a
+        // specific hint to use the credentials field.
+        IllegalArgumentException bad = assertThrows(
+                IllegalArgumentException.class,
+                () -> SftpTarget.parseUri("sftp://bkp:secret@h:22/path"));
+        assertTrue(bad.getMessage().toLowerCase().contains("password"));
+    }
+
+    @Test
+    void strips_query_and_fragment_from_pasted_url() {
+        SftpTarget.Parsed p = SftpTarget.parseUri("sftp://bkp@h/path?ref=1#x");
+        assertEquals("path", p.rootPath());
+    }
+
     /* ======================== classifyCredentials ======================== */
 
     @Test

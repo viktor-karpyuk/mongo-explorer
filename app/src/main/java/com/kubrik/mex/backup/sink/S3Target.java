@@ -268,7 +268,7 @@ public final class S3Target implements StorageTarget {
     public static Parsed parseBucketUri(String uri) {
         if (uri == null || uri.isBlank())
             throw new IllegalArgumentException("bucketUri is blank");
-        String s = uri.trim();
+        String s = stripQueryAndFragment(uri.trim());
         if (!s.regionMatches(true, 0, "s3://", 0, 5))
             throw new IllegalArgumentException("bucketUri must start with s3://");
         s = s.substring(5);
@@ -283,6 +283,17 @@ public final class S3Target implements StorageTarget {
     }
 
     public record Parsed(String bucket, String keyPrefix) {}
+
+    /** Drops any {@code ?query} or {@code #fragment} tail a user may
+     *  have copied from a browser URL. Applied to every scheme's
+     *  URI parser so a pasted AWS-console URL with querystring
+     *  doesn't silently land as part of the key prefix. */
+    static String stripQueryAndFragment(String uri) {
+        int q = uri.indexOf('?');
+        int h = uri.indexOf('#');
+        int cut = q < 0 ? h : (h < 0 ? q : Math.min(q, h));
+        return cut < 0 ? uri : uri.substring(0, cut);
+    }
 
     private static S3Client buildClient(String credentialsJson, String region) {
         S3ClientBuilder b = S3Client.builder()
