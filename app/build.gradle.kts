@@ -113,7 +113,12 @@ runtime {
     modules.set(listOf(
         "java.base", "java.desktop", "java.logging", "java.management",
         "java.naming", "java.net.http", "java.security.jgss", "java.sql",
-        "java.xml", "jdk.crypto.ec", "jdk.unsupported"
+        "java.xml", "jdk.crypto.ec", "jdk.unsupported",
+        // v2.6.1: google-auth-library caches ADC state via
+        // java.util.prefs so the GCS sink needs java.prefs in the
+        // custom runtime; jlink strips it otherwise and a first-run
+        // ADC fallback fails with PreferencesFactory not found.
+        "java.prefs"
     ))
     jpackage {
         imageName = "Mongo Explorer"

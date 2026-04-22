@@ -16,27 +16,38 @@ Follow-up to v2.6.0-alpha2 filling in the three backup sinks that were deferred 
 - **Backups → Sinks sub-tab** (Q2.6.1-D) — list of existing sinks + kind-aware editor form. Test-connection button runs `StorageTarget.testWrite()` with the in-flight form values on a virtual thread and reports latency or a classified error — **without** persisting the sink, so a bad credential paste doesn't leave junk rows behind. Save encrypts credentials via the existing per-install `Crypto` AES key.
 - Focus-switch listener reloads the Policies sink picker when you switch tabs, so a freshly saved sink shows up in the policy editor without a restart.
 
-### Tests + docs
+### Tests
 
-- 34 new unit tests covering URI parsing and credential classifiers for all three cloud sinks (every scheme, every malformed shape, every ambiguous-credentials ordering).
-- `docs/v2/v2.6/smoke-test-cloud-sinks.md` — per-sink smoke checklist for the live round-trip that can't be automated without a real bucket / SFTP endpoint.
-- `docs/v2/v2.6/milestone-v2.6.1.md` — full milestone spec kept for traceability.
+- 60 new unit tests covering URI parsing (including Gov Cloud host-suffix preservation, `?query` / `#fragment` stripping, SFTP password-in-userinfo rejection) and credential classifiers for every cloud sink. Sink test totals: S3 12 · GCS 9 · Azure 16 · SFTP 15 · Sinks misc 8.
 
 ### Pre-release review fixes
 
-Deep review ahead of the alpha cut caught real bugs worth folding in rather than patching:
+Three rounds of deep review ahead of the alpha tag drove out every bug found:
 
-- **Azure Gov Cloud endpoint** — `AzureBlobTarget.parseUri` now preserves the full host suffix from the `https://` form so Gov Cloud (`blob.core.usgovcloudapi.net`) and China Cloud endpoints route correctly. `azblob://` short-form keeps assuming commercial since it doesn't carry the suffix.
+**Round 1 (`f991e12`)**
+- **Azure Gov Cloud endpoint** — `AzureBlobTarget.parseUri` preserves the full host suffix from the `https://` form so Gov Cloud (`blob.core.usgovcloudapi.net`) and China Cloud endpoints route correctly. `azblob://` short-form keeps assuming commercial since it doesn't carry the suffix.
 - **GCS silent ADC fallback** — when credentials JSON is set but fails to parse, `GcsTarget` now throws `IllegalArgumentException` instead of falling back to Application Default Credentials. An operator who pasted broken JSON gets a clear error instead of the surprise of picking up the host's unrelated credentials.
-- **SFTP `list()` semantics** — missing-directory failures now propagate as `IOException`, matching S3 / GCS / Azure. Previously the SftpException was swallowed and an empty list returned, masking sink misconfiguration.
+- **SFTP `list()` semantics** — missing-directory failures propagate as `IOException`, matching S3 / GCS / Azure. Previously the SftpException was swallowed and an empty list returned, masking sink misconfiguration.
 - **`StorageTarget.close()`** — default no-op added to the interface; S3 + GCS sinks override to close their SDK client pools so long-running sessions with many connected sinks don't bloat.
 - **SinksPane** — save-time URI validation via each kind's parser so `s3://` with no bucket fails at save, not on first backup; test-button re-enable moved into a `finally` block so an SDK-init error can't wedge the button; sibling form state cleared on kind-switch; JSON escape strengthened to cover the 0x00–0x1F control range and backspace / formfeed.
 
+**Round 2 (`d36ecfa`)**
+- **SDK client leak on every Test-connection click** — `onTestConnection` now wraps `testWrite()` in try/finally with `target.close()`. Previously each click leaked a fresh S3Client / GCS Storage / Azure BlobContainerClient.
+- **Stale form on delete** — `onDelete` clears the form via a shared `clearForm()` helper (reused by `onSave`). Save right after delete no longer recreates the just-removed sink.
+- **SFTP URI with embedded password** — `parseUri` rejects `sftp://user:password@host/path` with a specific hint pointing at the credentials field; closes a silent-auth-fail + password-leak path.
+- **Same-kind row click stale fields** — `populateForm` always calls `forms.get(k).clear()` before populate; JavaFX listeners don't fire on `setValue(x)` when `x` equals the current value, so relying on the listener to clear the target form was wrong.
+- **`?query` / `#fragment` in pasted URIs** — every URI parser strips both via a shared `S3Target.stripQueryAndFragment()` helper so a user pasting an AWS-console URL with `?version=123` no longer silently lands the querystring in the key prefix.
+
+**Round 3 (this commit)**
+- **`SinkDao.insert` error handling** — `SinksPane.onSave` catches `RuntimeException`, unwraps the deepest cause's message (`UNIQUE constraint failed`, etc.), and surfaces it in the status label. Previously a unique-name conflict or locked DB propagated and wedged the FX thread, freezing the whole pane.
+- **`java.prefs` module in jpackage runtime** — Google's auth library caches ADC state via `java.util.prefs`; jlink was stripping it so first-run ADC fallback failed at runtime with `PreferencesFactory not found`. Added to the `runtime { modules }` list.
+
 ### Deferred
 
-- `runtime.modules` audit for AWS / GCS / Azure SDK module requirements on jpackage images — macOS DMG builds cleanly; Windows MSI + Linux DEB still to verify.
-- Azure AAD / managed-identity auth — MSAL is large and uncommon for backup sinks; re-open in v2.6.2 if ops teams ask.
-- SFTP known-hosts verification — tracked as a v2.6.2 polish item.
+- **Backup runner wiring from the scheduler** — `BackupScheduler`'s dispatcher still logs instead of invoking `BackupRunner.execute` (pre-existing v2.5 scaffold). Needs its own focused session; tracked separately from v2.6.1's cloud-sink scope.
+- **`runtime.modules` audit for Windows MSI + Linux DEB** — macOS DMG builds cleanly; other jpackage targets to verify.
+- **Azure AAD / managed-identity auth** — MSAL is large and uncommon for backup sinks; re-open in v2.6.2 if ops teams ask.
+- **SFTP known-hosts verification** — tracked as a v2.6.2 polish item.
 
 ## v2.6.0-alpha — Security, Audit & Compliance (preview)
 

@@ -293,15 +293,41 @@ public final class SinksPane extends BorderPane {
             return;
         }
         long now = System.currentTimeMillis();
-        SinkRecord saved = sinkDao.insert(new SinkRecord(-1, k.name(), name, uri,
-                creds == null || creds.isBlank() ? null : creds,
-                null, now, now));
+        SinkRecord saved;
+        try {
+            saved = sinkDao.insert(new SinkRecord(-1, k.name(), name, uri,
+                    creds == null || creds.isBlank() ? null : creds,
+                    null, now, now));
+        } catch (RuntimeException dbErr) {
+            // Unique-name collision, locked DB, or any SQLite failure.
+            // Surface in the status label instead of letting the
+            // exception wedge the FX thread and freeze the Sinks pane.
+            statusLabel.setText("Save failed: " + describe(dbErr));
+            statusLabel.setStyle("-fx-text-fill: #b91c1c; -fx-font-size: 11px; "
+                    + "-fx-font-weight: 600;");
+            return;
+        }
         reload();
         // Clear the form so the next add doesn't accidentally reuse
         // creds from the just-saved row.
         clearForm();
         statusLabel.setText("Saved sink #" + saved.id());
         statusLabel.setStyle("-fx-text-fill: #166534; -fx-font-size: 11px;");
+    }
+
+    /** Unwrap a RuntimeException to the deepest message. SQLite errors
+     *  are usually wrapped two layers deep (RuntimeException →
+     *  SQLException → SQLiteException); the deepest has the actionable
+     *  text ('UNIQUE constraint failed: …'). */
+    private static String describe(Throwable t) {
+        Throwable cur = t;
+        String msg = cur.getMessage();
+        while (cur.getCause() != null && cur.getCause() != cur) {
+            cur = cur.getCause();
+            if (cur.getMessage() != null) msg = cur.getMessage();
+        }
+        if (msg == null || msg.isBlank()) msg = t.getClass().getSimpleName();
+        return msg;
     }
 
     private void onDelete() {
