@@ -27,6 +27,7 @@ public final class BackupsTab extends BorderPane implements AutoCloseable {
 
     private final PolicyEditorPane policyPane;
     private final BackupHistoryPane historyPane;
+    private final SinksPane sinksPane;
 
     public BackupsTab(BackupPolicyDao policyDao, BackupCatalogDao catalogDao,
                       BackupFileDao fileDao, SinkDao sinkDao,
@@ -39,14 +40,25 @@ public final class BackupsTab extends BorderPane implements AutoCloseable {
         this.historyPane = new BackupHistoryPane(catalogDao, fileDao, verifier,
                 restoreService, pitrPlanner, rehearsalReport,
                 callerUser, callerHost, bus);
+        this.sinksPane = new SinksPane(sinkDao);
         // Share the connection selection across both sub-tabs.
         policyPane.connectionProperty().addListener((obs, o, n) ->
                 historyPane.connectionProperty().set(n));
 
         TabPane tabs = new TabPane(
                 closeable("Policies", policyPane),
-                closeable("History", historyPane));
+                closeable("History", historyPane),
+                closeable("Sinks", sinksPane));
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        // v2.6.1 — when a tab gains focus, reload anything that might
+        // have been edited in a sibling tab. Picking up a freshly-saved
+        // sink in the Policies picker, or a freshly-deleted sink in
+        // the Sinks list, beats an app restart.
+        tabs.getSelectionModel().selectedItemProperty().addListener((o, a, t) -> {
+            if (t == null) return;
+            if ("Sinks".equals(t.getText())) sinksPane.refresh();
+            if ("Policies".equals(t.getText())) policyPane.reloadSinks();
+        });
         setCenter(tabs);
         setStyle("-fx-background-color: #f9fafb;");
     }
