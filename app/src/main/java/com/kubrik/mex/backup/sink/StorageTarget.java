@@ -49,4 +49,11 @@ public sealed interface StorageTarget
      *  cloud sinks); local + SFTP return {@code false} and the catalog
      *  verifier reads the file back. */
     default boolean supportsServerSideHash() { return false; }
+
+    /** Releases any SDK resources the target holds (HTTP connection
+     *  pools, gRPC channels, auth-refresh threads). Default no-op for
+     *  filesystem-backed targets that keep nothing open. Cloud sinks
+     *  override to close their SDK clients. Idempotent; safe to call
+     *  multiple times or after a failed construction. */
+    default void close() {}
 }

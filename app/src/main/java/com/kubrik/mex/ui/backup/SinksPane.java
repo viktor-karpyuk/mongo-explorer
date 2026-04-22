@@ -138,6 +138,12 @@ public final class SinksPane extends BorderPane {
         });
         kindPicker.setValue(Kind.LOCAL_FS);
         kindPicker.valueProperty().addListener((o, a, b) -> {
+            // Clear the form the user is switching AWAY from so stale
+            // values from that kind don't linger invisibly when the
+            // user switches back. populateForm (table-row click) calls
+            // this too but sets the new form's values right after.
+            if (a != null) forms.get(a).clear();
+            if (b != null) forms.get(b).clear();
             renderCredentialsFor(b);
             renderRootPathPromptFor(b);
         });
@@ -225,20 +231,27 @@ public final class SinksPane extends BorderPane {
             try {
                 StorageTarget target = buildTarget(k, probeName, uri, creds);
                 verdict = target.testWrite();
-            } catch (Exception bad) {
+            } catch (Throwable bad) {
+                // Throwable, not Exception — an Error (OOM, linkage)
+                // during SDK init still needs to re-enable the button
+                // via the finally block below instead of leaving the
+                // UI stuck on 'probing'.
                 verdict = new StorageTarget.Probe(false, 0L,
                         java.util.Optional.of(bad.getClass().getSimpleName()
                                 + ": " + bad.getMessage()));
             }
             StorageTarget.Probe v = verdict;
             Platform.runLater(() -> {
-                testBtn.setDisable(false);
-                if (v.writable()) {
-                    statusLabel.setText("OK  ·  " + v.latencyMs() + " ms round-trip");
-                    statusLabel.setStyle("-fx-text-fill: #166534; -fx-font-size: 11px; -fx-font-weight: 600;");
-                } else {
-                    statusLabel.setText("FAILED  ·  " + v.error().orElse("probe threw no error?"));
-                    statusLabel.setStyle("-fx-text-fill: #b91c1c; -fx-font-size: 11px; -fx-font-weight: 600;");
+                try {
+                    if (v.writable()) {
+                        statusLabel.setText("OK  ·  " + v.latencyMs() + " ms round-trip");
+                        statusLabel.setStyle("-fx-text-fill: #166534; -fx-font-size: 11px; -fx-font-weight: 600;");
+                    } else {
+                        statusLabel.setText("FAILED  ·  " + v.error().orElse("probe threw no error?"));
+                        statusLabel.setStyle("-fx-text-fill: #b91c1c; -fx-font-size: 11px; -fx-font-weight: 600;");
+                    }
+                } finally {
+                    testBtn.setDisable(false);
                 }
             });
         });
@@ -257,6 +270,16 @@ public final class SinksPane extends BorderPane {
         }
         if (uri.isEmpty()) {
             statusLabel.setText("URI / path is required.");
+            statusLabel.setStyle("-fx-text-fill: #b91c1c; -fx-font-size: 11px;");
+            return;
+        }
+        // Validate the URI shape for the selected kind so an obviously
+        // broken value ('s3://' with no bucket) errors at save time
+        // instead of at the first backup run hours later.
+        try {
+            validateUri(k, uri);
+        } catch (IllegalArgumentException bad) {
+            statusLabel.setText("URI rejected: " + bad.getMessage());
             statusLabel.setStyle("-fx-text-fill: #b91c1c; -fx-font-size: 11px;");
             return;
         }
@@ -309,6 +332,22 @@ public final class SinksPane extends BorderPane {
             case AZURE -> new AzureBlobTarget(name, uri, creds);
             case SFTP -> new SftpTarget(name, uri, creds);
         };
+    }
+
+    /** Each cloud sink's URI parser throws IllegalArgumentException on
+     *  malformed input. For LOCAL_FS we only check absolute-path-ness
+     *  cheaply; a deeper validation happens when the runner resolves
+     *  the path at dump time. */
+    private static void validateUri(Kind k, String uri) {
+        switch (k) {
+            case LOCAL_FS -> {
+                if (uri.isBlank()) throw new IllegalArgumentException("empty path");
+            }
+            case S3 -> S3Target.parseBucketUri(uri);
+            case GCS -> GcsTarget.parseBucketUri(uri);
+            case AZURE -> AzureBlobTarget.parseUri(uri);
+            case SFTP -> SftpTarget.parseUri(uri);
+        }
     }
 
     /* ======================== credentials sub-forms ======================== */
@@ -565,9 +604,30 @@ public final class SinksPane extends BorderPane {
         catch (Exception e) { return raw; }
     }
 
+    /** JSON string escape — backslash + quote first (so subsequent
+     *  replacements don't double-escape), then every control char
+     *  0x00–0x1F via a \\uXXXX sequence. Good enough for credential
+     *  values pasted from a password manager. */
     private static String escape(String s) {
-        return s.replace("\\", "\\\\").replace("\"", "\\\"")
-                .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+        if (s == null) return "";
+        StringBuilder out = new StringBuilder(s.length() + 4);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '\\' -> out.append("\\\\");
+                case '"'  -> out.append("\\\"");
+                case '\n' -> out.append("\\n");
+                case '\r' -> out.append("\\r");
+                case '\t' -> out.append("\\t");
+                case '\b' -> out.append("\\b");
+                case '\f' -> out.append("\\f");
+                default -> {
+                    if (c < 0x20) out.append(String.format("\\u%04x", (int) c));
+                    else out.append(c);
+                }
+            }
+        }
+        return out.toString();
     }
 
     private static String nullToEmpty(String s) { return s == null ? "" : s; }

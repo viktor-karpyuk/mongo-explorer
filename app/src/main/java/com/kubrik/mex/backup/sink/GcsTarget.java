@@ -199,6 +199,11 @@ public final class GcsTarget implements StorageTarget {
     @Override public String canonicalRoot() { return bucketUri; }
     @Override public boolean supportsServerSideHash() { return true; }
 
+    @Override
+    public void close() {
+        try { storage.close(); } catch (Exception ignored) {}
+    }
+
     /* ============================ helpers ============================ */
 
     private String resolveKey(String relPath) {
@@ -209,9 +214,10 @@ public final class GcsTarget implements StorageTarget {
 
     /**
      * Parses {@code gs://bucket/optional/prefix} into
-     * {@code (bucket, keyPrefix)} — exposed for unit testing.
+     * {@code (bucket, keyPrefix)}. Public so UI save-time validation
+     * can reject malformed URIs without constructing the GCS client.
      */
-    static Parsed parseBucketUri(String uri) {
+    public static Parsed parseBucketUri(String uri) {
         if (uri == null || uri.isBlank())
             throw new IllegalArgumentException("bucketUri is blank");
         String s = uri.trim();
@@ -228,19 +234,25 @@ public final class GcsTarget implements StorageTarget {
         return new Parsed(bucket, prefix);
     }
 
-    record Parsed(String bucket, String keyPrefix) {}
+    public record Parsed(String bucket, String keyPrefix) {}
 
     private static Storage buildClient(String credentialsJson) {
         StorageOptions.Builder b = StorageOptions.newBuilder();
         if (credentialsJson != null && !credentialsJson.isBlank()) {
+            // Explicit credentials must parse. Falling back to ADC on
+            // a broken service-account JSON would silently pick up the
+            // host's unrelated credentials — an operator who pasted
+            // junk expects an error, not a surprise identity.
             try {
                 GoogleCredentials creds = ServiceAccountCredentials.fromStream(
                         new ByteArrayInputStream(
                                 credentialsJson.getBytes(StandardCharsets.UTF_8)));
                 b.setCredentials(creds);
             } catch (Exception e) {
-                log.warn("GCS credentials JSON parse failed, falling back to ADC: {}",
-                        e.getMessage());
+                throw new IllegalArgumentException(
+                        "GCS credentials JSON could not be parsed as a service-account "
+                        + "key. Paste the full key.json contents, or leave blank to use "
+                        + "Application Default Credentials.", e);
             }
         }
         return b.build().getService();

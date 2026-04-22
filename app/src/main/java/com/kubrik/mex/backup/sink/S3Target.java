@@ -244,6 +244,11 @@ public final class S3Target implements StorageTarget {
     @Override public String canonicalRoot() { return bucketUri; }
     @Override public boolean supportsServerSideHash() { return true; }
 
+    @Override
+    public void close() {
+        try { client.close(); } catch (Exception ignored) {}
+    }
+
     /* ============================= helpers ============================= */
 
     private String resolveKey(String relPath) {
@@ -253,12 +258,14 @@ public final class S3Target implements StorageTarget {
     }
 
     /**
-     * Visible for tests — parses {@code s3://bucket/optional/prefix} into
+     * Parses {@code s3://bucket/optional/prefix} into
      * {@code (bucket, keyPrefix)} where keyPrefix ends with {@code /}
      * (or is empty). Throws {@link IllegalArgumentException} on any
-     * other scheme or a missing bucket name.
+     * other scheme or a missing bucket name. Public so UI save-time
+     * validation can classify a pasted URI without constructing a
+     * real SDK client (and its cost-per-request network round-trip).
      */
-    static Parsed parseBucketUri(String uri) {
+    public static Parsed parseBucketUri(String uri) {
         if (uri == null || uri.isBlank())
             throw new IllegalArgumentException("bucketUri is blank");
         String s = uri.trim();
@@ -275,7 +282,7 @@ public final class S3Target implements StorageTarget {
         return new Parsed(bucket, prefix);
     }
 
-    record Parsed(String bucket, String keyPrefix) {}
+    public record Parsed(String bucket, String keyPrefix) {}
 
     private static S3Client buildClient(String credentialsJson, String region) {
         S3ClientBuilder b = S3Client.builder()

@@ -1,5 +1,43 @@
 # Changelog
 
+## v2.6.1-alpha — Cloud sinks complete
+
+Follow-up to v2.6.0-alpha2 filling in the three backup sinks that were deferred from v2.5 and shipped as stubs in every earlier v2.x. Also lands the Backups → Sinks sub-tab so every sink kind is creatable from the UI; v2.5 only supported sink creation via the `SinkDao` CLI path.
+
+### New sink implementations
+
+- **S3 (v2.6.0-alpha already)** — AWS SDK v2 with URL-connection transport. Credentials: `{accessKeyId, secretAccessKey, sessionToken?}` or blank for the default provider chain (IAM / SSO / env vars).
+- **GCS (Q2.6.1-A)** — google-cloud-storage 2.40.1 with HTTP/JSON transport (gRPC-Netty excluded to keep the runtime image lean). Credentials: full service-account JSON key content, or blank for Application Default Credentials.
+- **Azure Blob (Q2.6.1-B)** — azure-storage-blob 12.27.1. URI accepts `azblob://<account>/<container>/<prefix>` or the full `https://<account>.blob.core.windows.net/<container>/<prefix>` form. Credentials: `{sasToken}` **or** `{accountName, accountKey}`; SAS wins when both are present. AAD/MSAL is out of scope for 2.6.1.
+- **SFTP (Q2.6.1-C)** — maintained JSch fork (`com.github.mwiede:jsch` 0.2.18). URI `sftp://user@host[:port]/path`. Credentials: `{password}` **or** `{privateKey, passphrase?}`; private-key wins when both are present. `ensureParent()` does mkdir-p equivalents so fresh date-templated subdirectories don't break the upload.
+
+### New UI
+
+- **Backups → Sinks sub-tab** (Q2.6.1-D) — list of existing sinks + kind-aware editor form. Test-connection button runs `StorageTarget.testWrite()` with the in-flight form values on a virtual thread and reports latency or a classified error — **without** persisting the sink, so a bad credential paste doesn't leave junk rows behind. Save encrypts credentials via the existing per-install `Crypto` AES key.
+- Focus-switch listener reloads the Policies sink picker when you switch tabs, so a freshly saved sink shows up in the policy editor without a restart.
+
+### Tests + docs
+
+- 34 new unit tests covering URI parsing and credential classifiers for all three cloud sinks (every scheme, every malformed shape, every ambiguous-credentials ordering).
+- `docs/v2/v2.6/smoke-test-cloud-sinks.md` — per-sink smoke checklist for the live round-trip that can't be automated without a real bucket / SFTP endpoint.
+- `docs/v2/v2.6/milestone-v2.6.1.md` — full milestone spec kept for traceability.
+
+### Pre-release review fixes
+
+Deep review ahead of the alpha cut caught real bugs worth folding in rather than patching:
+
+- **Azure Gov Cloud endpoint** — `AzureBlobTarget.parseUri` now preserves the full host suffix from the `https://` form so Gov Cloud (`blob.core.usgovcloudapi.net`) and China Cloud endpoints route correctly. `azblob://` short-form keeps assuming commercial since it doesn't carry the suffix.
+- **GCS silent ADC fallback** — when credentials JSON is set but fails to parse, `GcsTarget` now throws `IllegalArgumentException` instead of falling back to Application Default Credentials. An operator who pasted broken JSON gets a clear error instead of the surprise of picking up the host's unrelated credentials.
+- **SFTP `list()` semantics** — missing-directory failures now propagate as `IOException`, matching S3 / GCS / Azure. Previously the SftpException was swallowed and an empty list returned, masking sink misconfiguration.
+- **`StorageTarget.close()`** — default no-op added to the interface; S3 + GCS sinks override to close their SDK client pools so long-running sessions with many connected sinks don't bloat.
+- **SinksPane** — save-time URI validation via each kind's parser so `s3://` with no bucket fails at save, not on first backup; test-button re-enable moved into a `finally` block so an SDK-init error can't wedge the button; sibling form state cleared on kind-switch; JSON escape strengthened to cover the 0x00–0x1F control range and backspace / formfeed.
+
+### Deferred
+
+- `runtime.modules` audit for AWS / GCS / Azure SDK module requirements on jpackage images — macOS DMG builds cleanly; Windows MSI + Linux DEB still to verify.
+- Azure AAD / managed-identity auth — MSAL is large and uncommon for backup sinks; re-open in v2.6.2 if ops teams ask.
+- SFTP known-hosts verification — tracked as a v2.6.2 polish item.
+
 ## v2.6.0-alpha — Security, Audit & Compliance (preview)
 
 Preview of the v2.6 Security milestone. **Not production-ready** — 72 h soak (Q2.6-K2) and the release screenshot matrix (Q2.6-K3) still outstanding; three of four cloud sinks (GCS / Azure / SFTP) moved to v2.6.1. Wire-up lives behind the Tools → Security menu (`Cmd/Ctrl+Alt+S`); no existing surface changes behaviour.

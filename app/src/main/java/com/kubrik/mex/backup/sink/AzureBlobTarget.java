@@ -208,25 +208,38 @@ public final class AzureBlobTarget implements StorageTarget {
      * Returns {@code (account, container, keyPrefix)} where keyPrefix
      * ends with {@code /} (or is empty).
      */
-    static Parsed parseUri(String uri) {
+    /** Default Azure Blob host suffix — commercial cloud. Gov Cloud
+     *  and China Cloud use different suffixes, which the full
+     *  {@code https://} URI carries explicitly; the {@code azblob://}
+     *  short-form assumes commercial. */
+    public static final String DEFAULT_HOST_SUFFIX = "blob.core.windows.net";
+
+    public static Parsed parseUri(String uri) {
         if (uri == null || uri.isBlank())
             throw new IllegalArgumentException("uri is blank");
         String u = uri.trim();
         String account;
+        String hostSuffix;
         String tail;
         if (u.regionMatches(true, 0, "azblob://", 0, 9)) {
+            // Short-form: assumes commercial cloud. Gov Cloud users
+            // must paste the full https:// URL so parseUri sees the
+            // correct host suffix.
             tail = u.substring(9);
             int slash = tail.indexOf('/');
             if (slash < 0) throw new IllegalArgumentException("azblob:// missing container");
             account = tail.substring(0, slash);
+            hostSuffix = DEFAULT_HOST_SUFFIX;
             tail = tail.substring(slash + 1);
         } else if (u.regionMatches(true, 0, "https://", 0, 8)) {
             tail = u.substring(8);
-            int dot = tail.indexOf('.');
-            if (dot < 0) throw new IllegalArgumentException("https host missing account");
-            account = tail.substring(0, dot);
             int slash = tail.indexOf('/');
             if (slash < 0) throw new IllegalArgumentException("https URL missing container");
+            String host = tail.substring(0, slash);
+            int dot = host.indexOf('.');
+            if (dot < 0) throw new IllegalArgumentException("https host missing account");
+            account = host.substring(0, dot);
+            hostSuffix = host.substring(dot + 1);  // preserves Gov Cloud / China Cloud suffix
             tail = tail.substring(slash + 1);
         } else {
             throw new IllegalArgumentException("uri must start with azblob:// or https://");
@@ -240,14 +253,18 @@ public final class AzureBlobTarget implements StorageTarget {
         String prefix = slash < 0 ? "" : tail.substring(slash + 1);
         while (prefix.startsWith("/")) prefix = prefix.substring(1);
         if (!prefix.isEmpty() && !prefix.endsWith("/")) prefix = prefix + "/";
-        return new Parsed(account, container, prefix);
+        return new Parsed(account, container, prefix, hostSuffix);
     }
 
-    record Parsed(String account, String container, String keyPrefix) {}
+    public record Parsed(String account, String container, String keyPrefix, String hostSuffix) {
+        public Parsed {
+            if (hostSuffix == null || hostSuffix.isBlank()) hostSuffix = DEFAULT_HOST_SUFFIX;
+        }
+    }
 
     private static BlobContainerClient buildClient(Parsed parsed, String credentialsJson) {
-        String endpoint = "https://" + parsed.account()
-                + ".blob.core.windows.net/" + parsed.container();
+        String endpoint = "https://" + parsed.account() + "."
+                + parsed.hostSuffix() + "/" + parsed.container();
         BlobContainerClientBuilder b = new BlobContainerClientBuilder()
                 .endpoint(endpoint);
         if (credentialsJson != null && !credentialsJson.isBlank()) {

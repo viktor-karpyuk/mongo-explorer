@@ -160,18 +160,22 @@ public final class SftpTarget implements StorageTarget {
         try {
             return withSession(channel -> {
                 List<Entry> out = new ArrayList<>();
-                Vector<ChannelSftp.LsEntry> entries;
-                try {
-                    entries = channel.ls(abs);
-                } catch (SftpException se) {
-                    return out;
-                }
+                // channel.ls throws on missing directory — propagate so
+                // callers see an IOException with LIST semantics,
+                // matching S3 / GCS / Azure. Previously a missing
+                // directory returned an empty list silently, which
+                // could mask a backup-sink misconfiguration.
+                Vector<ChannelSftp.LsEntry> entries = channel.ls(abs);
                 for (ChannelSftp.LsEntry e : entries) {
                     String fn = e.getFilename();
                     if (".".equals(fn) || "..".equals(fn)) continue;
                     SftpATTRS a = e.getAttrs();
-                    String rel = relPath == null || relPath.isEmpty()
-                            ? fn : relPath.replaceAll("/$", "") + "/" + fn;
+                    String base = relPath == null ? "" : relPath;
+                    // Strip a trailing slash without engaging the regex
+                    // engine — regex on a user-supplied path is a
+                    // correctness smell (bracket chars, etc.).
+                    if (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+                    String rel = base.isEmpty() ? fn : base + "/" + fn;
                     out.add(new Entry(rel, a.getSize(), a.getMTime() * 1000L));
                 }
                 return out;
@@ -287,11 +291,12 @@ public final class SftpTarget implements StorageTarget {
     /* =========================== URI + creds =========================== */
 
     /**
-     * Visible for tests — parses
-     * {@code sftp://user@host[:port]/absolute/path}. Port defaults
-     * to 22; path defaults to {@code "."} when absent.
+     * Parses {@code sftp://user@host[:port]/absolute/path}. Port
+     * defaults to 22; path defaults to {@code "."} when absent.
+     * Public so UI save-time validation can reject malformed URIs
+     * without opening an SSH session.
      */
-    static Parsed parseUri(String uri) {
+    public static Parsed parseUri(String uri) {
         if (uri == null || uri.isBlank())
             throw new IllegalArgumentException("uri is blank");
         String u = uri.trim();
@@ -323,7 +328,7 @@ public final class SftpTarget implements StorageTarget {
         return new Parsed(user, host, port, path);
     }
 
-    record Parsed(String user, String host, int port, String rootPath) {}
+    public record Parsed(String user, String host, int port, String rootPath) {}
 
     private record Creds(String password, byte[] privateKey, String passphrase) {}
 
