@@ -635,15 +635,33 @@ public class MainView extends BorderPane {
         tabs.getSelectionModel().select(t);
     }
 
+    /** v2.6 — Main.java shares its pre-constructed security DAOs with
+     *  MainView so the app holds a single instance per DAO. Previously
+     *  MainView also lazy-built AuditIndex, which meant two DAOs wrote
+     *  to {@code audit_native_fts} and Main's CertExpiryScheduler +
+     *  MainView's AuditPane shared the SQLite write-lock unnecessarily. */
+    public void injectSecurityDaos(
+            com.kubrik.mex.security.baseline.SecurityBaselineDao baselineDao,
+            com.kubrik.mex.security.drift.DriftAckDao ackDao,
+            com.kubrik.mex.security.cis.CisSuppressionsDao suppressionsDao,
+            com.kubrik.mex.security.audit.AuditIndex audit,
+            com.kubrik.mex.security.EvidenceSigner signer) {
+        this.securityBaselineDao = baselineDao;
+        this.driftAckDao = ackDao;
+        this.cisSuppressionsDao = suppressionsDao;
+        this.auditIndex = audit;
+        this.evidenceSigner = signer;
+    }
+
     private void ensureSecurityDaos() {
         if (securityBaselineDao != null) return;
+        // Fallback path when the injector hasn't been called — keeps
+        // tests + early-boot paths compiling. Production wiring goes
+        // through injectSecurityDaos from Main.java.
         securityBaselineDao = new com.kubrik.mex.security.baseline.SecurityBaselineDao(database);
         driftAckDao = new com.kubrik.mex.security.drift.DriftAckDao(database);
         cisSuppressionsDao = new com.kubrik.mex.security.cis.CisSuppressionsDao(database);
         auditIndex = new com.kubrik.mex.security.audit.AuditIndex(database);
-        // EvidenceSigner mints the HMAC key on first use and stores it
-        // AES-wrapped via Crypto. Constructing a fresh Crypto here is
-        // safe — it just reads the per-install keyfile.
         evidenceSigner = new com.kubrik.mex.security.EvidenceSigner(
                 database, new com.kubrik.mex.core.Crypto());
     }

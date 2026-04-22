@@ -93,8 +93,11 @@ public final class S3Target implements StorageTarget {
     @Override
     public Probe testWrite() {
         long t0 = System.currentTimeMillis();
+        // UUID (not System.nanoTime) so two concurrent probes against
+        // the same bucket + prefix can't collide on the marker key and
+        // falsely pass by reading each other's bytes.
         String marker = keyPrefix + ".mex-testwrite-"
-                + Long.toString(System.nanoTime(), 36);
+                + java.util.UUID.randomUUID();
         byte[] payload = new byte[1024];
         try {
             client.putObject(
@@ -115,6 +118,18 @@ public final class S3Target implements StorageTarget {
 
     /* ============================ writes ============================ */
 
+    /**
+     * Returns a buffered {@link OutputStream}; the PUT fires on
+     * {@link OutputStream#close()}. <b>Callers MUST close the stream</b>
+     * (try-with-resources is the safe idiom) — a leaked stream never
+     * uploads and the upload failure is silent. Use {@link #putBytes}
+     * when the payload is already in memory.
+     *
+     * <p>The buffer is heap-resident, so this method is appropriate for
+     * backup manifest files + small-to-medium bson dumps. Larger
+     * artefacts (&gt; ~100 MB) risk GC pressure; streaming upload with
+     * S3 multipart is a v2.6.1+ item.</p>
+     */
     @Override
     public OutputStream put(String relPath) {
         String key = resolveKey(relPath);
@@ -144,6 +159,15 @@ public final class S3Target implements StorageTarget {
 
     /* ============================ reads ============================ */
 
+    /**
+     * Buffers the full object into memory before returning an
+     * {@link InputStream}. This matches the existing {@link
+     * StorageTarget} contract (callers consume the stream without
+     * positional seek) but means a multi-GB artefact will allocate
+     * multi-GB of heap. The {@link CatalogVerifier} streams individual
+     * backup files (&lt; 100 MB each in practice); multi-GB single-file
+     * restores are a v2.6.1 concern if they arrive.
+     */
     @Override
     public InputStream get(String relPath) throws IOException {
         String key = resolveKey(relPath);

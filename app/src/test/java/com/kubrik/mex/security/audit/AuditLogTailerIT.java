@@ -37,14 +37,18 @@ class AuditLogTailerIT {
         }, 50L)) {
             tailer.start();
 
+            // Race fence: the tailer's worker thread initialises its
+            // offset to the current file size on entry. If the test
+            // appends before that init runs, the offset lands past our
+            // lines and they're skipped. 100 ms is three poll cycles
+            // and leaves room for CI scheduler jitter.
+            Thread.sleep(100);
+
             append(log, "{\"atype\":\"authenticate\",\"ts\":1000,\"users\":[{\"user\":\"dba\",\"db\":\"admin\"}],\"param\":{}}\n");
             append(log, "{\"atype\":\"logout\",\"ts\":2000,\"users\":[{\"user\":\"dba\",\"db\":\"admin\"}],\"param\":{}}\n");
 
-            // Bumped 5 → 15 s after the Q2.6-K1 fuzz tests (running in
-            // the same JVM) allocated multi-MB structures that can delay
-            // virtual-thread scheduling on a busy CI runner.
-            assertTrue(two.await(15, TimeUnit.SECONDS),
-                    "tailer must deliver both appended events within 15 s");
+            assertTrue(two.await(10, TimeUnit.SECONDS),
+                    "tailer must deliver both appended events within 10 s");
         }
 
         assertEquals(2, captured.size());
@@ -64,6 +68,7 @@ class AuditLogTailerIT {
             if ("createUser".equals(e.atype())) afterRotate.countDown();
         }, 50L)) {
             tailer.start();
+            Thread.sleep(100);  // let the worker init its offset
 
             append(log, "{\"atype\":\"authenticate\",\"ts\":1,\"users\":[],\"param\":{}}\n");
             // Rotation: truncate the file and write a fresh entry. Real
@@ -93,6 +98,7 @@ class AuditLogTailerIT {
             one.countDown();
         }, 50L)) {
             tailer.start();
+            Thread.sleep(100);  // let the worker init its offset
 
             append(log, "{not json\n");
             append(log, "\n");                               // blank line

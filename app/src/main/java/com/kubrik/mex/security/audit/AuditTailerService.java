@@ -47,8 +47,14 @@ public final class AuditTailerService implements AutoCloseable {
 
     /** Visible for tests and for the app's CLI / headless entry to poke
      *  one connection manually. Returns true if a tailer started; false
-     *  if the probe found nothing readable. */
-    public boolean startFor(String connectionId) {
+     *  if the probe found nothing readable.
+     *
+     *  <p>Synchronised to serialise the close-old-then-start-new sequence
+     *  against rapid CONNECTED → DISCONNECTED → CONNECTED bursts (user
+     *  flicking the network, flaky cluster, etc.). Without the monitor,
+     *  two onState handlers firing in parallel could leave a stray
+     *  tailer running against the same file handle. */
+    public synchronized boolean startFor(String connectionId) {
         MongoService svc = manager.service(connectionId);
         if (svc == null) return false;
         Path auditPath = probeAuditLogPath(svc);
@@ -66,7 +72,7 @@ public final class AuditTailerService implements AutoCloseable {
         return true;
     }
 
-    public void stopFor(String connectionId) {
+    public synchronized void stopFor(String connectionId) {
         AuditLogTailer tailer = tailers.remove(connectionId);
         if (tailer == null) return;
         try { tailer.close(); }
@@ -142,7 +148,18 @@ public final class AuditTailerService implements AutoCloseable {
         if (destination != null && !destination.equalsIgnoreCase("file")) return null;
         String pathStr = auditLog.getString("path");
         if (pathStr == null || pathStr.isBlank()) return null;
-        Path path = Path.of(pathStr);
+        // Normalise before the readability check so a malicious server
+        // config that injects '../../../etc/passwd' collapses to its
+        // canonical form; Files.isReadable then checks the resolved
+        // file, not the relative traversal path. The server-side config
+        // is technically trusted, but collapsing the path is cheap
+        // defence-in-depth.
+        Path path;
+        try {
+            path = Path.of(pathStr).toAbsolutePath().normalize();
+        } catch (Exception bad) {
+            return null;
+        }
         if (!Files.isReadable(path)) return null;
         return path;
     }

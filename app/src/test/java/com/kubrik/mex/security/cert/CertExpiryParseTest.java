@@ -63,6 +63,25 @@ class CertExpiryParseTest {
         assertTrue(CertExpiryScheduler.parseMembers(null).isEmpty());
     }
 
+    @Test
+    void strips_rsName_prefix_so_host_port_downstream_split_stays_clean() {
+        // MongoDB seed strings sometimes carry the replset name ahead
+        // of the host list: "myRs/h1:27017,h2:27017". Without the
+        // strip, the first entry stayed "myRs/h1:27017" and the
+        // downstream host:port splitter would mis-parse.
+        MongoConnection c = connection("FORM", "myRs/h1:27017, h2:27017");
+        assertEquals(List.of("h1:27017", "h2:27017"),
+                CertExpiryScheduler.parseMembers(c));
+    }
+
+    @Test
+    void bracketed_IPv6_host_survives_because_it_has_no_slash() {
+        // Edge: '[::1]:27017' contains no '/', so the strip is a no-op.
+        MongoConnection c = connection("FORM", "[::1]:27017");
+        assertEquals(List.of("[::1]:27017"),
+                CertExpiryScheduler.parseMembers(c));
+    }
+
     private static MongoConnection connection(String mode, String hosts) {
         return new MongoConnection(
                 "id", "n", mode, "",

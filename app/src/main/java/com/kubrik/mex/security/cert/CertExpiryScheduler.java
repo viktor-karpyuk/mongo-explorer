@@ -143,15 +143,24 @@ public final class CertExpiryScheduler implements AutoCloseable {
 
     static List<String> parseMembers(MongoConnection c) {
         // FORM-mode connections carry a comma-separated host:port list.
-        // URI + DNS-SRV modes defer until Q2.6-K can synthesise the
-        // members from the driver's TopologyDescription.
+        // URI + DNS-SRV modes defer until the CertExpiryScheduler can
+        // synthesise the members from the driver's TopologyDescription
+        // (Q2.6-K wire-up via EventBus.latestTopology).
         if (c == null) return List.of();
         if (!"FORM".equalsIgnoreCase(c.mode())) return List.of();
         if (c.hosts() == null || c.hosts().isBlank()) return List.of();
         List<String> out = new ArrayList<>();
         for (String raw : c.hosts().split(",")) {
             String h = raw.trim();
-            if (!h.isEmpty()) out.add(h);
+            if (h.isEmpty()) continue;
+            // MongoDB seed strings sometimes carry an rsName/ prefix
+            // ("myRs/h1:27017"). Strip it so the downstream host:port
+            // split sees a clean pair instead of "myRs/h1" + 27017.
+            int slash = h.indexOf('/');
+            if (slash >= 0 && slash < h.length() - 1) {
+                h = h.substring(slash + 1);
+            }
+            out.add(h);
         }
         return out;
     }

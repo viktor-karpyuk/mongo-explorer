@@ -89,6 +89,9 @@ public class Main extends Application {
     private KillSwitch killSwitch;
     private AuditJanitor auditJanitor;
     private BackupScheduler backupScheduler;
+    // v2.6 security services — tracked so stop() can close them cleanly.
+    private com.kubrik.mex.security.audit.AuditTailerService auditTailerService;
+    private com.kubrik.mex.security.cert.CertExpiryScheduler certExpiryScheduler;
 
     @Override
     public void start(Stage stage) throws Exception {
@@ -256,27 +259,35 @@ public class Main extends Application {
         // rows into JSON / HTML bundles.
         DrRehearsalReport rehearsalReport = new DrRehearsalReport(opsAuditDao);
 
-        // v2.6 Q2.6-C — audit-log tailer lifecycle. On every CONNECTED
-        // transition the service probes for a readable auditLog.path and
-        // pipes parsed events into the FTS index; the AuditPane reads
-        // the index.
+        // v2.6 — shared security DAOs. Constructed once here so both
+        // Main's background services (audit tailer, cert scheduler) and
+        // MainView's lazy-built Security tab read/write the same
+        // SQLite DAO instances.
         com.kubrik.mex.security.audit.AuditIndex auditIndex =
                 new com.kubrik.mex.security.audit.AuditIndex(db);
-        com.kubrik.mex.security.audit.AuditTailerService auditTailerService =
+        com.kubrik.mex.security.cert.CertCacheDao certCacheDao =
+                new com.kubrik.mex.security.cert.CertCacheDao(db);
+        com.kubrik.mex.security.baseline.SecurityBaselineDao securityBaselineDao =
+                new com.kubrik.mex.security.baseline.SecurityBaselineDao(db);
+        com.kubrik.mex.security.drift.DriftAckDao driftAckDao =
+                new com.kubrik.mex.security.drift.DriftAckDao(db);
+        com.kubrik.mex.security.cis.CisSuppressionsDao cisSuppressionsDao =
+                new com.kubrik.mex.security.cis.CisSuppressionsDao(db);
+        com.kubrik.mex.security.EvidenceSigner evidenceSigner =
+                new com.kubrik.mex.security.EvidenceSigner(db, crypto);
+
+        // v2.6 Q2.6-C — audit-log tailer lifecycle.
+        this.auditTailerService =
                 new com.kubrik.mex.security.audit.AuditTailerService(
                         connectionManager, eventBus, auditIndex);
 
-        // v2.6 Q2.6-E3 — daily cert-expiry sweep. First tick ~30 s after
-        // start so the welcome chip hydrates shortly after the first
-        // connect, then every 24 h.
-        com.kubrik.mex.security.cert.CertCacheDao certCacheDao =
-                new com.kubrik.mex.security.cert.CertCacheDao(db);
-        com.kubrik.mex.security.cert.CertExpiryScheduler certScheduler =
+        // v2.6 Q2.6-E3 — daily cert-expiry sweep.
+        this.certExpiryScheduler =
                 new com.kubrik.mex.security.cert.CertExpiryScheduler(
                         connectionManager, connectionStore,
                         new com.kubrik.mex.security.cert.CertFetcher(),
                         certCacheDao, eventBus, java.time.Clock.systemUTC());
-        certScheduler.start();
+        this.certExpiryScheduler.start();
 
         MainView root = new MainView(connectionManager, connectionStore, historyStore, eventBus,
                 migrationService, monitoringService, db, killOpHandler, rsAdminHandler,
@@ -284,6 +295,8 @@ public class Main extends Application {
                 backupPolicyDao, backupCatalogDao, backupFileDao, sinkDao, catalogVerifier,
                 restoreService, pitrPlanner, rehearsalReport,
                 finalCallerUser, finalCallerHost);
+        root.injectSecurityDaos(securityBaselineDao, driftAckDao,
+                cisSuppressionsDao, auditIndex, evidenceSigner);
 
         // If a previous session left unfinished migrations behind, surface the recovery panel
         // as soon as the UI is up. See docs/mvp-functional-spec.md §4.6.
@@ -359,6 +372,8 @@ public class Main extends Application {
             try { if (recordingService != null) recordingService.close(); } catch (Exception ignored) {}
             try { if (auditJanitor != null) auditJanitor.close(); } catch (Exception ignored) {}
             try { if (backupScheduler != null) backupScheduler.close(); } catch (Exception ignored) {}
+            try { if (auditTailerService != null) auditTailerService.close(); } catch (Exception ignored) {}
+            try { if (certExpiryScheduler != null) certExpiryScheduler.close(); } catch (Exception ignored) {}
             try { if (clusterWiring != null) clusterWiring.close(); } catch (Exception ignored) {}
             try { if (clusterTopologyService != null) clusterTopologyService.close(); } catch (Exception ignored) {}
             try { if (monitoringWiring != null) monitoringWiring.close(); } catch (Exception ignored) {}
