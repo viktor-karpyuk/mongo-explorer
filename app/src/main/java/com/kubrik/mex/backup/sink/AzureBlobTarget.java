@@ -1,36 +1,296 @@
 package com.kubrik.mex.backup.sink;
 
+import com.azure.core.util.BinaryData;
+import com.azure.storage.blob.BlobClient;
+import com.azure.storage.blob.BlobContainerClient;
+import com.azure.storage.blob.BlobContainerClientBuilder;
+import com.azure.storage.blob.models.BlobItem;
+import com.azure.storage.blob.models.BlobStorageException;
+import com.azure.storage.blob.models.ListBlobsOptions;
+import com.azure.storage.common.StorageSharedKeyCredential;
+import org.bson.Document;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
- * v2.5 Q2.5-H (stub) — Azure Blob Storage sink. Scaffolded only; every
- * operation throws {@link CloudSinkUnavailableException}. Real impl lands
- * with v2.5.1 once {@code com.azure:azure-storage-blob} is added.
+ * v2.6.1 Q2.6.1-B — Azure Blob Storage backup sink. Replaces the v2.5
+ * stub; covers SAS-token and account-key auth. AAD / managed-identity
+ * is out of scope for v2.6.1 (needs MSAL and is uncommon for backup
+ * endpoints).
+ *
+ * <p>URI accepts two shapes:
+ * <ul>
+ *   <li><b>Full HTTPS</b> — {@code https://<account>.blob.core.windows.net/<container>[/<prefix>]}</li>
+ *   <li><b>Short scheme</b> — {@code azblob://<account>/<container>[/<prefix>]}</li>
+ * </ul>
+ *
+ * <p>Credentials JSON shape (whichever applies):</p>
+ * <pre>
+ * { "sasToken": "?sv=...&amp;sig=..." }
+ * { "accountName": "…", "accountKey": "…" }
+ * </pre>
+ *
+ * <p>Blank credentials → anonymous (public container) access. The
+ * probe surfaces authorisation failures as {@link Probe#error()}.</p>
  */
 public final class AzureBlobTarget implements StorageTarget {
 
-    private final String name;
-    private final String containerUri;
+    private static final Logger log = LoggerFactory.getLogger(AzureBlobTarget.class);
 
-    public AzureBlobTarget(String name, String containerUri) {
-        this.name = name;
-        this.containerUri = containerUri;
+    private final String name;
+    private final String uri;
+    private final String account;
+    private final String container;
+    private final String keyPrefix;
+    private final BlobContainerClient client;
+
+    public AzureBlobTarget(String name, String uri) { this(name, uri, null); }
+
+    public AzureBlobTarget(String name, String uri, String credentialsJson) {
+        this.name = Objects.requireNonNull(name, "name");
+        this.uri = Objects.requireNonNull(uri, "uri");
+        Parsed parsed = parseUri(uri);
+        this.account = parsed.account();
+        this.container = parsed.container();
+        this.keyPrefix = parsed.keyPrefix();
+        this.client = buildClient(parsed, credentialsJson);
     }
 
     public String name() { return name; }
+    public String account() { return account; }
+    public String container() { return container; }
+    public String keyPrefix() { return keyPrefix; }
 
-    @Override public Probe testWrite() { throw unavailable(); }
-    @Override public OutputStream put(String relPath) { throw unavailable(); }
-    @Override public InputStream  get(String relPath) { throw unavailable(); }
-    @Override public List<Entry>  list(String relPath) { throw unavailable(); }
-    @Override public Entry        stat(String relPath) { throw unavailable(); }
-    @Override public void         delete(String relPath) { throw unavailable(); }
-    @Override public String canonicalRoot() { return containerUri; }
+    /* ============================= probe ============================= */
+
+    @Override
+    public Probe testWrite() {
+        long t0 = System.currentTimeMillis();
+        String key = keyPrefix + ".mex-testwrite-" + java.util.UUID.randomUUID();
+        byte[] payload = new byte[1024];
+        try {
+            BlobClient blob = client.getBlobClient(key);
+            blob.upload(BinaryData.fromBytes(payload), /*overwrite=*/true);
+            blob.downloadContent().toBytes();
+            blob.delete();
+            return new Probe(true, System.currentTimeMillis() - t0, Optional.empty());
+        } catch (Exception e) {
+            return new Probe(false, System.currentTimeMillis() - t0,
+                    Optional.of(e.getClass().getSimpleName() + ": " + e.getMessage()));
+        }
+    }
+
+    /* ============================= writes ============================= */
+
+    @Override
+    public OutputStream put(String relPath) {
+        String key = resolveKey(relPath);
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        return new OutputStream() {
+            private volatile boolean closed = false;
+
+            @Override public void write(int b) { buffer.write(b); }
+            @Override public void write(byte[] b, int off, int len) { buffer.write(b, off, len); }
+
+            @Override
+            public void close() throws IOException {
+                if (closed) return;
+                closed = true;
+                try {
+                    client.getBlobClient(key).upload(
+                            BinaryData.fromBytes(buffer.toByteArray()),
+                            /*overwrite=*/true);
+                } catch (BlobStorageException e) {
+                    throw new IOException("Azure PUT " + key + " failed: "
+                            + e.getMessage(), e);
+                }
+            }
+        };
+    }
+
+    /* ============================== reads ============================== */
+
+    @Override
+    public InputStream get(String relPath) throws IOException {
+        String key = resolveKey(relPath);
+        try {
+            return new ByteArrayInputStream(
+                    client.getBlobClient(key).downloadContent().toBytes());
+        } catch (BlobStorageException e) {
+            throw new IOException("Azure GET " + key + " failed: "
+                    + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public List<Entry> list(String relPath) throws IOException {
+        String prefix = resolveKey(relPath);
+        if (!prefix.isEmpty() && !prefix.endsWith("/")) prefix = prefix + "/";
+        try {
+            List<Entry> out = new ArrayList<>();
+            for (BlobItem item : client.listBlobs(
+                    new ListBlobsOptions().setPrefix(prefix), null)) {
+                String rel = item.getName();
+                if (!keyPrefix.isEmpty() && rel.startsWith(keyPrefix)) {
+                    rel = rel.substring(keyPrefix.length());
+                }
+                long size = item.getProperties() == null
+                        || item.getProperties().getContentLength() == null
+                        ? 0L : item.getProperties().getContentLength();
+                OffsetDateTime mod = item.getProperties() == null ? null
+                        : item.getProperties().getLastModified();
+                long mtime = mod == null ? 0L : mod.toInstant().toEpochMilli();
+                out.add(new Entry(rel, size, mtime));
+            }
+            return out;
+        } catch (BlobStorageException e) {
+            throw new IOException("Azure LIST " + prefix + " failed: "
+                    + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public Entry stat(String relPath) throws IOException {
+        String key = resolveKey(relPath);
+        try {
+            var props = client.getBlobClient(key).getProperties();
+            String rel = key;
+            if (!keyPrefix.isEmpty() && rel.startsWith(keyPrefix)) {
+                rel = rel.substring(keyPrefix.length());
+            }
+            long size = props.getBlobSize();
+            long mtime = props.getLastModified() == null ? 0L
+                    : props.getLastModified().toInstant().toEpochMilli();
+            return new Entry(rel, size, mtime);
+        } catch (BlobStorageException e) {
+            throw new IOException("Azure HEAD " + key + " failed: "
+                    + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public void delete(String relPath) throws IOException {
+        String key = resolveKey(relPath);
+        try {
+            client.getBlobClient(key).delete();
+        } catch (BlobStorageException e) {
+            throw new IOException("Azure DELETE " + key + " failed: "
+                    + e.getMessage(), e);
+        }
+    }
+
+    @Override public String canonicalRoot() { return uri; }
     @Override public boolean supportsServerSideHash() { return true; }
 
-    private static CloudSinkUnavailableException unavailable() {
-        return new CloudSinkUnavailableException("Azure");
+    /* ============================ helpers ============================ */
+
+    private String resolveKey(String relPath) {
+        String rel = relPath == null ? "" : relPath;
+        while (rel.startsWith("/")) rel = rel.substring(1);
+        return keyPrefix + rel;
+    }
+
+    /**
+     * Visible for tests — parses either
+     * {@code azblob://account/container/prefix} or
+     * {@code https://account.blob.core.windows.net/container/prefix}.
+     * Returns {@code (account, container, keyPrefix)} where keyPrefix
+     * ends with {@code /} (or is empty).
+     */
+    static Parsed parseUri(String uri) {
+        if (uri == null || uri.isBlank())
+            throw new IllegalArgumentException("uri is blank");
+        String u = uri.trim();
+        String account;
+        String tail;
+        if (u.regionMatches(true, 0, "azblob://", 0, 9)) {
+            tail = u.substring(9);
+            int slash = tail.indexOf('/');
+            if (slash < 0) throw new IllegalArgumentException("azblob:// missing container");
+            account = tail.substring(0, slash);
+            tail = tail.substring(slash + 1);
+        } else if (u.regionMatches(true, 0, "https://", 0, 8)) {
+            tail = u.substring(8);
+            int dot = tail.indexOf('.');
+            if (dot < 0) throw new IllegalArgumentException("https host missing account");
+            account = tail.substring(0, dot);
+            int slash = tail.indexOf('/');
+            if (slash < 0) throw new IllegalArgumentException("https URL missing container");
+            tail = tail.substring(slash + 1);
+        } else {
+            throw new IllegalArgumentException("uri must start with azblob:// or https://");
+        }
+        if (account == null || account.isBlank())
+            throw new IllegalArgumentException("account is blank");
+        while (tail.startsWith("/")) tail = tail.substring(1);
+        if (tail.isEmpty()) throw new IllegalArgumentException("container is missing");
+        int slash = tail.indexOf('/');
+        String container = slash < 0 ? tail : tail.substring(0, slash);
+        String prefix = slash < 0 ? "" : tail.substring(slash + 1);
+        while (prefix.startsWith("/")) prefix = prefix.substring(1);
+        if (!prefix.isEmpty() && !prefix.endsWith("/")) prefix = prefix + "/";
+        return new Parsed(account, container, prefix);
+    }
+
+    record Parsed(String account, String container, String keyPrefix) {}
+
+    private static BlobContainerClient buildClient(Parsed parsed, String credentialsJson) {
+        String endpoint = "https://" + parsed.account()
+                + ".blob.core.windows.net/" + parsed.container();
+        BlobContainerClientBuilder b = new BlobContainerClientBuilder()
+                .endpoint(endpoint);
+        if (credentialsJson != null && !credentialsJson.isBlank()) {
+            try {
+                Document d = Document.parse(credentialsJson);
+                String sas = d.getString("sasToken");
+                String accountKey = d.getString("accountKey");
+                if (sas != null && !sas.isBlank()) {
+                    b.sasToken(sas.startsWith("?") ? sas.substring(1) : sas);
+                } else if (accountKey != null && !accountKey.isBlank()) {
+                    String n = d.getString("accountName");
+                    if (n == null || n.isBlank()) n = parsed.account();
+                    b.credential(new StorageSharedKeyCredential(n, accountKey));
+                }
+            } catch (Exception e) {
+                log.warn("Azure credentials JSON parse failed, falling back to anonymous: {}",
+                        e.getMessage());
+            }
+        }
+        return b.buildClient();
+    }
+
+    public void putBytes(String relPath, byte[] payload) throws IOException {
+        try (OutputStream out = put(relPath)) {
+            out.write(payload == null ? new byte[0] : payload);
+        }
+    }
+
+    /** Classifier for tests + the SinkEditor form — tells callers
+     *  which credential shape was parsed. */
+    public enum AuthKind { SAS, ACCOUNT_KEY, ANONYMOUS, INVALID }
+
+    public static AuthKind classifyCredentials(String credentialsJson) {
+        if (credentialsJson == null || credentialsJson.isBlank()) return AuthKind.ANONYMOUS;
+        try {
+            Document d = Document.parse(credentialsJson);
+            String sas = d.getString("sasToken");
+            String accountKey = d.getString("accountKey");
+            if (sas != null && !sas.isBlank()) return AuthKind.SAS;
+            if (accountKey != null && !accountKey.isBlank()) return AuthKind.ACCOUNT_KEY;
+            return AuthKind.INVALID;
+        } catch (Exception e) {
+            return AuthKind.INVALID;
+        }
     }
 }

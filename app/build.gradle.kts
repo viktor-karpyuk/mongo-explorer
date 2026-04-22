@@ -60,6 +60,11 @@ dependencies {
         exclude(group = "io.grpc", module = "grpc-netty-shaded")
     }
 
+    // v2.6.1 Q2.6.1-B — Azure Blob Storage backup sink. v2.6.1 accepts
+    // SAS token or account-key auth; AAD is out of scope so the
+    // azure-identity / MSAL4J tree is excluded.
+    implementation("com.azure:azure-storage-blob:12.27.1")
+
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     testImplementation("org.testcontainers:mongodb:1.20.1")
     testImplementation("org.testcontainers:junit-jupiter:1.20.1")
