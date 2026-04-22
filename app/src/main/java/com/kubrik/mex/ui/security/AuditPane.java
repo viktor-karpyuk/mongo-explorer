@@ -50,7 +50,7 @@ public final class AuditPane extends BorderPane {
     private String connectionId;
 
     public AuditPane() {
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
 
         setTop(buildTopBar());

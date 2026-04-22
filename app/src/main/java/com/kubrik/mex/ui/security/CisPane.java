@@ -82,7 +82,7 @@ public final class CisPane extends BorderPane {
     private String capturedBy = "";
 
     public CisPane() {
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
 
         setTop(buildTopBar());
@@ -151,7 +151,7 @@ public final class CisPane extends BorderPane {
     }
 
     private Region buildScorecard() {
-        scorecard.setStyle("-fx-text-fill: #374151; -fx-font-size: 12px; -fx-padding: 10 0 0 0;");
+        scorecard.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 12px; -fx-padding: 10 0 0 0;");
         return scorecard;
     }
 
@@ -353,7 +353,7 @@ public final class CisPane extends BorderPane {
                     case CRITICAL -> "-fx-text-fill: #991b1b; -fx-font-weight: 700;";
                     case HIGH -> "-fx-text-fill: #b45309; -fx-font-weight: 700;";
                     case MEDIUM -> "-fx-text-fill: #92400e;";
-                    case LOW, INFO -> "-fx-text-fill: #4b5563;";
+                    case LOW, INFO -> "-fx-text-fill: -color-fg-subtle;";
                 });
             }
         });
@@ -377,7 +377,7 @@ public final class CisPane extends BorderPane {
                     case "PASS" -> "-fx-text-fill: #166534; -fx-font-weight: 700;";
                     case "FAIL" -> "-fx-text-fill: #991b1b; -fx-font-weight: 700;";
                     case "SUPPRESSED" -> "-fx-text-fill: #92400e; -fx-font-style: italic;";
-                    default -> "-fx-text-fill: #4b5563;";
+                    default -> "-fx-text-fill: -color-fg-subtle;";
                 });
             }
         });

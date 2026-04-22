@@ -75,7 +75,7 @@ public final class SecurityTab extends BorderPane {
                         CisSuppressionsDao suppressionsDao,
                         AuditIndex auditIndex,
                         EvidenceSigner signer) {
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
 
         UsersRolesFetcher fetcher = new UsersRolesFetcher();
         AuthBackendProbe authProbe = new AuthBackendProbe();

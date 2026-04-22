@@ -45,7 +45,7 @@ public final class EncryptionPane extends BorderPane {
     private Supplier<List<EncryptionStatus>> loader = List::of;
 
     public EncryptionPane() {
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
 
         setTop(buildTopBar());

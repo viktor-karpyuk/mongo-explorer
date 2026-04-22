@@ -82,7 +82,7 @@ public final class DriftPane extends BorderPane {
     private Supplier<UsersRolesFetcher.Snapshot> liveSnapshot = () -> null;
 
     public DriftPane() {
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
 
         setTop(buildTopBar());

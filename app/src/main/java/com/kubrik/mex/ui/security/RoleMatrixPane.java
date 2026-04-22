@@ -67,7 +67,7 @@ public final class RoleMatrixPane extends BorderPane {
     private Runnable onCaptureBaseline = () -> {};
 
     public RoleMatrixPane() {
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
 
         setTop(buildFilterBar());
@@ -138,7 +138,7 @@ public final class RoleMatrixPane extends BorderPane {
         Region left = buildUsersTable();
         detailScroll.setFitToWidth(true);
         detailBox.setPadding(new Insets(14));
-        detailBox.setStyle("-fx-background-color: #fafafa;");
+        detailBox.setStyle("-fx-background-color: -color-bg-subtle;");
 
         SplitPane split = new SplitPane(left, detailScroll);
         split.setDividerPositions(0.48);
@@ -168,7 +168,7 @@ public final class RoleMatrixPane extends BorderPane {
     }
 
     private Region buildFooter() {
-        statusLabel.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        statusLabel.setStyle("-fx-text-fill: -color-fg-subtle; -fx-font-size: 11px;");
         HBox foot = new HBox(statusLabel);
         foot.setPadding(new Insets(8, 0, 0, 0));
         return foot;
@@ -226,7 +226,7 @@ public final class RoleMatrixPane extends BorderPane {
         title.setStyle("-fx-font-size: 15px; -fx-font-weight: 700;");
         Label sub = new Label(u.roleBindings().size() + " direct roles · "
                 + u.inheritedPrivileges().size() + " effective privileges");
-        sub.setStyle("-fx-text-fill: #4b5563; -fx-font-size: 11px;");
+        sub.setStyle("-fx-text-fill: -color-fg-subtle; -fx-font-size: 11px;");
 
         detailBox.getChildren().addAll(title, sub, heading("Effective roles"),
                 renderRoleChips(model.effectiveRoles(u)),
@@ -279,7 +279,7 @@ public final class RoleMatrixPane extends BorderPane {
         for (var r : u.authenticationRestrictions()) {
             Label l = new Label("clientSource: " + r.clientSource()
                     + "  ·  serverAddress: " + r.serverAddress());
-            l.setStyle("-fx-text-fill: #374151; -fx-font-size: 11px;");
+            l.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
             box.getChildren().add(l);
         }
         return box;
@@ -289,13 +289,13 @@ public final class RoleMatrixPane extends BorderPane {
 
     private static Label heading(String text) {
         Label l = new Label(text);
-        l.setStyle("-fx-font-size: 12px; -fx-font-weight: 700; -fx-text-fill: #374151;");
+        l.setStyle("-fx-font-size: 12px; -fx-font-weight: 700; -fx-text-fill: -color-fg-muted;");
         return l;
     }
 
     private static Label small(String text) {
         Label l = new Label(text);
-        l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        l.setStyle("-fx-text-fill: -color-fg-subtle; -fx-font-size: 11px;");
         return l;
     }
 

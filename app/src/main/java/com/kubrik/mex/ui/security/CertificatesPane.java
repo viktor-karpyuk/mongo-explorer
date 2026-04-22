@@ -53,7 +53,7 @@ public final class CertificatesPane extends BorderPane {
      *  deterministic when the pane is smoke-tested against a fixture. */
     CertificatesPane(Clock clock) {
         this.clock = clock == null ? Clock.systemUTC() : clock;
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
 
         setTop(buildTopBar());

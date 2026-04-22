@@ -41,7 +41,7 @@ public final class AuthBackendPane extends BorderPane {
     private Supplier<AuthBackendProbe.Snapshot> loader = () -> null;
 
     public AuthBackendPane() {
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
 
         setTop(buildTopBar());
@@ -89,7 +89,7 @@ public final class AuthBackendPane extends BorderPane {
                 + "Click a row to inspect the config fields in the side pane.");
 
         detail.setPadding(new Insets(12));
-        detail.setStyle("-fx-background-color: #fafafa;");
+        detail.setStyle("-fx-background-color: -color-bg-subtle;");
         detail.getChildren().setAll(SecurityPaneHelpers.small(
                 "Select a mechanism above to see its config."));
 
