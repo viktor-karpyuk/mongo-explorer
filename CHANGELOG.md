@@ -1,16 +1,97 @@
 # Changelog
 
-## v2.7.0-alpha — Maintenance & Change Management (in progress)
+## v2.7.0-alpha — Maintenance & Change Management
 
 Last leg of the v2.4–v2.7 production-DBA roadmap — wizards for the day-two operations a DBA does after the cluster is up: schema-validator edits, rolling index builds, `rs.reconfig`, compact / resync, `setParameter` tuning, mongod upgrade planning, and config-drift tracking. Every destructive action is gated by a two-person approval checkpoint (solo-mode opt-in, in-tool approval dialog, or pre-signed JWS token) and emits a rollback plan attached to its `ops_audit` row.
 
-### Q2.7-A — Approval service + rollback plan scaffolding (this commit)
+**Scope of this alpha:** Every workstream's *headless kernel* (models, runners, preflights, DAOs, renderers) is landed and unit-tested. Full JavaFX wizard UIs are stubbed (one placeholder sub-tab per workstream) and will fill in post-alpha as each UI story lands. Live-cluster IT tests for dispatch paths (`replSetReconfig`, `createIndexes`, `compact`, `collMod`) are tracked separately under `TEST-*` and require the testcontainers rig.
 
-- **Schema migrations (A1)** — five new tables: `config_snapshots`, `approvals` (with expiry), `rollback_plans` (linked to v2.4 `ops_audit`), `maintenance_runbooks`, `param_tuning_proposals`. All additive; the tab itself is gated by the `maintenance.enabled` flag so downgrades leave the data quiescent.
-- **ApprovalService (A2)** — three modes wired end-to-end: `SOLO` (one-shot insert as APPROVED, per-connection opt-in), `TWO_PERSON` (PENDING → APPROVED via a reviewer name; self-approval refused; same-row re-approval refused), and `TOKEN` (JWS payload carries action-uuid + action-name + payload-hash + expiry; a payload swap or action-name swap fails verify). Expiry sweep flips overdue PENDING rows to EXPIRED; consumption is one-way from APPROVED to CONSUMED.
-- **JwsSigner (A2)** — minimal HS256 compact-serialization signer piggy-backing on the v2.6 `EvidenceSigner` key. Fixed `{"alg":"HS256","typ":"JWT"}` header forecloses the "strip signature, set alg=none" attack; the tiny flat-JSON codec keeps the signing path dependency-free so there's no jose4j in the jpackage image.
-- **RollbackPlanWriter (A3)** — persists plans keyed to an existing `ops_audit` row (pre-check throws `IllegalStateException` rather than orphan a plan). Plans are write-once; `markApplied` records replay outcome without rewriting the plan JSON so historical rollback intent stays recoverable even after a partial replay.
-- **Tests** — 24 new: `ApprovalServiceTest` (13 — each mode, tamper, replay-swap, self-approval, expiry, consumption idempotency), `JwsSignerTest` (4 — round-trip, tamper, malformed, alg=none foot-gun), `RollbackPlanWriterTest` (5 — round-trip, missing audit guard, markApplied idempotency, notes accumulation, multi-plan ordering), plus `ApprovalDao` + `RollbackPlanDao` covered by the service tests above.
+### Package layout (new)
+
+All v2.7 code lives under `com.kubrik.mex.maint.*`:
+- `model/` — every input / output record (Approval, RollbackPlan, ReconfigSpec, ValidatorSpec, IndexBuildSpec, CompactSpec, ClusterShape, ParamProposal, UpgradePlan, ConfigSnapshot).
+- `approval/`, `rollback/`, `reconfig/`, `schema/`, `index/`, `compact/`, `param/`, `upgrade/`, `drift/` — one package per workstream.
+- `events/` — `MaintenanceEvent`, `ApprovalEvent`, `ConfigDriftEvent` event-bus payloads.
+- `ui/` — `MaintenanceTab` (sub-tab host; wizard UIs pending).
+
+### Q2.7-A — Approval service + rollback plan scaffolding
+
+- **Schema migrations** — five new tables: `config_snapshots`, `approvals` (with expiry), `rollback_plans` (linked to v2.4 `ops_audit`), `maintenance_runbooks`, `param_tuning_proposals`. All additive; the tab itself is gated by the `maintenance.enabled` flag so downgrades leave the data quiescent.
+- **ApprovalService** — three modes wired end-to-end: `SOLO` (one-shot insert as APPROVED, per-connection opt-in), `TWO_PERSON` (PENDING → APPROVED via a reviewer name; self-approval refused; same-row re-approval refused), and `TOKEN` (JWS payload carries action-uuid + action-name + payload-hash + expiry; a payload swap or action-name swap fails verify). Expiry sweep flips overdue PENDING rows to EXPIRED; consumption is one-way from APPROVED to CONSUMED.
+- **JwsSigner** — minimal HS256 compact-serialization signer piggy-backing on the v2.6 `EvidenceSigner` key. Fixed `{"alg":"HS256","typ":"JWT"}` header forecloses the "strip signature, set alg=none" attack; the tiny flat-JSON codec keeps the signing path dependency-free so there's no jose4j in the jpackage image.
+- **RollbackPlanWriter** — persists plans keyed to an existing `ops_audit` row (pre-check throws `IllegalStateException` rather than orphan a plan). Plans are write-once; `markApplied` records replay outcome without rewriting the plan JSON so historical rollback intent stays recoverable even after a partial replay.
+
+### Q2.7-D — Reconfig wizard
+
+- **ReconfigSpec** — sealed `Change` hierarchy covers every RCFG-1 kind (AddMember, RemoveMember, ChangePriority, ChangeVotes, ToggleHidden, ToggleArbiter, RenameMember, WholeConfig). `Member` record carries the fields preflight reasons about (priority, votes, hidden, arbiterOnly, host).
+- **ReconfigPreflight** — pure-function quorum math. Blocking findings: `MAX_MEMBERS` / `MAX_VOTES` / `NO_VOTERS` / `NO_ELECTABLE` / `NO_MAJORITY` / `DUP_ID` / `DUP_HOST`. Warn findings: `ALL_PRIO_ZERO`, `ARBITER_PRESENT`. Majority check is conservative: `ceil((n+1)/2)` electable members required in the proposed config.
+- **ReconfigSerializer** — typed `Request` → BSON `replSetReconfig` body with default-valued member flags omitted for audit clarity; inverse parse of `replSetGetConfig` reply for rollback capture.
+- **ReconfigRunner** — dispatch with `writeConcern: majority`, 60 s watchdog (RCFG-5), sealed `Outcome` hierarchy (`Ok` / `Failed` / `TimedOut`).
+- **PostChangeVerifier** — polls `replSetGetStatus` until a majority of reachable members bumps `configVersion` (RCFG-6), with a `StatusFetcher` seam so the 120 s wait loop is unit-testable.
+
+### Q2.7-B — Schema validator editor + preview + rollout
+
+- **ValidatorSpec** — `Current` (loaded state) + `Rollout` (proposed change) + `PreviewResult` with `FailedDoc` offenders. `Level` enum (OFF / MODERATE / STRICT), `Action` enum (WARN / ERROR).
+- **StarterTemplates** — the four SCHV-8 seeds: empty, required-id, enum-status, typed-timestamps. Users pick and edit; no from-scratch authoring (NG-2.7-5).
+- **ValidatorFetcher** — reads current validator + level + action via `listCollections`.
+- **ValidatorPreviewService** — server-side `$sample` + `$nor` + `$jsonSchema` pipeline; up to 10 offenders + failed count within the sample. Default 500 docs per SCHV-3.
+- **ValidatorRolloutRunner** — `collMod` dispatcher + rollback-command builder (so `RollbackPlanWriter` has the prior-state command ready).
+
+### Q2.7-C — Rolling index builder
+
+- **IndexBuildSpec** — every IDX-BLD-2 option captured (TTL, partial, collation, weights, storage engine); optional fields are true `Optional` so BSON serialization omits them.
+- **RollingIndexPlanner** — pure-function member ordering. Secondaries by priority ascending, arbiters skipped, primary last with `isPrimary=true` so the runner knows to step down first.
+- **RollingIndexRunner** — per-member `createIndexes` with `commitQuorum: 0` (node-local, no 2-phase commit). `DispatchContext` seam decouples from `ConnectionManager`. Abort path drops on completed members + `killOp`s the active build (IDX-BLD-6).
+- **BuildProgressTailer** — parses `$currentOp` `IXBUILD` entries — total / done / elapsed μs → fraction for a UI progress bar.
+
+### Q2.7-E — Compact + resync
+
+- **CompactSpec** — `Compact` (target host + collections + takeOutOfRotation + force) and `Resync` (target host + optional wait) records.
+- **CompactRunner** — per-collection outcome list. Primary refusal both client-side (`wouldTargetPrimary`) and server-side (`hello` probe before dispatch).
+- **ResyncRunner** — sealed `Outcome` (`Ok` / `PrimaryRefused` / `Failed`); doesn't block on catch-up.
+
+### Q2.7-F — Parameter tuning
+
+- **ClusterShape** — storage engine + RAM + CPU + doc count + workload mix + server version.
+- **ParamProposal** — with `Severity` (INFO / CONSIDER / ACT) + `isActionable()` for UI chip state.
+- **ParamCatalogue** — 5 curated entries from PARAM-2: `wiredTigerConcurrentReadTransactions`, `wiredTigerConcurrentWriteTransactions`, `ttlMonitorSleepSecs`, `notablescan`, `internalQueryPlanEvaluationMaxResults`. Each carries a rationale string, `appliesTo` predicate, `recommend` function, optional numeric range.
+- **Recommender** — classifier: ACT when delta ≥ 25% of allowed range, CONSIDER otherwise, INFO when already matching.
+- **ParamRunner** — `getParameter` / `setParameter` driver dispatch; `Optional<Object>` on get so a version-skewed name surfaces as empty not an exception.
+- **ParamProposalDao** — persistence for the proposals pane — insert, listOpenForConnection, transition to ACCEPTED / REJECTED / SUPERSEDED.
+
+### Q2.7-G — Upgrade planner + runbook renderer
+
+- **UpgradePlan** — `Finding` (kind + severity + remediation), `Step` (ordered kind list), `Version` (parse handles patch + -rc suffixes).
+- **UpgradeRules** — versioned pack covering the 4.4→5.0→6.0→7.0 hops. Rules: version-gap guard (blocks skipping majors + downgrades), deprecated-operators against profile data, removed parameters against `getParameter` snapshot, FCV lower/raise info cards.
+- **UpgradeScanner** — orchestrates the rules + emits the ordered step list a runbook needs (pre-check, backup, FCV-lower, rolling secondary swaps, step-down + primary swap, FCV-raise, post-check).
+- **RunbookRenderer** — hand-rolled Markdown + HTML; HTML escapes user content so a malicious rule author can't inject script tags. Dependency-free — Mustache-java would add 300 KB for a curated template that never exceeds a few kB.
+
+### Q2.7-H — Config-drift subsystem
+
+- **ConfigSnapshot** — `Kind` enum (PARAMETERS / CMDLINE / FCV / SHARDING), SHA-256 keyed off canonical JSON so equivalent snapshots collapse in the v2.6 drift engine.
+- **ConfigSnapshotService.captureAll** — walks `getParameter(*)`, `getCmdLineOpts`, FCV, `balancerStatus` (sharded-only). Redacts any key containing `password` / `secret` / `token` / `key` substrings so `keyFile` paths + SAS tokens never land in the plaintext snapshot.
+- **canonicalize()** — `TreeMap`-deep key sort so two capture runs on unchanged config produce byte-identical JSON and byte-identical SHA-256 — the property the drift engine relies on.
+
+### Events + UI stub
+
+- **`MaintenanceEvent`** — per-wizard lifecycle (STARTED / APPROVED / RUNNING / SUCCEEDED / FAILED / ROLLED_BACK).
+- **`ApprovalEvent`** — approval state transitions; drives the toolbar queue chip.
+- **`ConfigDriftEvent`** — emitted by the snapshot scheduler when a new snapshot's hash differs from the previous for the same (connection, host, kind) triple.
+- **`MaintenanceTab`** — sub-tab host. Each workstream has a placeholder pane describing what it does; the full wizard UIs land incrementally post-alpha.
+
+### Tests
+
+89 new unit tests across the workstreams (sinks still green): ApprovalService (13) · JwsSigner (4) · RollbackPlanWriter (5) · ReconfigPreflight (18) · ReconfigSerializer (4) · PostChangeVerifier (3) · ValidatorRolloutRunner (2) · ValidatorFetcher (2) · StarterTemplates (3) · RollingIndexPlanner (4) · IndexBuildSpec (3) · CompactRunner (3) · Recommender (7) · ParamProposalDao (3) · UpgradeScanner (8) · RunbookRenderer (3) · ConfigSnapshotService (7).
+
+### Deferred to post-alpha
+
+- Full JavaFX wizards (approvals queue, schema editor with Monaco-style JSON editor, reconfig preview dialog, rolling index live-progress strip, compact / resync wizard, parameter tuning pane, upgrade runbook export, config-drift pane). Placeholder panes ship so `maintenance.enabled` can flip safely.
+- Live-cluster integration tests (technical-spec §13.2) — `ReconfigWizardIT`, `RollingIndexIT`, `CompactWizardIT`, `ValidatorPreviewIT`, `UpgradeScanIT`, `ConfigDriftIT` — pending the testcontainers 3-node rig.
+- Chaos suite (`ChaosReconfigFuzz`) + JWS tamper fuzz + runbook Markdown fuzz.
+- 72 h soak with daily parameter proposals + scheduled drift monitor + weekly rolling index build.
+- A11y + dark-mode passes on every pane (Q2.7-I).
+- `RollbackReplayService.replay()` — opens the matching wizard pre-filled with the inverse spec.
+- `RollingRestartOrchestrator` — wraps the upgrade planner's steps into a live rolling-restart runner.
 
 ## v2.6.1-alpha — Cloud sinks complete
 
