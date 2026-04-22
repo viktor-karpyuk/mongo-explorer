@@ -65,6 +65,11 @@ dependencies {
     // azure-identity / MSAL4J tree is excluded.
     implementation("com.azure:azure-storage-blob:12.27.1")
 
+    // v2.6.1 Q2.6.1-C — SFTP backup sink. The maintained JSch fork
+    // (mwiede/jsch); the original jcraft variant is frozen and
+    // doesn't support modern host-key algorithms.
+    implementation("com.github.mwiede:jsch:0.2.18")
+
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     testImplementation("org.testcontainers:mongodb:1.20.1")
     testImplementation("org.testcontainers:junit-jupiter:1.20.1")
