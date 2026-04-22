@@ -43,6 +43,15 @@ dependencies {
     // v2.0.0 / UX-5 — headless CLI (mongo-explorer-migrate).
     implementation("info.picocli:picocli:4.7.6")
 
+    // v2.6 Q2.6-L1 — AWS S3 backup sink. Url-connection transport is
+    // used instead of Netty to keep the app-image lean; S3 upload is
+    // not a hot path so connection-per-request overhead is fine.
+    implementation("software.amazon.awssdk:s3:2.26.12") {
+        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+        exclude(group = "software.amazon.awssdk", module = "apache-client")
+    }
+    implementation("software.amazon.awssdk:url-connection-client:2.26.12")
+
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     testImplementation("org.testcontainers:mongodb:1.20.1")
     testImplementation("org.testcontainers:junit-jupiter:1.20.1")
