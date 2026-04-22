@@ -40,8 +40,11 @@ class AuditLogTailerIT {
             append(log, "{\"atype\":\"authenticate\",\"ts\":1000,\"users\":[{\"user\":\"dba\",\"db\":\"admin\"}],\"param\":{}}\n");
             append(log, "{\"atype\":\"logout\",\"ts\":2000,\"users\":[{\"user\":\"dba\",\"db\":\"admin\"}],\"param\":{}}\n");
 
-            assertTrue(two.await(5, TimeUnit.SECONDS),
-                    "tailer must deliver both appended events within 5 s");
+            // Bumped 5 → 15 s after the Q2.6-K1 fuzz tests (running in
+            // the same JVM) allocated multi-MB structures that can delay
+            // virtual-thread scheduling on a busy CI runner.
+            assertTrue(two.await(15, TimeUnit.SECONDS),
+                    "tailer must deliver both appended events within 15 s");
         }
 
         assertEquals(2, captured.size());

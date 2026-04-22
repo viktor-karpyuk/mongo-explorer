@@ -1,7 +1,6 @@
 package com.kubrik.mex.security.audit;
 
 import org.bson.Document;
-import org.bson.json.JsonParseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,13 +29,26 @@ public final class AuditEventParser {
 
     public static AuditEvent parse(String line) {
         if (line == null || line.isBlank()) return null;
-        Document d;
         try {
-            d = Document.parse(line);
-        } catch (JsonParseException e) {
-            log.debug("audit line rejected: {}", e.getMessage());
+            return parseOrThrow(line);
+        } catch (StackOverflowError soe) {
+            // Q2.6-K1 fuzz caught this: Document.parse recurses without a
+            // depth cap, so a pathological ~10k-deep nested payload blows
+            // the stack. Treat the same as any malformed line.
+            log.debug("audit line rejected: deeply-nested JSON caused StackOverflowError");
+            return null;
+        } catch (Throwable t) {
+            // Catches JsonParseException (lexer), BsonInvalidOperationException
+            // (arrays / scalars at the top level), and anything else the
+            // BSON driver can throw on malformed input. A compromised or
+            // garbled audit log line must not kill the tailer thread.
+            log.debug("audit line rejected: {}", t.getMessage());
             return null;
         }
+    }
+
+    private static AuditEvent parseOrThrow(String line) {
+        Document d = Document.parse(line);
         String atype = d.getString("atype");
         if (atype == null) return null;
 
