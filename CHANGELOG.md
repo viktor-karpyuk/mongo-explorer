@@ -2,19 +2,26 @@
 
 ## v2.6.0-alpha — Security, Audit & Compliance (preview)
 
-Preview of the v2.6 Security milestone. **Not production-ready** — UI polish (Q2.6-J), hardening + soak (Q2.6-K), and cloud-sink impls (Q2.6-L1-L4) are still outstanding. Wire-up lives behind the Tools → Security menu (`Cmd/Ctrl+Alt+S`); no existing surface changes behaviour.
+Preview of the v2.6 Security milestone. **Not production-ready** — 72 h soak (Q2.6-K2) and the release screenshot matrix (Q2.6-K3) still outstanding; three of four cloud sinks (GCS / Azure / SFTP) moved to v2.6.1. Wire-up lives behind the Tools → Security menu (`Cmd/Ctrl+Alt+S`); no existing surface changes behaviour.
 
 ### What's new
 
 - **Security tab** (per-connection) hosting seven sub-tabs: Roles, Audit, Drift, Certificates, Auth, Encryption, CIS.
 - **Role matrix + user detail drawer** — users × roles × databases with effective-privilege resolution; captures a `sec_baselines` snapshot for later diffing.
-- **Native audit log viewer** — tails `auditLog.destination = file`, parses 4.x→7.x JSON shapes, indexes into SQLite FTS5 (`authenticate who:dba`, `atype:createUser`).
+- **Native audit log viewer** — `AuditTailerService` hooks into connection-state events; on CONNECTED it probes `getCmdLineOpts` for a readable `auditLog.path` and pipes parsed events into a SQLite FTS5 index. Search takes FTS5 match grammar (`authenticate who:dba`, `atype:createUser`). Adversarial-fuzz hardened (deep-nesting + BSON-typed-exception corpus).
 - **Drift diff + ack / mute workflow** — path-scoped diff between two baselines; ACK hides a finding for that baseline only, MUTE hides a path across every future diff.
-- **TLS cert inventory** — per-member handshake capture with green/amber/red/expired bands at 30-day / 7-day / 0-day thresholds.
+- **TLS cert inventory** — per-member handshake capture with green/amber/red/expired bands at 30-day / 7-day / 0-day thresholds. `CertExpiryScheduler` runs a full sweep every 24 h (first sweep 30 s after app start) and emits `onCertExpiry` events so the welcome-card chip stays fresh without opening the Security tab.
 - **Auth-backend probe** — SCRAM-SHA-256/1, MONGODB-X509, LDAP (PLAIN), Kerberos (GSSAPI); secret-bearing config keys (passwords, keyfile passphrases) redacted at the probe boundary.
-- **Encryption-at-rest probe** — per-node status with KMIP / Vault / local-keyfile detection.
+- **Encryption-at-rest probe** — per-node status with KMIP / Vault / local-keyfile detection. Both the encryption and cert probes now expand across every replset / shard / mongos / config member via `TopologySnapshot.allHosts()` so sweeps reflect the live topology on each Refresh.
 - **CIS MongoDB v1.2 scanner** — five starter rules (SCRAM-256, SCRAM-1, encryption-at-rest, cert expiry, root-without-restrictions) with suppression + signed evidence-bundle export (JSON + HTML + HMAC-SHA-256 `.sig`).
 - **Welcome-card security chip** — small coloured pill per connection flagging expired / expiring certs + unacked drift, with a pointer to `Cmd/Ctrl+Alt+S`.
+- **S3 backup sink** — real AWS SDK v2 implementation replacing the v2.5 stub. URL-connection transport keeps the app image lean; credentials flow through `SinkDao`'s AES-wrapped JSON with fallback to the default provider chain (IAM instance profile, SSO, env vars).
+
+### Polish + a11y
+
+- Every Security sub-pane consumes shared `SecurityPaneHelpers` factories — consistent title / subtitle / small / footer typography, standard tooltip dwell (250 ms) + duration (20 s), and a two-line empty-state component (headline + call-to-action) so first-time operators see what Refresh does without reading an empty table.
+- Tooltip bodies mirror into JavaFX `accessibleHelp` so VoiceOver / screen readers announce the same explanation sighted users see on hover. Tables and the audit-search field carry `accessibleText` descriptions.
+- Neutral colours resolve through atlantafx theme variables (`-color-fg-default/muted/subtle`, `-color-bg-default/subtle`) so dark-mode support is a one-Main.java-line change when a theme-switcher menu lands. Semantic colours (pass-green / fail-red / warn-amber) stay hex by design.
 
 ### Schema additions
 
@@ -27,15 +34,20 @@ All additive via `Database.migrate()`:
 
 - **`--oplogLimit`** threading from `PitrPlanner` → `MongorestoreRunner` argv. PITR handoff now stops oplog replay at the planner-picked cut-off instead of replaying the full captured slice.
 - **Multi-DB / multi-namespace backup fan-out** — `BackupRunner` now loops mongodump once per entry in `Databases(N>1)` / `Namespaces(N>1)` scopes and aggregates the manifest.
+- **S3 cloud sink** — real AWS SDK v2 integration (see above). GCS / Azure Blob / SFTP still stubbed and planned for v2.6.1; see `docs/v2/v2.6/milestone-v2.6.1.md`.
 
 ### Still to land before v2.6.0 GA
 
-- **Cloud sinks (S3 / GCS / Azure / SFTP)** — permit-list entries exist; SDK impls still throw `CloudSinkUnavailableException`.
-- **Daily cert-expiry background check** emitting `onCertExpiry`.
-- **Polish** — a11y pass, dark-mode audit, empty-state copy review, screenshot matrix.
-- **Hardening** — adversarial audit-log-parser fuzz corpus, 72 h soak tailing a rotating log, per-node `TopologySnapshot.members` expansion for encryption + cert probes.
+- **72 h soak** tailing a rotating audit log (plan in `docs/v2/v2.6/soak-test-plan.md`).
+- **Release screenshot matrix** captured from the GA build (checklist in `docs/v2/v2.6/screenshot-matrix.md`).
+- **Theme-switcher menu** so the dark-mode-ready Security panes actually swap palettes.
 
-100+ new tests pin the headless contracts for every subsystem.
+### Deferred to v2.6.1
+
+- GCS / Azure Blob / SFTP cloud sinks (see `docs/v2/v2.6/milestone-v2.6.1.md`).
+- Live-S3 round-trip IT harness (requires testcontainers-localstack).
+
+150+ new tests pin the headless contracts for every subsystem.
 
 ## v2.5.1 — Backup polish + UX overhaul
 
