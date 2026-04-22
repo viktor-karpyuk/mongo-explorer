@@ -9,6 +9,9 @@ import com.kubrik.mex.backup.store.BackupCatalogDao;
 import com.kubrik.mex.backup.store.BackupCatalogRow;
 import com.kubrik.mex.backup.store.BackupPolicyDao;
 import com.kubrik.mex.backup.store.BackupStatus;
+import com.kubrik.mex.backup.store.SinkDao;
+import com.kubrik.mex.backup.store.SinkRecord;
+import com.kubrik.mex.core.Crypto;
 import com.kubrik.mex.store.Database;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,6 +45,11 @@ class SchedulerTickTest {
         db = new Database();
         policies = new BackupPolicyDao(db);
         catalog = new BackupCatalogDao(db);
+        // v2.6.1 — backup_policies.sink_id now carries a FK to
+        // storage_sinks(id). Seed sink #1 so samplePolicy (which uses
+        // sinkId=1) can insert.
+        new SinkDao(db, new Crypto()).insert(new SinkRecord(-1,
+                "LOCAL_FS", "sink-1", "/tmp/sink-1", null, null, 1L, 1L));
     }
 
     @AfterEach

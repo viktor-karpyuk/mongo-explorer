@@ -232,9 +232,16 @@ public final class SftpTarget implements StorageTarget {
     private <T> T withSession(SftpOp<T> op) throws Exception {
         JSch jsch = new JSch();
         if (privateKey != null && privateKey.length > 0) {
-            jsch.addIdentity(name, privateKey,
+            // Clone the key bytes and passphrase bytes before handing
+            // them to JSch. addIdentity retains the array internally
+            // and, under concurrent probes / operations, a second
+            // caller's arrival could race with the first's identity
+            // parser; defensive copies make the per-call state fully
+            // independent.
+            jsch.addIdentity(name, privateKey.clone(),
                     /*pubkey=*/null,
-                    passphrase == null ? null : passphrase.getBytes(StandardCharsets.UTF_8));
+                    passphrase == null ? null
+                            : passphrase.getBytes(StandardCharsets.UTF_8));
         }
         Session session = jsch.getSession(user, host, port);
         if (password != null && !password.isEmpty()) session.setPassword(password);

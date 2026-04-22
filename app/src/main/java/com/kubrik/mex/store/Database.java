@@ -452,6 +452,14 @@ public class Database implements AutoCloseable {
                 )
                 """);
 
+            // v2.6.1 review round 4 — sink_id now carries an ON DELETE
+            // RESTRICT FK so SQLite (with foreign_keys=ON) refuses a
+            // storage_sinks delete that would leave policies orphan-
+            // ed. Existing tables from v2.5 / v2.6 don't get the FK
+            // (CREATE TABLE IF NOT EXISTS is a no-op on existing
+            // tables); SinksPane.onDelete also runs an application-
+            // level pre-check so the guarantee holds for upgraded
+            // installs too.
             st.execute("""
                 CREATE TABLE IF NOT EXISTS backup_policies (
                     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -462,7 +470,7 @@ public class Database implements AutoCloseable {
                     scope_json      TEXT    NOT NULL,
                     archive_json    TEXT    NOT NULL,
                     retention_json  TEXT    NOT NULL,
-                    sink_id         INTEGER NOT NULL,
+                    sink_id         INTEGER NOT NULL REFERENCES storage_sinks(id) ON DELETE RESTRICT,
                     include_oplog   INTEGER NOT NULL DEFAULT 1,
                     created_at      INTEGER NOT NULL,
                     updated_at      INTEGER NOT NULL,

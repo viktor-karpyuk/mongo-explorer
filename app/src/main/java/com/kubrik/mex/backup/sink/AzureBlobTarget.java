@@ -271,20 +271,33 @@ public final class AzureBlobTarget implements StorageTarget {
         BlobContainerClientBuilder b = new BlobContainerClientBuilder()
                 .endpoint(endpoint);
         if (credentialsJson != null && !credentialsJson.isBlank()) {
+            // Explicit credentials must parse. A silent anonymous
+            // fallback on malformed JSON would mask a bad paste (e.g.,
+            // the operator put the SAS in accountKey) and then every
+            // write would fail with an opaque 403 later. Aligns with
+            // GcsTarget's behavior on bad service-account JSON.
+            Document d;
             try {
-                Document d = Document.parse(credentialsJson);
-                String sas = d.getString("sasToken");
-                String accountKey = d.getString("accountKey");
-                if (sas != null && !sas.isBlank()) {
-                    b.sasToken(sas.startsWith("?") ? sas.substring(1) : sas);
-                } else if (accountKey != null && !accountKey.isBlank()) {
-                    String n = d.getString("accountName");
-                    if (n == null || n.isBlank()) n = parsed.account();
-                    b.credential(new StorageSharedKeyCredential(n, accountKey));
-                }
+                d = Document.parse(credentialsJson);
             } catch (Exception e) {
-                log.warn("Azure credentials JSON parse failed, falling back to anonymous: {}",
-                        e.getMessage());
+                throw new IllegalArgumentException(
+                        "Azure credentials JSON could not be parsed. Expected "
+                        + "{\"sasToken\":\"…\"} or "
+                        + "{\"accountName\":\"…\",\"accountKey\":\"…\"}, or "
+                        + "leave blank for anonymous access.", e);
+            }
+            String sas = d.getString("sasToken");
+            String accountKey = d.getString("accountKey");
+            if (sas != null && !sas.isBlank()) {
+                b.sasToken(sas.startsWith("?") ? sas.substring(1) : sas);
+            } else if (accountKey != null && !accountKey.isBlank()) {
+                String n = d.getString("accountName");
+                if (n == null || n.isBlank()) n = parsed.account();
+                b.credential(new StorageSharedKeyCredential(n, accountKey));
+            } else {
+                throw new IllegalArgumentException(
+                        "Azure credentials JSON must contain either sasToken "
+                        + "or accountKey; neither was found.");
             }
         }
         return b.buildClient();

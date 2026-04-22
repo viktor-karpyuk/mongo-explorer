@@ -40,7 +40,7 @@ public final class BackupsTab extends BorderPane implements AutoCloseable {
         this.historyPane = new BackupHistoryPane(catalogDao, fileDao, verifier,
                 restoreService, pitrPlanner, rehearsalReport,
                 callerUser, callerHost, bus);
-        this.sinksPane = new SinksPane(sinkDao);
+        this.sinksPane = new SinksPane(sinkDao, policyDao);
         // Share the connection selection across both sub-tabs.
         policyPane.connectionProperty().addListener((obs, o, n) ->
                 historyPane.connectionProperty().set(n));

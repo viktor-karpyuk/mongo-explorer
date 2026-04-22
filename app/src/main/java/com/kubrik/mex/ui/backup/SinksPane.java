@@ -6,6 +6,7 @@ import com.kubrik.mex.backup.sink.LocalFsTarget;
 import com.kubrik.mex.backup.sink.S3Target;
 import com.kubrik.mex.backup.sink.SftpTarget;
 import com.kubrik.mex.backup.sink.StorageTarget;
+import com.kubrik.mex.backup.store.BackupPolicyDao;
 import com.kubrik.mex.backup.store.SinkDao;
 import com.kubrik.mex.backup.store.SinkRecord;
 import javafx.application.Platform;
@@ -65,6 +66,7 @@ public final class SinksPane extends BorderPane {
     }
 
     private final SinkDao sinkDao;
+    private final BackupPolicyDao policyDao;
     private final ObservableList<SinkRecord> rows = FXCollections.observableArrayList();
     private final TableView<SinkRecord> table = new TableView<>(rows);
 
@@ -78,8 +80,9 @@ public final class SinksPane extends BorderPane {
     private final Button saveBtn = new Button("Save sink");
     private final Button deleteBtn = new Button("Delete");
 
-    public SinksPane(SinkDao sinkDao) {
+    public SinksPane(SinkDao sinkDao, BackupPolicyDao policyDao) {
         this.sinkDao = sinkDao;
+        this.policyDao = policyDao;
         setStyle("-fx-background-color: white;");
         setPadding(new Insets(14, 16, 14, 16));
 
@@ -220,6 +223,7 @@ public final class SinksPane extends BorderPane {
         if (k == null) return;
         String uri = rootPathField.getText() == null ? "" : rootPathField.getText().trim();
         String creds = forms.get(k).credentialsJson();
+        String extras = buildExtrasJson(k);
         String probeName = nameField.getText() == null || nameField.getText().isBlank()
                 ? "probe" : nameField.getText().trim();
 
@@ -230,7 +234,7 @@ public final class SinksPane extends BorderPane {
             StorageTarget.Probe verdict;
             StorageTarget target = null;
             try {
-                target = buildTarget(k, probeName, uri, creds);
+                target = buildTarget(k, probeName, uri, creds, extras);
                 verdict = target.testWrite();
             } catch (Throwable bad) {
                 // Throwable, not Exception — an Error (OOM, linkage)
@@ -293,11 +297,12 @@ public final class SinksPane extends BorderPane {
             return;
         }
         long now = System.currentTimeMillis();
+        String extras = buildExtrasJson(k);
         SinkRecord saved;
         try {
             saved = sinkDao.insert(new SinkRecord(-1, k.name(), name, uri,
                     creds == null || creds.isBlank() ? null : creds,
-                    null, now, now));
+                    extras, now, now));
         } catch (RuntimeException dbErr) {
             // Unique-name collision, locked DB, or any SQLite failure.
             // Surface in the status label instead of letting the
@@ -333,14 +338,46 @@ public final class SinksPane extends BorderPane {
     private void onDelete() {
         SinkRecord sel = table.getSelectionModel().getSelectedItem();
         if (sel == null) return;
+        // Application-level FK guard. SQLite rejects the DELETE via
+        // the ON DELETE RESTRICT FK on new installs, but v2.5 / v2.6
+        // schemas were created without the constraint — so we also
+        // check here so upgraded installs don't silently orphan
+        // policies. A non-zero count blocks the delete outright; the
+        // operator must unbind or delete the policies first.
+        int refs = policyDao == null ? 0 : policyDao.countBySinkId(sel.id());
+        if (refs > 0) {
+            Alert blocked = new Alert(Alert.AlertType.WARNING);
+            if (getScene() != null) blocked.initOwner(getScene().getWindow());
+            blocked.setHeaderText("Cannot delete sink " + sel.name());
+            blocked.setContentText(refs + " backup " + (refs == 1 ? "policy"
+                    : "policies") + " reference this sink. Remove or retarget "
+                    + "them in the Policies tab first.");
+            blocked.showAndWait();
+            return;
+        }
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         if (getScene() != null) confirm.initOwner(getScene().getWindow());
         confirm.setHeaderText("Delete sink " + sel.name() + "?");
-        confirm.setContentText("Any backup_policies row referencing sink #"
-                + sel.id() + " will break on next run. No cascading delete.");
+        confirm.setContentText("No backup policies currently reference this "
+                + "sink. Historical catalog rows keep a soft reference and "
+                + "will still list (but not restore) after the sink is gone.");
         confirm.showAndWait().ifPresent(b -> {
             if (b == javafx.scene.control.ButtonType.OK) {
-                sinkDao.delete(sel.id());
+                boolean ok = sinkDao.delete(sel.id());
+                if (!ok) {
+                    // Covers the new-install FK path — if a policy
+                    // snuck in between the pre-check and the DELETE,
+                    // SinkDao.delete returns false (SQLite raises a
+                    // FOREIGN KEY constraint failure which the DAO
+                    // converts to false). Surface it instead of
+                    // silently dropping the operation.
+                    statusLabel.setText("Delete of sink " + sel.name()
+                            + " failed — it may still be referenced by a "
+                            + "policy. Check the Policies tab.");
+                    statusLabel.setStyle("-fx-text-fill: #b91c1c; "
+                            + "-fx-font-size: 11px; -fx-font-weight: 600;");
+                    return;
+                }
                 reload();
                 // Clear the form so the now-dead row's values don't
                 // linger. Clicking Save right after would otherwise
@@ -364,7 +401,19 @@ public final class SinksPane extends BorderPane {
     private void populateForm(SinkRecord r) {
         Kind k;
         try { k = Kind.valueOf(r.kind()); }
-        catch (IllegalArgumentException bad) { k = Kind.LOCAL_FS; }
+        catch (IllegalArgumentException bad) {
+            // A row with a kind the current binary doesn't recognise
+            // almost certainly means the DB was written by a newer
+            // version of the app. Silently coercing to LOCAL_FS would
+            // let the user overwrite that row with wrong-kind data and
+            // lose the original config; refuse and surface it.
+            statusLabel.setText("Sink '" + r.name() + "' has unsupported kind '"
+                    + r.kind() + "' — skipping. Upgrade the app or edit the "
+                    + "storage_sinks row directly.");
+            statusLabel.setStyle("-fx-text-fill: #b91c1c; -fx-font-size: 11px; "
+                    + "-fx-font-weight: 600;");
+            return;
+        }
         // setValue is a no-op for JavaFX listeners when the new value
         // equals the current, so the kind-switch clear hook doesn't
         // fire on same-kind transitions. Always clear the target form
@@ -376,18 +425,48 @@ public final class SinksPane extends BorderPane {
         nameField.setText(r.name());
         rootPathField.setText(r.rootPath());
         forms.get(k).populate(r.credentialsJson());
+        if (k == Kind.S3) {
+            // Region lives in extras_json, not credentials, because it
+            // isn't sensitive and doesn't need encryption at rest.
+            String region = extractS3Region(r.extrasJson());
+            ((S3Form) forms.get(Kind.S3)).setRegion(region);
+        }
+    }
+
+    /** Builds the {@code extras_json} payload for a kind. Only S3 has
+     *  non-credential config (region) today; other kinds return null so
+     *  the column stays NULL. */
+    private String buildExtrasJson(Kind k) {
+        if (k != Kind.S3) return null;
+        String region = ((S3Form) forms.get(Kind.S3)).regionValue();
+        if (region == null) return null;
+        return "{\"region\":\"" + escape(region) + "\"}";
     }
 
     /* ============================== target build ============================== */
 
-    private static StorageTarget buildTarget(Kind k, String name, String uri, String creds) {
+    private static StorageTarget buildTarget(Kind k, String name, String uri,
+                                             String creds, String extrasJson) {
         return switch (k) {
             case LOCAL_FS -> new LocalFsTarget(name, uri);
-            case S3 -> new S3Target(name, uri, /*region=*/"us-east-1", creds);
+            case S3 -> new S3Target(name, uri, extractS3Region(extrasJson), creds);
             case GCS -> new GcsTarget(name, uri, creds);
             case AZURE -> new AzureBlobTarget(name, uri, creds);
             case SFTP -> new SftpTarget(name, uri, creds);
         };
+    }
+
+    /** Reads the S3 region out of the sink's {@code extras_json}, or
+     *  falls back to {@code us-east-1}. Kept null-safe so old rows
+     *  saved before the region field existed still build a client. */
+    private static String extractS3Region(String extrasJson) {
+        if (extrasJson == null || extrasJson.isBlank()) return "us-east-1";
+        try {
+            String r = org.bson.Document.parse(extrasJson).getString("region");
+            return r == null || r.isBlank() ? "us-east-1" : r.trim();
+        } catch (Exception ignored) {
+            return "us-east-1";
+        }
     }
 
     /** Each cloud sink's URI parser throws IllegalArgumentException on
@@ -435,16 +514,19 @@ public final class SinksPane extends BorderPane {
     }
 
     private static final class S3Form implements CredentialsForm {
+        final TextField region = new TextField();
         final TextField accessKey = new TextField();
         final PasswordField secret = new PasswordField();
         final TextField session = new TextField();
         S3Form() {
+            region.setPromptText("us-east-1  (bucket's AWS region)");
             accessKey.setPromptText("AKIA…  (leave blank for IAM role / SSO)");
             secret.setPromptText("•••  (leave blank for default provider chain)");
             session.setPromptText("optional session token");
         }
         public List<javafx.scene.Node> fields() {
             return List.of(
+                    labeled("Region", region),
                     labeled("Access key ID", accessKey),
                     labeled("Secret access key", secret),
                     labeled("Session token (optional)", session));
@@ -462,7 +544,7 @@ public final class SinksPane extends BorderPane {
             }
             return sb.append("}").toString();
         }
-        public void clear() { accessKey.clear(); secret.clear(); session.clear(); }
+        public void clear() { region.clear(); accessKey.clear(); secret.clear(); session.clear(); }
         public void populate(String j) {
             if (j == null || j.isBlank()) return;
             try {
@@ -472,6 +554,11 @@ public final class SinksPane extends BorderPane {
                 session.setText(nullToEmpty(d.getString("sessionToken")));
             } catch (Exception ignored) {}
         }
+        String regionValue() {
+            String r = region.getText();
+            return r == null || r.isBlank() ? null : r.trim();
+        }
+        void setRegion(String r) { region.setText(r == null ? "" : r); }
     }
 
     private static final class GcsForm implements CredentialsForm {

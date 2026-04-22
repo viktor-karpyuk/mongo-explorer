@@ -118,6 +118,22 @@ public final class BackupPolicyDao {
         }
     }
 
+    /** Count of policies that reference a given sink. Used by
+     *  SinksPane.onDelete as an application-level guard against
+     *  orphaning policies on SQLite schemas created before the
+     *  v2.6.1 FK landed. */
+    public int countBySinkId(long sinkId) {
+        try (PreparedStatement ps = db.connection().prepareStatement(
+                "SELECT COUNT(*) FROM backup_policies WHERE sink_id = ?")) {
+            ps.setLong(1, sinkId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt(1) : 0;
+            }
+        } catch (SQLException e) {
+            return 0;
+        }
+    }
+
     /* ============================= internals ============================= */
 
     private Optional<BackupPolicy> firstRow(PreparedStatement ps) throws SQLException {

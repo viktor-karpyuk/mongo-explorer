@@ -151,4 +151,37 @@ class AzureBlobTargetTest {
         assertEquals(AzureBlobTarget.AuthKind.INVALID,
                 AzureBlobTarget.classifyCredentials("{\"unknown\":\"field\"}"));
     }
+
+    /* ========================= constructor fails fast ========================= */
+
+    @Test
+    void constructor_rejects_malformed_credentials_json() {
+        // Round 4 — silent anonymous fallback on malformed creds would
+        // mask a bad paste and turn every later write into an opaque
+        // 403. Align with GcsTarget: unparseable creds must throw at
+        // construction so the operator sees the error immediately.
+        assertThrows(IllegalArgumentException.class,
+                () -> new AzureBlobTarget("t",
+                        "azblob://mystorage/mycontainer",
+                        "not json"));
+    }
+
+    @Test
+    void constructor_rejects_creds_json_with_neither_sas_nor_accountKey() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new AzureBlobTarget("t",
+                        "azblob://mystorage/mycontainer",
+                        "{\"randomField\":\"value\"}"));
+    }
+
+    @Test
+    void constructor_accepts_blank_credentials_for_anonymous() {
+        // Blank creds stay legitimate for public containers. The throw
+        // applies only when the operator *supplied* creds and they
+        // don't parse — an accidental blank is a different intent.
+        assertDoesNotThrow(() -> new AzureBlobTarget("t",
+                "azblob://mystorage/mycontainer", ""));
+        assertDoesNotThrow(() -> new AzureBlobTarget("t",
+                "azblob://mystorage/mycontainer", null));
+    }
 }

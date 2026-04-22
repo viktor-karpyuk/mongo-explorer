@@ -5,6 +5,9 @@ import com.kubrik.mex.backup.spec.BackupPolicy;
 import com.kubrik.mex.backup.spec.RetentionSpec;
 import com.kubrik.mex.backup.spec.Scope;
 import com.kubrik.mex.backup.store.BackupPolicyDao;
+import com.kubrik.mex.backup.store.SinkDao;
+import com.kubrik.mex.backup.store.SinkRecord;
+import com.kubrik.mex.core.Crypto;
 import com.kubrik.mex.store.Database;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,6 +35,17 @@ class BackupPolicyDaoTest {
         System.setProperty("user.home", dataDir.toString());
         db = new Database();
         dao = new BackupPolicyDao(db);
+        // v2.6.1 — storage_sinks(id) FK on backup_policies(sink_id)
+        // means the fixture rows need real sinks to reference. Seed
+        // the IDs the sample() helper uses; SQLite assigns ids from
+        // AUTOINCREMENT sequence 1, 2, 3, … so inserting in order
+        // matches the constants used below.
+        SinkDao sinkDao = new SinkDao(db, new Crypto());
+        for (String name : new String[] { "sink-1", "sink-2", "sink-3",
+                "sink-4", "sink-5", "sink-6", "sink-7" }) {
+            sinkDao.insert(new SinkRecord(-1, "LOCAL_FS", name,
+                    "/tmp/" + name, null, null, 1L, 1L));
+        }
     }
 
     @AfterEach
