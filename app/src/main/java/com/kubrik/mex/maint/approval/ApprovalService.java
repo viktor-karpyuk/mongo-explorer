@@ -179,6 +179,13 @@ public final class ApprovalService {
 
     public int sweepExpired() { return dao.expireOverdue(clock.getAsLong()); }
 
+    /** Convenience for UI panes: sweep expired rows then return the
+     *  remaining PENDING queue for a connection, in one call. */
+    public java.util.List<Approval.Row> sweepAllAndReload(String connectionId) {
+        sweepExpired();
+        return dao.listPending(connectionId);
+    }
+
     /* ============================ internals ============================ */
 
     /** Signs the approval descriptor (action-uuid + payload hash +
