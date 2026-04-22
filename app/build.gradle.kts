@@ -52,6 +52,14 @@ dependencies {
     }
     implementation("software.amazon.awssdk:url-connection-client:2.26.12")
 
+    // v2.6.1 Q2.6.1-A — Google Cloud Storage backup sink. Uses the
+    // HTTP / JSON transport; we exclude the gRPC-shaded client which
+    // pulls a separate Netty (~30 MB) we don't need for occasional
+    // backup uploads.
+    implementation("com.google.cloud:google-cloud-storage:2.40.1") {
+        exclude(group = "io.grpc", module = "grpc-netty-shaded")
+    }
+
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     testImplementation("org.testcontainers:mongodb:1.20.1")
     testImplementation("org.testcontainers:junit-jupiter:1.20.1")
