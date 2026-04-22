@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.7.0-alpha — Maintenance & Change Management (in progress)
+
+Last leg of the v2.4–v2.7 production-DBA roadmap — wizards for the day-two operations a DBA does after the cluster is up: schema-validator edits, rolling index builds, `rs.reconfig`, compact / resync, `setParameter` tuning, mongod upgrade planning, and config-drift tracking. Every destructive action is gated by a two-person approval checkpoint (solo-mode opt-in, in-tool approval dialog, or pre-signed JWS token) and emits a rollback plan attached to its `ops_audit` row.
+
+### Q2.7-A — Approval service + rollback plan scaffolding (this commit)
+
+- **Schema migrations (A1)** — five new tables: `config_snapshots`, `approvals` (with expiry), `rollback_plans` (linked to v2.4 `ops_audit`), `maintenance_runbooks`, `param_tuning_proposals`. All additive; the tab itself is gated by the `maintenance.enabled` flag so downgrades leave the data quiescent.
+- **ApprovalService (A2)** — three modes wired end-to-end: `SOLO` (one-shot insert as APPROVED, per-connection opt-in), `TWO_PERSON` (PENDING → APPROVED via a reviewer name; self-approval refused; same-row re-approval refused), and `TOKEN` (JWS payload carries action-uuid + action-name + payload-hash + expiry; a payload swap or action-name swap fails verify). Expiry sweep flips overdue PENDING rows to EXPIRED; consumption is one-way from APPROVED to CONSUMED.
+- **JwsSigner (A2)** — minimal HS256 compact-serialization signer piggy-backing on the v2.6 `EvidenceSigner` key. Fixed `{"alg":"HS256","typ":"JWT"}` header forecloses the "strip signature, set alg=none" attack; the tiny flat-JSON codec keeps the signing path dependency-free so there's no jose4j in the jpackage image.
+- **RollbackPlanWriter (A3)** — persists plans keyed to an existing `ops_audit` row (pre-check throws `IllegalStateException` rather than orphan a plan). Plans are write-once; `markApplied` records replay outcome without rewriting the plan JSON so historical rollback intent stays recoverable even after a partial replay.
+- **Tests** — 24 new: `ApprovalServiceTest` (13 — each mode, tamper, replay-swap, self-approval, expiry, consumption idempotency), `JwsSignerTest` (4 — round-trip, tamper, malformed, alg=none foot-gun), `RollbackPlanWriterTest` (5 — round-trip, missing audit guard, markApplied idempotency, notes accumulation, multi-plan ordering), plus `ApprovalDao` + `RollbackPlanDao` covered by the service tests above.
+
 ## v2.6.1-alpha — Cloud sinks complete
 
 Follow-up to v2.6.0-alpha2 filling in the three backup sinks that were deferred from v2.5 and shipped as stubs in every earlier v2.x. Also lands the Backups → Sinks sub-tab so every sink kind is creatable from the UI; v2.5 only supported sink creation via the `SinkDao` CLI path.

@@ -633,6 +633,98 @@ public class Database implements AutoCloseable {
                         tokenize = 'porter ascii'
                     )
                 """);
+
+            // v2.7 Q2.7-A1 — Maintenance & Change Management schema. Five
+            // tables drive the v2.7 surfaces: config snapshots for the
+            // drift tracker, approvals for two-person gates, rollback
+            // plans attached to ops_audit rows, runbooks emitted by the
+            // upgrade planner, and parameter-tuning proposals. All
+            // additive — the tab itself is gated by the
+            // `maintenance.enabled` flag so downgrades leave the data
+            // quiescent (see milestone §6.1 / §16).
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS config_snapshots (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    captured_at     INTEGER NOT NULL,
+                    host            TEXT,
+                    kind            TEXT    NOT NULL,
+                    snapshot_json   TEXT    NOT NULL,
+                    sha256          TEXT    NOT NULL
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_config_snap_conn_time " +
+                    "ON config_snapshots(connection_id, captured_at)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS approvals (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    action_uuid        TEXT    NOT NULL UNIQUE,
+                    connection_id      TEXT    NOT NULL,
+                    action_name        TEXT    NOT NULL,
+                    payload_json       TEXT    NOT NULL,
+                    payload_hash       TEXT    NOT NULL,
+                    requested_at       INTEGER NOT NULL,
+                    requested_by       TEXT    NOT NULL,
+                    mode               TEXT    NOT NULL,
+                    approver           TEXT,
+                    approved_at        INTEGER,
+                    approval_sig       TEXT,
+                    status             TEXT    NOT NULL,
+                    expires_at         INTEGER
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_approvals_status_time " +
+                    "ON approvals(status, requested_at)");
+
+            // rollback_plans.audit_id references ops_audit(id) — no FK
+            // (ops_audit pre-dates FK discipline; adding one here would
+            // fight upgrade paths). The RollbackPlanWriter pre-checks
+            // the audit row exists before persisting.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS rollback_plans (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    audit_id           INTEGER NOT NULL,
+                    plan_kind          TEXT    NOT NULL,
+                    plan_json          TEXT    NOT NULL,
+                    applied_at         INTEGER,
+                    applied_outcome    TEXT,
+                    notes              TEXT
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_rollback_audit " +
+                    "ON rollback_plans(audit_id)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS maintenance_runbooks (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id      TEXT    NOT NULL,
+                    kind               TEXT    NOT NULL,
+                    created_at         INTEGER NOT NULL,
+                    content_md_path    TEXT    NOT NULL,
+                    content_html_path  TEXT    NOT NULL,
+                    evidence_sig       TEXT
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_runbooks_conn_time " +
+                    "ON maintenance_runbooks(connection_id, created_at)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS param_tuning_proposals (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id      TEXT    NOT NULL,
+                    host               TEXT    NOT NULL,
+                    param              TEXT    NOT NULL,
+                    current_value      TEXT    NOT NULL,
+                    proposed_value     TEXT    NOT NULL,
+                    rationale          TEXT    NOT NULL,
+                    severity           TEXT    NOT NULL,
+                    created_at         INTEGER NOT NULL,
+                    status             TEXT    NOT NULL
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_param_proposals_conn " +
+                    "ON param_tuning_proposals(connection_id, status)");
         }
     }
 
