@@ -610,12 +610,20 @@ public class MainView extends BorderPane {
         }
         ensureSecurityDaos();
 
-        java.util.List<String> members = java.util.List.of();  // cluster-aggregate fallback;
-                                                                // per-node expansion lands with Q2.6-K.
+        // Q2.6-K wire-up — resolve the current topology's member list on
+        // every probe, so encryption + cert sweeps expand across every
+        // replset / shard / mongos host and pick up topology changes
+        // without re-opening the tab. EventBus.latestTopology caches the
+        // most recent snapshot per connection so the first Refresh sees
+        // data without waiting for the next sampler tick.
+        java.util.function.Supplier<java.util.List<String>> membersProvider = () -> {
+            var snap = events.latestTopology(connectionId);
+            return snap == null ? java.util.List.of() : snap.allHosts();
+        };
 
         com.kubrik.mex.ui.security.SecurityTab body =
                 new com.kubrik.mex.ui.security.SecurityTab(
-                        connectionId, callerUser, svc, members,
+                        connectionId, callerUser, svc, membersProvider,
                         securityBaselineDao, driftAckDao, cisSuppressionsDao,
                         auditIndex, evidenceSigner);
         MongoConnection conn = connectionStore.get(connectionId);

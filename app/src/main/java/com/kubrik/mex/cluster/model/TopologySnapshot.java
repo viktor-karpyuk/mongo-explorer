@@ -39,6 +39,26 @@ public record TopologySnapshot(
         };
     }
 
+    /**
+     * v2.6 Q2.6-K follow-up — flat list of every host:port the snapshot
+     * describes: members on standalone / replset clusters, plus shard
+     * members + config-server members + mongos hosts on sharded
+     * clusters. Duplicates deduped so a cluster-aggregate probe runs
+     * exactly once per host even if a member appears in multiple
+     * sections. Used by the security-tab encryption + cert probes so
+     * they run per-node instead of cluster-aggregate.
+     */
+    public List<String> allHosts() {
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        for (Member m : members) if (m.host() != null) out.add(m.host());
+        for (Shard s : shards) {
+            for (Member m : s.members()) if (m.host() != null) out.add(m.host());
+        }
+        for (Member m : configServers) if (m.host() != null) out.add(m.host());
+        for (Mongos mg : mongos) if (mg.host() != null) out.add(mg.host());
+        return List.copyOf(out);
+    }
+
     public int shardCount() { return shards.size(); }
 
     /** Parses {@code buildInfo.version} into (major, minor). Missing → (0,0). */

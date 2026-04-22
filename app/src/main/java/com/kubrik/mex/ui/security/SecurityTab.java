@@ -43,10 +43,33 @@ public final class SecurityTab extends BorderPane {
     private final EncryptionPane encryptionPane = new EncryptionPane();
     private final CisPane cisPane = new CisPane();
 
+    /** Back-compat overload — static member list. Prefer the
+     *  Supplier-based constructor so Refresh picks up topology changes. */
     public SecurityTab(String connectionId,
                         String capturedBy,
                         MongoService svc,
                         List<String> clusterMembers,
+                        SecurityBaselineDao baselineDao,
+                        DriftAckDao ackDao,
+                        CisSuppressionsDao suppressionsDao,
+                        AuditIndex auditIndex,
+                        EvidenceSigner signer) {
+        this(connectionId, capturedBy, svc,
+                () -> clusterMembers == null ? List.of() : clusterMembers,
+                baselineDao, ackDao, suppressionsDao, auditIndex, signer);
+    }
+
+    /**
+     * @param membersProvider returns the flat host:port list the encryption
+     *                        + cert probes run against. Typically wired to
+     *                        {@code EventBus.latestTopology(connectionId)
+     *                        .allHosts()} so per-node expansion reflects the
+     *                        most recent topology snapshot on each Refresh.
+     */
+    public SecurityTab(String connectionId,
+                        String capturedBy,
+                        MongoService svc,
+                        Supplier<List<String>> membersProvider,
                         SecurityBaselineDao baselineDao,
                         DriftAckDao ackDao,
                         CisSuppressionsDao suppressionsDao,
@@ -67,19 +90,28 @@ public final class SecurityTab extends BorderPane {
         Supplier<UsersRolesFetcher.Snapshot> baselineSnapshot = () ->
                 fetcher.fetch(svc, UsersRolesFetcher.FetchOptions.forBaseline());
         Supplier<AuthBackendProbe.Snapshot> authSnapshot = () -> authProbe.probe(svc);
-        Supplier<List<EncryptionStatus>> encryptionSnapshot = () ->
-                clusterMembers.isEmpty()
-                        ? List.of(encryptionProbe.probe(svc, "<cluster>"))
-                        : clusterMembers.stream()
-                                .map(h -> encryptionProbe.probe(svc, h))
-                                .toList();
-        Supplier<List<CertRecord>> certSnapshot = () -> clusterMembers.stream()
-                .flatMap(m -> {
-                    int colon = m.indexOf(':');
-                    String host = colon < 0 ? m : m.substring(0, colon);
-                    int port = colon < 0 ? 27017 : Integer.parseInt(m.substring(colon + 1));
-                    return certFetcher.fetch(host, port).stream();
-                }).toList();
+        // Encryption + cert probes resolve the live member list on every
+        // invocation so Refresh picks up a topology rotation without
+        // re-opening the Security tab.
+        Supplier<List<EncryptionStatus>> encryptionSnapshot = () -> {
+            List<String> members = membersProvider.get();
+            if (members == null || members.isEmpty()) {
+                return List.of(encryptionProbe.probe(svc, "<cluster>"));
+            }
+            return members.stream().map(h -> encryptionProbe.probe(svc, h)).toList();
+        };
+        Supplier<List<CertRecord>> certSnapshot = () -> {
+            List<String> members = membersProvider.get();
+            if (members == null) return List.of();
+            return members.stream()
+                    .flatMap(m -> {
+                        int colon = m.lastIndexOf(':');
+                        String host = colon < 0 ? m : m.substring(0, colon);
+                        int port = colon < 0 ? 27017
+                                : tryPort(m.substring(colon + 1));
+                        return certFetcher.fetch(host, port).stream();
+                    }).toList();
+        };
         Supplier<com.kubrik.mex.security.cis.CisReport> scanner = () -> {
             ComplianceContext ctx = new ComplianceContext(connectionId,
                     matrixSnapshot.get(), authSnapshot.get(),
@@ -125,6 +157,17 @@ public final class SecurityTab extends BorderPane {
     }
 
     /* ------------ accessors used by unit / smoke tests ------------ */
+
+    /** Best-effort parse: strip non-digits (handles "27017/rsName"
+     *  variants topology descriptions sometimes surface). Falls back
+     *  to the default mongod port. */
+    private static int tryPort(String raw) {
+        if (raw == null) return 27017;
+        String digits = raw.replaceAll("[^0-9]", "");
+        if (digits.isEmpty()) return 27017;
+        try { return Integer.parseInt(digits); }
+        catch (NumberFormatException nfe) { return 27017; }
+    }
 
     public RoleMatrixPane rolesPane()         { return rolesPane; }
     public AuditPane auditPane()              { return auditPane; }
