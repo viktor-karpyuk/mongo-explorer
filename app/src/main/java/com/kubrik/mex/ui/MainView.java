@@ -325,7 +325,15 @@ public class MainView extends BorderPane {
                 item("Maintenance",
                         new KeyCodeCombination(KeyCode.M,
                                 KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
-                        this::openMaintenanceTabForContext));
+                        this::openMaintenanceTabForContext),
+                // v2.8.0 UI-LAB — Local Docker sandbox Labs tab.
+                // App-singleton (not per-connection) because Labs are
+                // created inside the Labs tab itself, not targeted at
+                // an existing connection.
+                item("Labs",
+                        new KeyCodeCombination(KeyCode.L,
+                                KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
+                        this::openLabsTab));
 
         // ----- Help -----
         Menu help = new Menu("Help");
@@ -527,6 +535,15 @@ public class MainView extends BorderPane {
     private com.kubrik.mex.maint.approval.ApprovalDao approvalDao;
     private com.kubrik.mex.maint.approval.ApprovalService approvalService;
     private com.kubrik.mex.maint.drift.ConfigSnapshotDao configSnapshotDao;
+
+    // v2.8.0 UI-LAB — Labs tab is a singleton (not per-connection);
+    // the lifecycle service + DAOs are constructed on first open.
+    private Tab labsTab;
+    private com.kubrik.mex.labs.docker.DockerClient labsDocker;
+    private com.kubrik.mex.labs.templates.LabTemplateRegistry labsRegistry;
+    private com.kubrik.mex.labs.store.LabDeploymentDao labDeploymentDao;
+    private com.kubrik.mex.labs.store.LabEventDao labEventDao;
+    private com.kubrik.mex.labs.lifecycle.LabLifecycleService labLifecycle;
     private com.kubrik.mex.security.baseline.SecurityBaselineDao securityBaselineDao;
     private com.kubrik.mex.security.drift.DriftAckDao driftAckDao;
     private com.kubrik.mex.security.cis.CisSuppressionsDao cisSuppressionsDao;
@@ -752,6 +769,79 @@ public class MainView extends BorderPane {
         approvalService = new com.kubrik.mex.maint.approval.ApprovalService(
                 approvalDao, jws);
         configSnapshotDao = new com.kubrik.mex.maint.drift.ConfigSnapshotDao(database);
+    }
+
+    /**
+     * v2.8.0 UI-LAB — open the singleton Labs tab. Lazy-init the
+     * DockerClient + Lab DAOs + lifecycle service on first use.
+     * Also registers the JVM shutdown hook (once) + kicks off the
+     * reconciler so rows match the live compose state.
+     */
+    private void openLabsTab() {
+        if (labsTab != null && tabs.getTabs().contains(labsTab)) {
+            tabs.getSelectionModel().select(labsTab);
+            return;
+        }
+        ensureLabsWiring();
+        com.kubrik.mex.labs.ui.LabsTab body =
+                new com.kubrik.mex.labs.ui.LabsTab(labsDocker, labsRegistry,
+                        labLifecycle, labDeploymentDao, events);
+        labsTab = new Tab("Labs", body);
+        labsTab.setOnClosed(e -> labsTab = null);
+        tabs.getTabs().add(labsTab);
+        tabs.getSelectionModel().select(labsTab);
+    }
+
+    private void ensureLabsWiring() {
+        if (labLifecycle != null) return;
+        labsDocker = new com.kubrik.mex.labs.docker.DockerClient();
+        labsRegistry = new com.kubrik.mex.labs.templates.LabTemplateRegistry();
+        labsRegistry.loadBuiltins();
+        labDeploymentDao = new com.kubrik.mex.labs.store.LabDeploymentDao(database);
+        labEventDao = new com.kubrik.mex.labs.store.LabEventDao(database);
+
+        java.nio.file.Path labsDir = com.kubrik.mex.store.AppPaths.dataDir()
+                .resolve("labs");
+        com.kubrik.mex.labs.lifecycle.LabAutoConnectionWriter connWriter =
+                new com.kubrik.mex.labs.lifecycle.LabAutoConnectionWriter(
+                        connectionStore);
+        labLifecycle = new com.kubrik.mex.labs.lifecycle.LabLifecycleService(
+                labsDocker,
+                new com.kubrik.mex.labs.templates.ComposeRenderer(),
+                new com.kubrik.mex.labs.ports.EphemeralPortAllocator(),
+                new com.kubrik.mex.labs.lifecycle.LabHealthWatcher(),
+                connWriter,
+                labDeploymentDao, labEventDao, events,
+                labsDir, mexVersion());
+
+        // Plug in the Q2.8.4-E seeder (cache dir is colocated with
+        // labs data so docker compose down -v leaves it alone).
+        labLifecycle.setSeedStep(new com.kubrik.mex.labs.seed.SeedRunner(
+                new com.kubrik.mex.labs.seed.RemoteSeedFetcher(
+                        labsDir.resolve("cache")),
+                new com.kubrik.mex.labs.seed.SeedMarker(),
+                labEventDao, labsDir, "docker"));
+
+        // One-shot reconcile at first open so CREATING / RUNNING
+        // rows that survived an app crash are reclassified.
+        new com.kubrik.mex.labs.lifecycle.LabReconciler(
+                labsDocker, labDeploymentDao, labEventDao, events,
+                labsDir).reconcileAsync();
+
+        // Shutdown hook — honours labs.on_exit (default "stop").
+        new com.kubrik.mex.labs.lifecycle.LabAppExitHook(
+                labLifecycle, labDeploymentDao,
+                com.kubrik.mex.labs.lifecycle.LabAppExitHook.parsePolicy(
+                        System.getProperty("labs.on_exit"))).register();
+    }
+
+    private static String mexVersion() {
+        // app/build.gradle.kts sets project.version; at runtime we
+        // don't have a clean accessor, so read the manifest or
+        // return a build-time placeholder. Good enough for the
+        // template_version audit field.
+        String pkg = MainView.class.getPackage().getImplementationVersion();
+        return pkg == null ? "dev" : pkg;
     }
 
     /** v2.6 — Main.java shares its pre-constructed security DAOs with
