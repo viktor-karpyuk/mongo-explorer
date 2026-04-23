@@ -154,17 +154,19 @@ public class ConnectionStore {
                     'NONE', 'PASSWORD', 22, 'NONE', 1080, 'primary',
                     0, 0, ?, ?, 'LAB', ?)
                 """;
-        try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
-            ps.setString(1, id);
-            ps.setString(2, name);
-            ps.setString(3, uri);
-            ps.setLong(4, now);
-            ps.setLong(5, now);
-            ps.setLong(6, labDeploymentId);
-            ps.executeUpdate();
-            return id;
-        } catch (SQLException e) {
-            throw new RuntimeException("lab-origin connection insert failed", e);
+        synchronized (db.writeLock()) {
+            try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+                ps.setString(1, id);
+                ps.setString(2, name);
+                ps.setString(3, uri);
+                ps.setLong(4, now);
+                ps.setLong(5, now);
+                ps.setLong(6, labDeploymentId);
+                ps.executeUpdate();
+                return id;
+            } catch (SQLException e) {
+                throw new RuntimeException("lab-origin connection insert failed", e);
+            }
         }
     }
 
@@ -193,16 +195,18 @@ public class ConnectionStore {
                     'NONE', 'PASSWORD', 22, 'NONE', 1080, 'primary',
                     0, 0, ?, ?, 'K8S')
                 """;
-        try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
-            ps.setString(1, id);
-            ps.setString(2, name);
-            ps.setString(3, uri);
-            ps.setLong(4, now);
-            ps.setLong(5, now);
-            ps.executeUpdate();
-            return id;
-        } catch (SQLException e) {
-            throw new RuntimeException("k8s-origin connection insert failed", e);
+        synchronized (db.writeLock()) {
+            try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+                ps.setString(1, id);
+                ps.setString(2, name);
+                ps.setString(3, uri);
+                ps.setLong(4, now);
+                ps.setLong(5, now);
+                ps.executeUpdate();
+                return id;
+            } catch (SQLException e) {
+                throw new RuntimeException("k8s-origin connection insert failed", e);
+            }
         }
     }
 

@@ -90,6 +90,25 @@ public final class ProvisioningRecordDao {
         }
     }
 
+    /**
+     * v2.8.1 Q2.8.1-I — Flip the deletion-protection bit.
+     *
+     * <p>TearDownService's first-gate call lives here rather than on
+     * the service so the update goes through {@link Database#writeLock}
+     * alongside every other write. {@code true} re-enables protection
+     * (e.g. re-locking a Prod row after an aborted delete).</p>
+     */
+    public void setDeletionProtection(long rowId, boolean enabled) throws SQLException {
+        synchronized (database.writeLock()) {
+            try (PreparedStatement ps = database.connection().prepareStatement(
+                    "UPDATE provisioning_records SET deletion_protection = ? WHERE id = ?")) {
+                ps.setInt(1, enabled ? 1 : 0);
+                ps.setLong(2, rowId);
+                ps.executeUpdate();
+            }
+        }
+    }
+
     public Optional<ProvisioningRecord> findById(long id) throws SQLException {
         try (PreparedStatement ps = database.connection().prepareStatement(
                 "SELECT * FROM provisioning_records WHERE id = ?")) {

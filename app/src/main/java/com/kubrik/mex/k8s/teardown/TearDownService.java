@@ -72,16 +72,7 @@ public final class TearDownService {
             throw new IllegalStateException(
                     "deletion protection already off for " + row.name());
         }
-        // Protection is a boolean column — flip it with a targeted
-        // UPDATE rather than widening the DAO surface.
-        synchronized (recordDao.getClass()) {
-            try (java.sql.PreparedStatement ps = ((java.sql.Connection) database(recordDao))
-                    .prepareStatement(
-                    "UPDATE provisioning_records SET deletion_protection = 0 WHERE id = ?")) {
-                ps.setLong(1, provisioningId);
-                ps.executeUpdate();
-            }
-        }
+        recordDao.setDeletionProtection(provisioningId, false);
     }
 
     /**
@@ -167,20 +158,6 @@ public final class TearDownService {
                     row.namespace(), row.name()));
         }
         return refs;
-    }
-
-    /** Accessor the DAO exposes internally — grabbed via reflection here so TearDownService
-     *  can flip the deletion_protection column without widening the DAO's public API. The
-     *  DAO holds the shared JDBC connection; we piggy-back on it. */
-    private static java.sql.Connection database(ProvisioningRecordDao dao) {
-        try {
-            java.lang.reflect.Field f = ProvisioningRecordDao.class.getDeclaredField("database");
-            f.setAccessible(true);
-            com.kubrik.mex.store.Database db = (com.kubrik.mex.store.Database) f.get(dao);
-            return db.connection();
-        } catch (ReflectiveOperationException e) {
-            throw new IllegalStateException(e);
-        }
     }
 
     public record TearDownResult(int deletedCount, List<String> failures, String summary) {}
