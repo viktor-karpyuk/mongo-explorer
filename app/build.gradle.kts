@@ -92,7 +92,12 @@ tasks.register<JavaExec>("migrate") {
 
 tasks.test {
     useJUnitPlatform {
-        excludeTags("perf")
+        // v2.7 — `shardedRig` tests need the external compose stack at
+        // testing/db-sharded (brought up out-of-band via docker compose).
+        // Skipped by default so a normal build + CI run doesn't require
+        // the 7-container rig. Run `./gradlew :app:shardedRigTest` after
+        // `docker compose up -d` + `export MEX_SHARDED_RIG=up`.
+        excludeTags("perf", "shardedRig")
     }
 }
 
@@ -106,6 +111,18 @@ tasks.register<Test>("perfTest") {
     classpath = sourceSets["test"].runtimeClasspath
     testClassesDirs = sourceSets["test"].output.classesDirs
     maxHeapSize = "1g"
+}
+
+tasks.register<Test>("shardedRigTest") {
+    description = "Runs the v2.7 3-node sharded-rig ITs. Requires the " +
+            "docker-compose stack at testing/db-sharded to be up AND " +
+            "MEX_SHARDED_RIG=up in the environment."
+    group = "verification"
+    useJUnitPlatform {
+        includeTags("shardedRig")
+    }
+    classpath = sourceSets["test"].runtimeClasspath
+    testClassesDirs = sourceSets["test"].output.classesDirs
 }
 
 runtime {

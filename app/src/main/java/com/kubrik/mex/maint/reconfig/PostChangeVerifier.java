@@ -96,14 +96,23 @@ public final class PostChangeVerifier {
         int caughtUp = 0;
         List<String> lagging = new ArrayList<>();
         for (Document m : members) {
-            Integer health = m.getInteger("health");
-            if (health == null || health == 0) continue;  // unreachable
+            // Live replSetGetStatus returns numeric fields as a mix
+            // of Int32/Int64/Double depending on source — see the
+            // matching serializer fix. Using Number.intValue() here
+            // avoids the ClassCastException getInteger() throws on
+            // Double-typed `health` or `configVersion` values.
+            Object healthObj = m.get("health");
+            if (!(healthObj instanceof Number) || ((Number) healthObj).intValue() == 0) {
+                continue;  // unreachable
+            }
             reachable++;
             // Pre-6.0 emits the new configVersion in `configVersion`;
             // post-6.0 also stamps configTerm. Both carry the same
             // monotonic bump we care about.
-            Integer cfgVersion = m.getInteger("configVersion");
-            if (cfgVersion != null && cfgVersion >= expectedVersion) {
+            Object versionObj = m.get("configVersion");
+            int cfgVersion = versionObj instanceof Number
+                    ? ((Number) versionObj).intValue() : Integer.MIN_VALUE;
+            if (cfgVersion >= expectedVersion) {
                 caughtUp++;
             } else {
                 lagging.add(m.getString("name"));

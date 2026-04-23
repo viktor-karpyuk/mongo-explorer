@@ -59,13 +59,18 @@ public final class ReconfigRunner {
      *  audit row it gates. */
     public Outcome dispatch(MongoClient client, ReconfigSpec.Request req) {
         Document body = serializer.toReconfigBody(req);
+        // NOTE on writeConcern: the spec (RCFG-5) calls for
+        // majority writeConcern, but MongoDB 8.x explicitly rejects
+        // the writeConcern option on replSetReconfig with
+        // `InvalidOptions (72)`. Server-side, the command already
+        // waits for majority commit before returning; the extra
+        // writeConcern was advisory at best and a hard failure on
+        // 8.x. Do not re-add it without a version gate.
         Document cmd = new Document("replSetReconfig", body)
                 // force=false — explicit because server defaults changed
                 // across 4.4→5.0 and we want the same behaviour on both.
                 .append("force", false)
-                .append("maxTimeMS", watchdog.toMillis())
-                // writeConcern majority per RCFG-5.
-                .append("writeConcern", new Document("w", "majority"));
+                .append("maxTimeMS", watchdog.toMillis());
 
         long t0 = System.currentTimeMillis();
         try {
