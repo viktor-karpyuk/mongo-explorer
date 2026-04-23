@@ -63,7 +63,31 @@ public final class ApplyOrchestrator {
                               ProvisioningRecordDao recordDao,
                               RolloutEventDao eventDao,
                               EventBus events) {
-        this(clientFactory, recordDao, eventDao, events, new DefaultApplyOpener());
+        // Production path uses the live API-server dispatcher. The
+        // orchestrator hands an ApiClient per call; the adapter
+        // constructs a short-lived LiveApplyOpener per step so the
+        // DynamicKubernetesApi wrappers cache against the right
+        // client without sharing state across clusters.
+        this(clientFactory, recordDao, eventDao, events, new LiveDispatcher());
+    }
+
+    /**
+     * Adapter that builds a {@link LiveApplyOpener} per call using
+     * the {@link ApiClient} the orchestrator resolves from the
+     * factory for the current cluster ref.
+     */
+    private static final class LiveDispatcher implements ApplyOpener {
+        @Override
+        public void apply(ApiClient client,
+                          com.kubrik.mex.k8s.rollout.ResourceCatalogue.Ref ref,
+                          String yaml) throws Exception {
+            new LiveApplyOpener(client).apply(client, ref, yaml);
+        }
+        @Override
+        public void delete(ApiClient client,
+                           com.kubrik.mex.k8s.rollout.ResourceCatalogue.Ref ref) throws Exception {
+            new LiveApplyOpener(client).delete(client, ref);
+        }
     }
 
     /** 5-arg constructor — exposed for tests + Q2.8.1-L adversarial suites. */
@@ -222,21 +246,4 @@ public final class ApplyOrchestrator {
         void delete(ApiClient client, ResourceCatalogue.Ref ref) throws Exception;
     }
 
-    private static final class DefaultApplyOpener implements ApplyOpener {
-        @Override
-        public void apply(ApiClient client, ResourceCatalogue.Ref ref, String yaml) throws Exception {
-            // Production dispatch lands with Q2.8.1-L alongside kind-cluster
-            // ITs so the wiring can be tested against a real API server.
-            // Alpha runs pure-Java dry-runs via tests — the opener records
-            // the intended call and returns; the wizard's Preview-only
-            // mode uses this path.
-            throw new UnsupportedOperationException(
-                    "Production dispatch not wired yet — Q2.8.1-L RC hardening. "
-                    + "Tests inject a recorder; use ApplyOrchestrator(.., .., .., .., opener) for now.");
-        }
-        @Override
-        public void delete(ApiClient client, ResourceCatalogue.Ref ref) {
-            throw new UnsupportedOperationException("see apply()");
-        }
-    }
 }
