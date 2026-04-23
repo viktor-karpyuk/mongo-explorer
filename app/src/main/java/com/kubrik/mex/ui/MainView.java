@@ -565,6 +565,9 @@ public class MainView extends BorderPane {
     private com.kubrik.mex.k8s.secret.SecretPickupService kubeSecretService;
     private com.kubrik.mex.k8s.portforward.PortForwardAuditDao kubePortForwardAuditDao;
     private com.kubrik.mex.k8s.portforward.PortForwardService kubePortForwardService;
+    private com.kubrik.mex.k8s.apply.ProvisioningRecordDao kubeProvisioningDao;
+    private com.kubrik.mex.k8s.rollout.RolloutEventDao kubeRolloutEventDao;
+    private com.kubrik.mex.k8s.provision.ProvisioningService kubeProvisioningService;
     private com.kubrik.mex.security.baseline.SecurityBaselineDao securityBaselineDao;
     private com.kubrik.mex.security.drift.DriftAckDao driftAckDao;
     private com.kubrik.mex.security.cis.CisSuppressionsDao cisSuppressionsDao;
@@ -886,7 +889,8 @@ public class MainView extends BorderPane {
         clustersPane = new com.kubrik.mex.k8s.ui.ClustersPane(
                 kubeClusterService, events,
                 kubeDiscoveryService, kubeSecretService,
-                kubePortForwardService, connectionStore);
+                kubePortForwardService, connectionStore,
+                kubeProvisioningService);
         clustersTab = new Tab("Clusters", clustersPane);
         clustersTab.setOnClosed(e -> {
             if (clustersPane != null) clustersPane.close();
@@ -910,6 +914,11 @@ public class MainView extends BorderPane {
         kubePortForwardAuditDao = new com.kubrik.mex.k8s.portforward.PortForwardAuditDao(database);
         kubePortForwardService = new com.kubrik.mex.k8s.portforward.PortForwardService(
                 kubeClientFactory, kubePortForwardAuditDao, events);
+        kubeProvisioningDao = new com.kubrik.mex.k8s.apply.ProvisioningRecordDao(database);
+        kubeRolloutEventDao = new com.kubrik.mex.k8s.rollout.RolloutEventDao(database);
+        kubeProvisioningService = com.kubrik.mex.k8s.provision.ProvisioningService.wire(
+                kubeClientFactory, kubeProvisioningDao, kubeRolloutEventDao, events,
+                kubePortForwardService, connectionStore);
         // Tear every live forward down on JVM exit so SQLite rows
         // get their closed_at stamp and no dangling listeners leak
         // past app shutdown.

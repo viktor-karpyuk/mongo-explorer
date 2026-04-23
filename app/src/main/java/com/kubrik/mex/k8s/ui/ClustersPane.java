@@ -7,6 +7,7 @@ import com.kubrik.mex.k8s.events.ClusterEvent;
 import com.kubrik.mex.k8s.model.ClusterProbeResult;
 import com.kubrik.mex.k8s.model.K8sClusterRef;
 import com.kubrik.mex.k8s.portforward.PortForwardService;
+import com.kubrik.mex.k8s.provision.ProvisioningService;
 import com.kubrik.mex.k8s.secret.SecretPickupService;
 import com.kubrik.mex.store.ConnectionStore;
 import javafx.application.Platform;
@@ -59,6 +60,7 @@ public final class ClustersPane extends BorderPane {
     private final KubeClusterService service;
     private final EventBus events;
     private final DiscoveryPanel discoveryPanel;
+    private final ProvisioningService provisioningService;
 
     private final ObservableList<K8sClusterRef> rows = FXCollections.observableArrayList();
     private final TableView<K8sClusterRef> table = new TableView<>(rows);
@@ -71,9 +73,11 @@ public final class ClustersPane extends BorderPane {
                          DiscoveryService discoveryService,
                          SecretPickupService secretService,
                          PortForwardService portForwardService,
-                         ConnectionStore connectionStore) {
+                         ConnectionStore connectionStore,
+                         ProvisioningService provisioningService) {
         this.service = service;
         this.events = events;
+        this.provisioningService = provisioningService;
         this.discoveryPanel = new DiscoveryPanel(
                 discoveryService, secretService, portForwardService,
                 connectionStore, events);
@@ -159,7 +163,12 @@ public final class ClustersPane extends BorderPane {
         removeBtn.setAccessibleText("Forget the selected cluster (doesn't touch the kubeconfig file)");
         removeBtn.getStyleClass().add("danger");
 
-        HBox actions = new HBox(8, addBtn, probeBtn, probeAllBtn, removeBtn);
+        Button provisionBtn = new Button("Provision…");
+        provisionBtn.setOnAction(e -> onProvision());
+        provisionBtn.setAccessibleText("Provision a new MongoDB deployment into the selected cluster");
+        provisionBtn.getStyleClass().add("accent");
+
+        HBox actions = new HBox(8, addBtn, probeBtn, probeAllBtn, removeBtn, provisionBtn);
         actions.setPadding(new Insets(8, 0, 0, 0));
 
         javafx.scene.control.SplitPane split = new javafx.scene.control.SplitPane();
@@ -252,6 +261,22 @@ public final class ClustersPane extends BorderPane {
                 statusLabel.setText(ref.displayName() + ": " + renderStatus(r));
             });
         });
+    }
+
+    private void onProvision() {
+        K8sClusterRef sel = table.getSelectionModel().getSelectedItem();
+        if (sel == null) { statusLabel.setText("Pick a cluster first."); return; }
+        if (provisioningService == null) {
+            statusLabel.setText("Provisioning service is not wired.");
+            return;
+        }
+        ProvisionDialog dlg = new ProvisionDialog(provisioningService, events, sel);
+        if (getScene() != null && getScene().getWindow() != null) {
+            dlg.initOwner(getScene().getWindow());
+        }
+        dlg.showAndWait();
+        // Reload so a newly-auto-connected provision's status chip re-renders.
+        reload();
     }
 
     private void onRemove() {
