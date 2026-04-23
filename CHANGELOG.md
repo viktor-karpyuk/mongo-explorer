@@ -1,10 +1,10 @@
 # Changelog
 
-## v2.8.0-alpha — Local Sandbox Labs (milestone v2.8.4)
+## v2.8.0-alpha — Local Sandbox Labs
 
-Pivots the v2.8 series from Kubernetes provisioning to laptop-local Docker training / evaluation. Market-study driven: no desktop MongoDB GUI offers a credible one-click sandbox today.
+Pivots the v2.8 series — Labs takes the v2.8.0 slot; the K8s workstreams that were originally scheduled at v2.8.0–v2.8.3 have shifted to v2.8.1–v2.8.4. Market-study driven: no desktop MongoDB GUI offers a credible one-click sandbox today.
 
-Spec set: `docs/v2/v2.8/v2.8.4/`. Package root: `com.kubrik.mex.labs`. Nothing shared with the K8s surfaces that the rest of v2.8.0–v2.8.3 will ship — the two provisioning tracks stay cleanly separated.
+Spec set: `docs/v2/v2.8/v2.8.0/`. Package root: `com.kubrik.mex.labs`. Nothing shared with the K8s surfaces that the rest of v2.8.1–v2.8.4 will ship — the two provisioning tracks stay cleanly separated.
 
 ### Highlights
 
