@@ -62,7 +62,6 @@ public final class PortForwardService implements AutoCloseable {
     private final PortForwardOpener opener;
 
     private final ConcurrentMap<Long, Handle> handlesByAuditId = new ConcurrentHashMap<>();
-    private final java.util.concurrent.atomic.AtomicLong sessionSeq = new java.util.concurrent.atomic.AtomicLong();
 
     public PortForwardService(KubeClientFactory clientFactory,
                                PortForwardAuditDao auditDao,
@@ -211,7 +210,9 @@ public final class PortForwardService implements AutoCloseable {
                     .name("k8s-pfwd-up-" + auditRowId)
                     .start(() -> pipe(clientIn, pfUp));
             pipe(pfDown, clientOut);
-            upPump.interrupt();
+            // Interrupt is a no-op against blocking socket reads, so
+            // don't pretend it does anything. The finally block below
+            // closes clientSocket which unblocks the up-pump's read.
         } catch (IOException ioe) {
             log.debug("pipe {} errored: {}", auditRowId, ioe.toString());
             events.publishPortForward(new PortForwardEvent.Error(
@@ -285,13 +286,26 @@ public final class PortForwardService implements AutoCloseable {
                 PortForward pf = new PortForward(client);
                 PortForward.PortForwardResult result = pf.forward(
                         namespace, pod, List.of(remotePort));
+                // Eagerly resolve both streams so close() can propagate
+                // to their underlying WebSocketStreamHandler — a no-op
+                // close() leaks the SPDY upgrade connection for the
+                // life of the JVM.
+                InputStream downstream;
+                try { downstream = result.getInputStream(remotePort); }
+                catch (IOException ioe) {
+                    throw new IOException("resolve pfwd input stream: " + ioe.getMessage(), ioe);
+                }
+                OutputStream upstream = result.getOutboundStream(remotePort);
                 return new StreamPair() {
-                    @Override public InputStream downstream() {
-                        try { return result.getInputStream(remotePort); }
-                        catch (IOException ioe) { throw new UncheckedStreamException(ioe); }
+                    @Override public InputStream downstream() { return downstream; }
+                    @Override public OutputStream upstream() { return upstream; }
+                    @Override public void close() {
+                        // Closing either stream cascades to the
+                        // WebSocketStreamHandler and closes the SPDY
+                        // upgrade. We close both for robustness.
+                        try { downstream.close(); } catch (IOException ignored) {}
+                        try { upstream.close(); } catch (IOException ignored) {}
                     }
-                    @Override public OutputStream upstream() { return result.getOutboundStream(remotePort); }
-                    @Override public void close() { /* streams tear down with the WebSocket */ }
                 };
             } catch (io.kubernetes.client.openapi.ApiException ae) {
                 throw new IOException("port-forward API failed: "
@@ -300,8 +314,4 @@ public final class PortForwardService implements AutoCloseable {
         }
     }
 
-    /** Runtime wrapper so the downstream() lambda doesn't need checked-exception gymnastics. */
-    private static final class UncheckedStreamException extends RuntimeException {
-        UncheckedStreamException(Throwable cause) { super(cause); }
-    }
 }
