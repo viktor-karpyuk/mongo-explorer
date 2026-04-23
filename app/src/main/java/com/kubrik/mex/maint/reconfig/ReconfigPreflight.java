@@ -81,8 +81,7 @@ public final class ReconfigPreflight {
         // technical-spec encodes a simpler cover-your-ass check:
         // ceil((sum+1)/2) electable members must exist in the new
         // config.
-        int required = (voteCount + 1) / 2 + (voteCount % 2 == 0 ? 1 : 0);
-        // Conservative: ceil((n+1)/2). For n=3 → 2; n=5 → 3; n=7 → 4.
+        // Conservative majority: ceil((n+1)/2). For n=3 → 2; n=5 → 3; n=7 → 4.
         int conservativeMajority = (voteCount + 2) / 2;
         if (electable < conservativeMajority && voteCount > 0) {
             findings.add(new Finding(Severity.BLOCKING, "NO_MAJORITY",
@@ -129,11 +128,16 @@ public final class ReconfigPreflight {
         }
 
         // Arbiter-heavy: Mongo warns that clusters with an arbiter are
-        // less durable; flag it if the change introduces one.
-        long arbiters = proposed.stream().filter(Member::arbiterOnly).count();
-        if (arbiters >= 1 && (req.change() instanceof ReconfigSpec.AddMember am
-                && am.member().arbiterOnly())
-                || req.change() instanceof ReconfigSpec.ToggleArbiter ta && ta.arbiterOnly()) {
+        // less durable; flag it when the change introduces one. Note:
+        // previously this had a `&& || &&` precedence bug that fired
+        // the warn on any ToggleArbiter(false) and missed the first
+        // AddMember arbiter — parentheses here are load-bearing.
+        boolean introducesArbiter =
+                (req.change() instanceof ReconfigSpec.AddMember am
+                        && am.member().arbiterOnly())
+                || (req.change() instanceof ReconfigSpec.ToggleArbiter ta
+                        && ta.arbiterOnly());
+        if (introducesArbiter) {
             findings.add(new Finding(Severity.WARN, "ARBITER_PRESENT",
                     "Arbiters reduce durability. Prefer a data-bearing "
                             + "3-node set where possible."));

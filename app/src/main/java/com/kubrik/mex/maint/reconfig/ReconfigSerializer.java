@@ -88,6 +88,11 @@ public final class ReconfigSerializer {
             // created — getInteger() ClassCasts on anything but Int32.
             // Coerce via Number.intValue() so the parser survives every
             // supported server version.
+            // Pre-5.0 field is `slaveDelay`; 5.0+ renamed it to
+            // `secondaryDelaySecs`. Check both so the parser doesn't
+            // silently drop a real delay value on modern servers.
+            Object delay = m.get("slaveDelay");
+            if (delay == null) delay = m.get("secondaryDelaySecs");
             members.add(new Member(
                     intOf(m.get("_id"), 0),
                     m.getString("host"),
@@ -96,7 +101,7 @@ public final class ReconfigSerializer {
                     m.getBoolean("hidden", false),
                     m.getBoolean("arbiterOnly", false),
                     m.getBoolean("buildIndexes", true),
-                    doubleOf(m.get("slaveDelay"))));
+                    doubleOf(delay)));
         }
         return Optional.of(new ReconfigSpec.Request(setName, version, members, change));
     }
