@@ -83,15 +83,20 @@ All v2.7 code lives under `com.kubrik.mex.maint.*`:
 
 89 new unit tests across the workstreams (sinks still green): ApprovalService (13) · JwsSigner (4) · RollbackPlanWriter (5) · ReconfigPreflight (18) · ReconfigSerializer (4) · PostChangeVerifier (3) · ValidatorRolloutRunner (2) · ValidatorFetcher (2) · StarterTemplates (3) · RollingIndexPlanner (4) · IndexBuildSpec (3) · CompactRunner (3) · Recommender (7) · ParamProposalDao (3) · UpgradeScanner (8) · RunbookRenderer (3) · ConfigSnapshotService (7).
 
-### Deferred to post-alpha
+### Post-alpha additions (GA-track)
 
-- Full JavaFX wizards (approvals queue, schema editor with Monaco-style JSON editor, reconfig preview dialog, rolling index live-progress strip, compact / resync wizard, parameter tuning pane, upgrade runbook export, config-drift pane). Placeholder panes ship so `maintenance.enabled` can flip safely.
-- Live-cluster integration tests (technical-spec §13.2) — `ReconfigWizardIT`, `RollingIndexIT`, `CompactWizardIT`, `ValidatorPreviewIT`, `UpgradeScanIT`, `ConfigDriftIT` — pending the testcontainers 3-node rig.
-- Chaos suite (`ChaosReconfigFuzz`) + JWS tamper fuzz + runbook Markdown fuzz.
-- 72 h soak with daily parameter proposals + scheduled drift monitor + weekly rolling index build.
-- A11y + dark-mode passes on every pane (Q2.7-I).
-- `RollbackReplayService.replay()` — opens the matching wizard pre-filled with the inverse spec.
-- `RollingRestartOrchestrator` — wraps the upgrade planner's steps into a live rolling-restart runner.
+- **UI wizards** — every workstream has a real pane: `ApprovalsPane` (queue with approve/reject/token-export), `SchemaValidatorPane` (starter templates + preview table + typed-confirm rollout), `ReconfigWizardPane` (all 7 `Change` kinds, colour-coded preflight findings, post-change verifier), `RollingIndexPane` (per-member progress strip driven one step at a time), `CompactResyncPane` (primary-refusal client-side + typed-confirm), `ParameterTuningPane` (cluster-shape inputs → Recommender → severity-coloured table + rationale drawer), `UpgradePlannerPane` (scan + MD/HTML export via `FileChooser`), `ConfigDriftPane` (capture-now + line-by-line diff). `MaintenanceTab` takes DAOs + `Supplier<MongoClient>` + `Supplier<String>` (connection id) by constructor; the placeholder ctor is retained for visual previews.
+- **`RollbackReplayService`** — `lookup(planId)` + `lookupByAuditId(auditId)` hand the UI a `ReplayRequest` with kind + plan JSON + already-applied flag so the matching wizard opens pre-filled with the inverse spec.
+- **`RollingRestartOrchestrator`** — walks `UpgradePlan` steps: `BINARY_SWAP` sends `shutdown` + blocks on the operator-gate callback (UI's "binary swap complete?" dialog); `ROLLING_RESTART` sends `replSetStepDown`; informational kinds emit info events. `MongoSocketException` on shutdown is the success signal, not an error.
+- **Fuzz suite (Q2.7-J)** — `JwsTamperFuzz` (single-byte flip at every token position, 2 000 random payloads, truncation at every prefix, segment permutations; verified count = 0), `RunbookMarkdownFuzz` (200 random-ASCII titles + 100 step bodies; HTML shell stays well-formed, `<` always escaped, step order preserved), `ChaosReconfigFuzz` (2 000 random `ReconfigSpec.Request`s; preflight must be deterministic, never throw, classify 100 curated scenarios cleanly).
+
+### Still deferred
+
+- **Live-cluster integration tests** (technical-spec §13.2) — `ReconfigWizardIT`, `RollingIndexIT`, `CompactWizardIT`, `ValidatorPreviewIT`, `UpgradeScanIT`, `ConfigDriftIT`, `CrossInstallTokenIT`. Need a testcontainers 3-node replica-set rig.
+- **72 h soak** with daily parameter proposals + scheduled drift monitor + weekly rolling index build — can't land until the IT rig does.
+- **A11y + dark-mode polish** on each pane (Q2.7-I). The panes follow the existing v2.6 typography + tooltip dwell pattern; accessible-help / accessible-text strings still to add.
+- **`ConfigDriftPane` plugs into `DriftDiffEngine`** (milestone §9.4) — current pane ships a line-by-line diff; the structural path-based diff lives on a follow-up.
+- **`MaintenanceTab` wiring into `MainView`** — the pane + 4-arg ctor are ready; flipping `maintenance.enabled = true` + instantiating it from `MainView` is the last FX-integration step.
 
 ## v2.6.1-alpha — Cloud sinks complete
 
