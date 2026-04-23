@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.8.0-alpha — ApplyOrchestrator + RolloutEventDao + DiagnosisEngine (Q2.8.1-H)
+
+Bridges every prior chunk: takes a `ProvisionModel`, runs the chosen adapter's renderer, writes a `provisioning_records` row in APPLYING, dispatches every rendered document to the API server via a pluggable `ApplyOpener` seam, and records the catalogue so cleanup can reverse-iterate on failure.
+
+### Highlights
+
+- **`ApplyOrchestrator`.** Pure orchestration over the Q2.8.1-E/F adapters. Pipeline: render → SHA-256 the concatenated manifests (stable bytes courtesy of the deterministic renderers) → insert `provisioning_records` row in APPLYING → apply every document via the opener → record in `ResourceCatalogue` → publish `ProvisionEvent.Started` + `Progress` + `Ready`/`Failed`.
+- **`ApplyOpener` seam.** Production dispatch stubbed for Q2.8.1-L kind-cluster wiring; tests inject a recorder / failure opener to drive the orchestration unit-tested. `cleanup(catalogue)` reverse-iterates to tear down a partial apply.
+- **`ProvisioningRecordDao`.** CRUD over `provisioning_records`. `insertApplying` writes the initial row + CR SHA-256. `markStatus` flips the lifecycle; `markStatus(READY)` stamps `applied_at`. `attachConnection` back-links the Mongo Explorer connection once auto-connect succeeds.
+- **`RolloutEvent` + `RolloutEventDao`.** Append-only event log keyed to a provisioning row. Source types: POD / PVC / CR_STATUS / APPLY (synthetic for orchestrator progress). Severity + optional reason/message/diagnosisHint.
+- **`DiagnosisEngine`.** Pattern-table decorator: raw event → human-readable hint. Ships 10 patterns covering the failures we see most often — `ImagePullBackOff`, `CrashLoopBackOff`, `ProvisioningFailed` on PVC, `pod has unbound immediate PersistentVolumeClaims`, `FailedScheduling`, `admission webhook ... denied`, `OOMKilled`, `no Issuer found` on CR status, etc. Patterns are scoped to a source so a PVC pattern doesn't match against a pod event.
+- **`ResourceCatalogue`.** Ordered record of every applied resource tuple (apiVersion / kind / ns / name). `reversed()` gives the cleanup iterator exactly what it wants.
+- **`ProvisionEvent`.** Sealed on the bus: Started / Progress / Ready / Failed. Rollout viewer (future UI) and status chip subscribe. `onProvision` + `publishProvision` added to EventBus.
+
+### Tests
+
+17 new unit tests: `DiagnosisEngineTest` (7 — scope-aware matching, decorate semantics), `ResourceCatalogueTest` (3 — insertion order, reverse, snapshot independence), `RolloutEventDaoTest` (3 — ordering, hint round-trip, null handling), `ApplyOrchestratorTest` (4 — happy path + event emission, markReady, partial-apply catalogue size, deterministic SHA-256).
+
+### Deferred
+
+- **Live YAML-to-apply-call dispatch.** The production `DefaultApplyOpener` currently throws `UnsupportedOperationException` with a pointer to Q2.8.1-L. The orchestration + persistence + event wiring is complete; flipping the real server-side-apply path on is a Q2.8.1-L RC gate so it can be validated end-to-end against kind.
+- **Status watch loop.** Apply currently returns after the last document is dispatched; the caller is expected to poll the CR status through the Q2.8.1-E/F status parsers and call `markReady` / `markFailed`. An in-orchestrator watcher driven by client-java informers lands with Q2.8.1-L as well.
+- **Auto-connect + auto-port-forward on READY.** The hooks are present — `attachConnection` is wired — but the end-to-end hand-off to `PortForwardService.open` on a READY flip lands with Q2.8.1-L.
+
 ## v2.8.0-alpha — Pre-flight engine + check modules (Q2.8.1-G)
 
 Eight pre-flight checks run in parallel against the target cluster + `ProvisionModel`, folded into a single `PreflightSummary` the wizard's pre-flight panel renders. Apply stays disabled while any check fails; each warning requires an acknowledge checkbox (milestone §2.7).

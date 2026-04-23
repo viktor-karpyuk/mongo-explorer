@@ -72,6 +72,9 @@ public class EventBus {
     // subscribes for the live-forward chip.
     private final ConcurrentMap<Object, Consumer<com.kubrik.mex.k8s.events.PortForwardEvent>> kubePortForwardListeners =
             new ConcurrentHashMap<>();
+    // v2.8.1 Q2.8.1-H — Provisioning lifecycle feed.
+    private final ConcurrentMap<Object, Consumer<com.kubrik.mex.k8s.events.ProvisionEvent>> kubeProvisionListeners =
+            new ConcurrentHashMap<>();
 
     /** Latest topology snapshot per connection — delivered to late subscribers so newly-mounted
      *  UI can render without waiting for the next sampler tick (v2.4 TOPO-17). */
@@ -364,6 +367,20 @@ public class EventBus {
     public void publishPortForward(com.kubrik.mex.k8s.events.PortForwardEvent e) {
         if (e == null) return;
         for (Consumer<com.kubrik.mex.k8s.events.PortForwardEvent> l : kubePortForwardListeners.values()) {
+            try { l.accept(e); } catch (Exception ignored) {}
+        }
+    }
+
+    /** v2.8.1 Q2.8.1-H — Provisioning lifecycle feed (milestone §3.2). */
+    public Subscription onProvision(Consumer<com.kubrik.mex.k8s.events.ProvisionEvent> l) {
+        Object key = new Object();
+        kubeProvisionListeners.put(key, l);
+        return () -> kubeProvisionListeners.remove(key);
+    }
+
+    public void publishProvision(com.kubrik.mex.k8s.events.ProvisionEvent e) {
+        if (e == null) return;
+        for (Consumer<com.kubrik.mex.k8s.events.ProvisionEvent> l : kubeProvisionListeners.values()) {
             try { l.accept(e); } catch (Exception ignored) {}
         }
     }
