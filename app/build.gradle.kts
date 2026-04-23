@@ -97,7 +97,11 @@ tasks.test {
         // Skipped by default so a normal build + CI run doesn't require
         // the 7-container rig. Run `./gradlew :app:shardedRigTest` after
         // `docker compose up -d` + `export MEX_SHARDED_RIG=up`.
-        excludeTags("perf", "shardedRig")
+        //
+        // v2.8.0 — `labDocker` tests need `docker compose` on PATH and
+        // pull the mongo:latest image. Skipped by default; run with
+        // `./gradlew :app:labDockerTest`.
+        excludeTags("perf", "shardedRig", "labDocker")
     }
 }
 
@@ -111,6 +115,19 @@ tasks.register<Test>("perfTest") {
     classpath = sourceSets["test"].runtimeClasspath
     testClassesDirs = sourceSets["test"].output.classesDirs
     maxHeapSize = "1g"
+}
+
+tasks.register<Test>("labDockerTest") {
+    description = "Runs the v2.8.0 Local Sandbox Labs live-Docker ITs. " +
+            "Requires `docker compose` on PATH; pulls mongo:latest."
+    group = "verification"
+    useJUnitPlatform {
+        includeTags("labDocker")
+    }
+    classpath = sourceSets["test"].runtimeClasspath
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    // 5-minute test timeout accommodates cold image pulls.
+    systemProperty("junit.jupiter.execution.timeout.default", "5m")
 }
 
 tasks.register<Test>("shardedRigTest") {

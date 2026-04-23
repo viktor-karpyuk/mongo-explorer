@@ -1,5 +1,39 @@
 # Changelog
 
+## v2.8.0-alpha — Local Sandbox Labs (milestone v2.8.4)
+
+Pivots the v2.8 series from Kubernetes provisioning to laptop-local Docker training / evaluation. Market-study driven: no desktop MongoDB GUI offers a credible one-click sandbox today.
+
+Spec set: `docs/v2/v2.8/v2.8.4/`. Package root: `com.kubrik.mex.labs`. Nothing shared with the K8s surfaces that the rest of v2.8.0–v2.8.3 will ship — the two provisioning tracks stay cleanly separated.
+
+### Highlights
+
+- **6 curated templates** (standalone, rs-3, rs-5, sharded-1, triple-rs, sample-mflix) covering ~95% of training / evaluation needs. Adding a 7th is a YAML file + golden test, no Java code change.
+- **Auto-connection on healthy.** The moment mongod answers ping, a `connections.origin = 'LAB'` row lands and the user is dropped into the query surface. No connection form to fill in.
+- **Sample-data seeding.** Bundled tiny datasets (`_mex_labs` sentinel for idempotency) + fetch-on-demand for `sample_mflix` (SHA-256 verified; HTTP fetch with disk cache; mongorestore via a one-shot sidecar container).
+- **Full lifecycle.** Apply / Stop / Start / Destroy with typed-confirm for destroy. Guarded transitions — wrong-state returns `Rejected`, compose errors return `Failed`.
+- **App-start reconciler.** `docker compose ls --format json` cross-checked against `lab_deployments` rows; orphan containers logged, missing projects flipped to FAILED.
+- **JVM shutdown hook.** `labs.on_exit=stop` (default) / `leave_running` / `destroy`. Parallel per-Lab shutdown on virtual threads; 15s / 30s wall budgets so exit doesn't drag.
+- **Docker detection empty state.** Guided install links (Docker Desktop / OrbStack / colima) + Retry button probing `docker version`; minimum CLI 24.0 (`compose ls --format json` requires it).
+
+### Schema
+
+Three additive changes:
+- `lab_deployments` table (compose project + port map + status + timing + mongo tag + connection FK back-pointer).
+- `lab_events` table (append-only; separate from `ops_audit` so Lab demo noise stays out of the compliance trail).
+- `connections.origin` (default `'LOCAL'`, new value `'LAB'`) + `connections.lab_deployment_id` (nullable FK back-pointer).
+
+### Tests
+
+Unit: 30 new tests across templates / renderer / ports / models / DAOs / seed / lifecycle parsers. Live: `LabLifecycleLiveIT` tagged `labDocker` (Apply → Stop → Start → Destroy against a real Docker runtime; run with `./gradlew :app:labDockerTest`).
+
+### Deferred
+
+- **Cross-platform smoke matrix** (Q2.8.4-G RC gate) — macOS arm64/amd64 + Linux amd64 + Windows 11 Docker Desktop, per-template resource footprint per NFR-LAB-5. Lands before GA.
+- **Orphan-project adoption UI** — reconciler logs orphans but the banner + adopt button ship with the v2.8.x polish series.
+- **Reset-to-seed action** — `sample-mflix` "restart with fresh seed" one-click (open question §9.7).
+- **Licensing review for bundled sample-data** (open question §9.1) — currently all bundled sets are small classpath resources we author; MongoDB's official samples fetch on demand.
+
 ## v2.7.0-alpha — Maintenance & Change Management
 
 Last leg of the v2.4–v2.7 production-DBA roadmap — wizards for the day-two operations a DBA does after the cluster is up: schema-validator edits, rolling index builds, `rs.reconfig`, compact / resync, `setParameter` tuning, mongod upgrade planning, and config-drift tracking. Every destructive action is gated by a two-person approval checkpoint (solo-mode opt-in, in-tool approval dialog, or pre-signed JWS token) and emits a rollback plan attached to its `ops_audit` row.
