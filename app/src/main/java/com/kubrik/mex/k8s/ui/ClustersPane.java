@@ -2,9 +2,12 @@ package com.kubrik.mex.k8s.ui;
 
 import com.kubrik.mex.events.EventBus;
 import com.kubrik.mex.k8s.cluster.KubeClusterService;
+import com.kubrik.mex.k8s.discovery.DiscoveryService;
 import com.kubrik.mex.k8s.events.ClusterEvent;
 import com.kubrik.mex.k8s.model.ClusterProbeResult;
 import com.kubrik.mex.k8s.model.K8sClusterRef;
+import com.kubrik.mex.k8s.secret.SecretPickupService;
+import com.kubrik.mex.store.ConnectionStore;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
@@ -54,6 +57,7 @@ public final class ClustersPane extends BorderPane {
 
     private final KubeClusterService service;
     private final EventBus events;
+    private final DiscoveryPanel discoveryPanel;
 
     private final ObservableList<K8sClusterRef> rows = FXCollections.observableArrayList();
     private final TableView<K8sClusterRef> table = new TableView<>(rows);
@@ -62,9 +66,14 @@ public final class ClustersPane extends BorderPane {
     private final Map<Long, ClusterProbeResult> probeByCluster = new ConcurrentHashMap<>();
     private EventBus.Subscription busSubscription;
 
-    public ClustersPane(KubeClusterService service, EventBus events) {
+    public ClustersPane(KubeClusterService service, EventBus events,
+                         DiscoveryService discoveryService,
+                         SecretPickupService secretService,
+                         ConnectionStore connectionStore) {
         this.service = service;
         this.events = events;
+        this.discoveryPanel = new DiscoveryPanel(
+                discoveryService, secretService, connectionStore, events);
 
         setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
@@ -87,6 +96,7 @@ public final class ClustersPane extends BorderPane {
 
     public void close() {
         if (busSubscription != null) busSubscription.close();
+        if (discoveryPanel != null) discoveryPanel.close();
     }
 
     private Region buildHeader() {
@@ -120,7 +130,10 @@ public final class ClustersPane extends BorderPane {
                     return p.serverVersion().orElse(r.serverUrl().orElse("—"));
                 }));
         table.getSelectionModel().selectedItemProperty().addListener(
-                (o, a, b) -> renderDetail(b));
+                (o, a, b) -> {
+                    renderDetail(b);
+                    discoveryPanel.bindCluster(b);
+                });
 
         detailArea.setEditable(false);
         detailArea.setPrefRowCount(6);
@@ -139,9 +152,13 @@ public final class ClustersPane extends BorderPane {
         HBox actions = new HBox(8, addBtn, probeBtn, probeAllBtn, removeBtn);
         actions.setPadding(new Insets(8, 0, 0, 0));
 
-        VBox v = new VBox(6, table, new Label("Detail"), detailArea, actions);
+        javafx.scene.control.SplitPane split = new javafx.scene.control.SplitPane();
+        split.setOrientation(javafx.geometry.Orientation.VERTICAL);
+        VBox top = new VBox(6, table, new Label("Detail"), detailArea, actions);
         VBox.setVgrow(table, Priority.ALWAYS);
-        return v;
+        split.getItems().addAll(top, discoveryPanel);
+        split.setDividerPositions(0.55);
+        return split;
     }
 
     private Region buildFooter() {

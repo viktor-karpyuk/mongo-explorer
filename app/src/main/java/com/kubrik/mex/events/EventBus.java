@@ -63,6 +63,11 @@ public class EventBus {
     // ClustersPane chip updates + (later) AddClusterDialog probe preview.
     private final ConcurrentMap<Object, Consumer<com.kubrik.mex.k8s.events.ClusterEvent>> kubeClusterListeners =
             new ConcurrentHashMap<>();
+    // v2.8.1 Q2.8.1-B — Mongo workload discovery feed. Clusters pane
+    // subscribes to repaint the discovered-Mongo list after every
+    // refresh.
+    private final ConcurrentMap<Object, Consumer<com.kubrik.mex.k8s.events.DiscoveryEvent>> kubeDiscoveryListeners =
+            new ConcurrentHashMap<>();
 
     /** Latest topology snapshot per connection — delivered to late subscribers so newly-mounted
      *  UI can render without waiting for the next sampler tick (v2.4 TOPO-17). */
@@ -327,6 +332,20 @@ public class EventBus {
     public void publishKubeCluster(com.kubrik.mex.k8s.events.ClusterEvent e) {
         if (e == null) return;
         for (Consumer<com.kubrik.mex.k8s.events.ClusterEvent> l : kubeClusterListeners.values()) {
+            try { l.accept(e); } catch (Exception ignored) {}
+        }
+    }
+
+    /** v2.8.1 Q2.8.1-B — Mongo workload discovery feed (milestone §3.2). */
+    public Subscription onDiscovery(Consumer<com.kubrik.mex.k8s.events.DiscoveryEvent> l) {
+        Object key = new Object();
+        kubeDiscoveryListeners.put(key, l);
+        return () -> kubeDiscoveryListeners.remove(key);
+    }
+
+    public void publishDiscovery(com.kubrik.mex.k8s.events.DiscoveryEvent e) {
+        if (e == null) return;
+        for (Consumer<com.kubrik.mex.k8s.events.DiscoveryEvent> l : kubeDiscoveryListeners.values()) {
             try { l.accept(e); } catch (Exception ignored) {}
         }
     }

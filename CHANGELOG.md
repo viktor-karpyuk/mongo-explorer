@@ -1,5 +1,27 @@
 # Changelog
 
+## v2.8.0-alpha — Kubernetes discovery + secret pickup (Q2.8.1-B)
+
+Builds on Q2.8.1-A to surface `DISC-*` and `SEC-*`: enumerate Mongo workloads on an attached cluster, resolve credentials from operator-convention Secrets, and record a placeholder connection row that port-forward (Q2.8.1-C) will make live.
+
+### Highlights
+
+- **Three-way discovery.** `McoDiscoverer` queries `MongoDBCommunity` CRs, `PsmdbDiscoverer` queries `PerconaServerMongoDB` CRs, and `PlainStsDiscoverer` walks every visible namespace for StatefulSets that reference a Mongo image (with owner-reference + `app.kubernetes.io/managed-by` filters to drop operator-owned STS). 404 on a CRD is treated as "operator not installed" and yields an empty list — per-discoverer failures never fail the whole refresh.
+- **Unified projection.** `DiscoveredMongo` normalises origin / namespace / topology / service / auth / ready across the three sources so the UI renders one table instead of three.
+- **Operator-aware secret resolvers.** `McoSecretResolver` keys on `<cr-name>-admin-user` + `<cr-name>-ca`. `PsmdbSecretResolver` keys on `<cr-name>-secrets` (userAdmin creds) + `<cr-name>-ssl` (external TLS bundle including optional BYO client cert).
+- **TLS-material hygiene.** `MongoCredentials` keeps PEM bytes on the heap only. Persistence is limited to `SecretReader.fingerprint(..)` — a SHA-256 hex digest — matching milestone §2.4.
+- **Discovery UI.** `DiscoveryPanel` slots into `ClustersPane` as a split-below panel bound to the selected cluster. Actions: Refresh, Resolve credentials (shows username + password-present + TLS fingerprint, never the password itself), Create connection (writes `origin='K8S'` row via `ConnectionStore.insertK8sOrigin`).
+- **Event bus.** `onDiscovery` / `publishDiscovery` with sealed `DiscoveryEvent` (`Refreshed` / `Failed`). Matches milestone §3.2.
+
+### Tests
+
+22 new unit tests: 6 `McoDiscovererTest` (topology, auth-modes, malformed-CR tolerance), 4 `PsmdbDiscovererTest` (unsharded, sharded, fallthroughs), 6 `PlainStsDiscovererTest` (image match, owner-filter, ready aggregation, image-tag parsing), 6 `SecretReaderTest` (`data` vs `stringData`, SHA-256 fingerprint). All run on the JVM without a live cluster.
+
+### Deferred
+
+- **Informer-driven live deltas** — the current discover call is one-shot; informers land with Q2.8.1-C's port-forward lifecycle, which is the first surface that benefits from live updates.
+- **Plain-STS secret resolver** — surfaced as "(no material found)" in the preview; B3's next iteration lets users pick a Secret + key mapping manually.
+
 ## v2.8.0-alpha — Kubernetes foundation (Q2.8.1-A)
 
 First slice of the v2.8.1 Kubernetes Integration milestone — the `K8S-*` foundation: attach a cluster by kubeconfig context, probe it for reachability, and classify which auth strategy each context uses so pre-flight can catch `plugin X not on PATH` before an Apply. Discovery, port-forward, secret pickup, and provisioning land in subsequent chunks (Q2.8.1-B onwards).

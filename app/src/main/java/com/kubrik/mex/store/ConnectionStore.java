@@ -168,6 +168,44 @@ public class ConnectionStore {
         }
     }
 
+    /**
+     * v2.8.1 Q2.8.1-B3 — Minimal {@code origin='K8S'} insert for the
+     * "connect to existing" flow.
+     *
+     * <p>Mirrors {@link #insertLabOrigin} in style: skips the upsert
+     * ritual and just writes the columns that matter. The URI
+     * initially points at the in-cluster Service name; once
+     * Q2.8.1-C ships the port-forward service the wiring rewrites it
+     * to {@code mongodb://127.0.0.1:<localPort>} for the duration of
+     * the session. Persisting the Service-name form keeps the row
+     * recognizable and re-openable in future sessions.</p>
+     */
+    public String insertK8sOrigin(String name, String uri) {
+        long now = System.currentTimeMillis();
+        String id = UUID.randomUUID().toString();
+        String sql = """
+                INSERT INTO connections(id, name, mode, uri, tls, allow_invalid_certs,
+                    connection_type, hosts, auth_mode, ssh_auth_mode,
+                    ssh_port, proxy_type, proxy_port, read_preference,
+                    tls_allow_invalid_hostnames, ssh_enabled,
+                    created_at, updated_at, origin)
+                VALUES (?, ?, 'FORM', ?, 0, 0, 'STANDALONE', '',
+                    'NONE', 'PASSWORD', 22, 'NONE', 1080, 'primary',
+                    0, 0, ?, ?, 'K8S')
+                """;
+        try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+            ps.setString(1, id);
+            ps.setString(2, name);
+            ps.setString(3, uri);
+            ps.setLong(4, now);
+            ps.setLong(5, now);
+            ps.executeUpdate();
+            return id;
+        } catch (SQLException e) {
+            throw new RuntimeException("k8s-origin connection insert failed", e);
+        }
+    }
+
     public void delete(String id) {
         // Cascade delete: SQLite's FK constraints are off by default, so we
         // perform the v2.4 cluster-table cleanup manually inside a single

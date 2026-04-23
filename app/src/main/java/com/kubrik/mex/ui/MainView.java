@@ -561,6 +561,8 @@ public class MainView extends BorderPane {
     private com.kubrik.mex.k8s.cluster.KubeClusterDao kubeClusterDao;
     private com.kubrik.mex.k8s.cluster.KubeClusterService kubeClusterService;
     private com.kubrik.mex.k8s.cluster.ClusterProbeService kubeProbeService;
+    private com.kubrik.mex.k8s.discovery.DiscoveryService kubeDiscoveryService;
+    private com.kubrik.mex.k8s.secret.SecretPickupService kubeSecretService;
     private com.kubrik.mex.security.baseline.SecurityBaselineDao securityBaselineDao;
     private com.kubrik.mex.security.drift.DriftAckDao driftAckDao;
     private com.kubrik.mex.security.cis.CisSuppressionsDao cisSuppressionsDao;
@@ -880,7 +882,8 @@ public class MainView extends BorderPane {
         }
         ensureK8sWiring();
         clustersPane = new com.kubrik.mex.k8s.ui.ClustersPane(
-                kubeClusterService, events);
+                kubeClusterService, events,
+                kubeDiscoveryService, kubeSecretService, connectionStore);
         clustersTab = new Tab("Clusters", clustersPane);
         clustersTab.setOnClosed(e -> {
             if (clustersPane != null) clustersPane.close();
@@ -898,6 +901,9 @@ public class MainView extends BorderPane {
         kubeProbeService = new com.kubrik.mex.k8s.cluster.ClusterProbeService(kubeClientFactory);
         kubeClusterService = new com.kubrik.mex.k8s.cluster.KubeClusterService(
                 kubeClusterDao, kubeClientFactory, kubeProbeService, events);
+        kubeDiscoveryService = new com.kubrik.mex.k8s.discovery.DiscoveryService(
+                kubeClientFactory, events);
+        kubeSecretService = new com.kubrik.mex.k8s.secret.SecretPickupService(kubeClientFactory);
     }
 
     private static boolean isK8sEnabled() {
