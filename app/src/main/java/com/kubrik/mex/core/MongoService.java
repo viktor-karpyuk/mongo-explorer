@@ -140,6 +140,13 @@ public class MongoService implements AutoCloseable {
         return MongoClients.create(b.build());
     }
 
+    /** The primary {@link MongoClient} this service wraps. Callers
+     *  that need direct access (v2.7 maintenance panes that run
+     *  cluster-wide commands) go through this accessor; peer / single-
+     *  host access uses {@link #openPeerClient} / {@link
+     *  #openMemberClient} instead. */
+    public MongoClient client() { return client; }
+
     public String serverVersion() { return serverVersion; }
 
     public List<String> listDatabaseNames() {

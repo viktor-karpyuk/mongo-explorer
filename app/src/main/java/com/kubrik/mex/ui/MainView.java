@@ -318,7 +318,14 @@ public class MainView extends BorderPane {
                 item("Security",
                         new KeyCodeCombination(KeyCode.S,
                                 KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
-                        this::openSecurityTabForContext));
+                        this::openSecurityTabForContext),
+                // v2.7 UI-MAINT — Maintenance & change-mgmt surfaces
+                // (approvals, schema, reconfig, rolling index, compact,
+                // parameters, upgrade, drift).
+                item("Maintenance",
+                        new KeyCodeCombination(KeyCode.M,
+                                KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
+                        this::openMaintenanceTabForContext));
 
         // ----- Help -----
         Menu help = new Menu("Help");
@@ -507,9 +514,19 @@ public class MainView extends BorderPane {
      *  re-selected on duplicate open. Body is closed on tab dispose to release
      *  the bus subscriptions held by {@code TopologyPane} / {@code ClusterTab}. */
     private final java.util.Map<String, Tab> clusterTabs = new java.util.HashMap<>();
+    /** Single, reusable placeholder tab shown when the Cluster view is opened
+     *  but no connection is available. Cleared on close so the next invocation
+     *  builds a fresh one (and so it doesn't linger after a connection lands). */
+    private Tab clusterEmptyTab;
 
     // v2.6 Q2.6-UI — per-connection Security tabs + lazy-init shared DAOs.
     private final java.util.Map<String, Tab> securityTabs = new java.util.HashMap<>();
+
+    // v2.7 UI-MAINT — per-connection Maintenance tab cache + lazy DAOs.
+    private final java.util.Map<String, Tab> maintenanceTabs = new java.util.HashMap<>();
+    private com.kubrik.mex.maint.approval.ApprovalDao approvalDao;
+    private com.kubrik.mex.maint.approval.ApprovalService approvalService;
+    private com.kubrik.mex.maint.drift.ConfigSnapshotDao configSnapshotDao;
     private com.kubrik.mex.security.baseline.SecurityBaselineDao securityBaselineDao;
     private com.kubrik.mex.security.drift.DriftAckDao driftAckDao;
     private com.kubrik.mex.security.cis.CisSuppressionsDao cisSuppressionsDao;
@@ -518,10 +535,14 @@ public class MainView extends BorderPane {
 
     /** Keyboard-accelerator entry point. Picks the tree's current connection
      *  context, falling back to the first connected one; if nothing is
-     *  connected the status bar surfaces the reason instead of silently no-op'ing. */
+     *  connected we now open an explicit empty-state tab (icon + CTA to the
+     *  Connections view) rather than silently updating the status bar. */
     private void openClusterTabForSelectedConnection() {
         String selected = resolveClusterContext();
-        if (selected == null) return;
+        if (selected == null) {
+            openClusterEmptyTab();
+            return;
+        }
         openClusterTab(selected);
     }
 
@@ -531,7 +552,10 @@ public class MainView extends BorderPane {
      *  long-running ops during an incident. */
     private void openLongRunningOpsView() {
         String selected = resolveClusterContext();
-        if (selected == null) return;
+        if (selected == null) {
+            openClusterEmptyTab();
+            return;
+        }
         openClusterTab(selected);
         Tab t = clusterTabs.get(selected);
         if (t != null && t.getContent() instanceof com.kubrik.mex.ui.cluster.ClusterTab ct) {
@@ -585,6 +609,28 @@ public class MainView extends BorderPane {
         tabs.getSelectionModel().select(t);
     }
 
+    /** Opens (or focuses) a single placeholder Cluster tab that explains there
+     *  is no active connection and links the user to the Connections view.
+     *  Reuses an existing empty tab rather than stacking duplicates. Also
+     *  pushes the reason into the status bar as a secondary signal for
+     *  users with a connection-strip visible. */
+    private void openClusterEmptyTab() {
+        statusConn.setText("Cluster view: no connected cluster — connect one first.");
+        if (clusterEmptyTab != null && tabs.getTabs().contains(clusterEmptyTab)) {
+            tabs.getSelectionModel().select(clusterEmptyTab);
+            return;
+        }
+        com.kubrik.mex.ui.cluster.ClusterEmptyPane body =
+                new com.kubrik.mex.ui.cluster.ClusterEmptyPane(
+                        this::openManageTab,
+                        () -> openEditor(null));
+        Tab t = new Tab("Cluster", body);
+        t.setOnClosed(e -> clusterEmptyTab = null);
+        clusterEmptyTab = t;
+        tabs.getTabs().add(t);
+        tabs.getSelectionModel().select(t);
+    }
+
     /**
      * v2.6 Q2.6-UI — Cmd/Ctrl+Alt+S opens a per-connection Security tab
      * with the full sub-tab set: Roles, Audit, Drift, Certificates,
@@ -633,6 +679,79 @@ public class MainView extends BorderPane {
         securityTabs.put(connectionId, t);
         tabs.getTabs().add(t);
         tabs.getSelectionModel().select(t);
+    }
+
+    /**
+     * v2.7 UI-MAINT — opens a Maintenance tab for the given connection.
+     * Lazy-initialises the shared maintenance DAOs + ApprovalService
+     * on first use so an install that never touches Maintenance pays
+     * nothing at startup.
+     */
+    private void openMaintenanceTabForContext() {
+        String selected = resolveClusterContext();
+        if (selected == null) {
+            statusConn.setText("Maintenance tab: pick a connected cluster first.");
+            return;
+        }
+        Tab existing = maintenanceTabs.get(selected);
+        if (existing != null && tabs.getTabs().contains(existing)) {
+            tabs.getSelectionModel().select(existing);
+            return;
+        }
+        com.kubrik.mex.core.MongoService svc = manager.service(selected);
+        if (svc == null) {
+            statusConn.setText("Maintenance tab: connect the cluster first.");
+            return;
+        }
+
+        ensureMaintenanceDaos();
+
+        final String cxId = selected;
+        com.kubrik.mex.maint.ui.MaintenanceTab body =
+                new com.kubrik.mex.maint.ui.MaintenanceTab(
+                        approvalService, configSnapshotDao,
+                        // clientSupplier: hands the pane the live driver client
+                        //                 for the currently-selected connection.
+                        () -> {
+                            com.kubrik.mex.core.MongoService s = manager.service(cxId);
+                            return s == null ? null : s.client();
+                        },
+                        // connectionIdSupplier: the approvals queue scopes
+                        //                      per-connection; snapshot captures
+                        //                      stamp connectionId on every row.
+                        () -> cxId,
+                        // memberOpener: for the rolling-index + compact panes —
+                        //               auth-aware direct-connection clients
+                        //               reusing credentials + TLS from svc.
+                        host -> {
+                            com.kubrik.mex.core.MongoService s = manager.service(cxId);
+                            if (s == null) throw new IllegalStateException(
+                                    "connection " + cxId + " not open");
+                            return s.openMemberClient(host, 15_000);
+                        });
+
+        MongoConnection conn = connectionStore.get(selected);
+        String title = "Maintenance · "
+                + (conn != null ? conn.name() : selected);
+        Tab t = new Tab(title, body);
+        t.setOnClosed(e -> maintenanceTabs.remove(cxId));
+        maintenanceTabs.put(selected, t);
+        tabs.getTabs().add(t);
+        tabs.getSelectionModel().select(t);
+    }
+
+    private void ensureMaintenanceDaos() {
+        if (approvalService != null) return;
+        // The approval JWS piggybacks on the v2.6 evidence key; if
+        // Main.java didn't inject it (test harness / early boot), fall
+        // through ensureSecurityDaos to lazily construct one.
+        ensureSecurityDaos();
+        approvalDao = new com.kubrik.mex.maint.approval.ApprovalDao(database);
+        com.kubrik.mex.maint.approval.JwsSigner jws =
+                new com.kubrik.mex.maint.approval.JwsSigner(evidenceSigner);
+        approvalService = new com.kubrik.mex.maint.approval.ApprovalService(
+                approvalDao, jws);
+        configSnapshotDao = new com.kubrik.mex.maint.drift.ConfigSnapshotDao(database);
     }
 
     /** v2.6 — Main.java shares its pre-constructed security DAOs with
