@@ -50,7 +50,7 @@ public final class ApprovalsPane extends BorderPane {
                          java.util.function.Supplier<String> connectionIdSupplier) {
         this.service = service;
         this.connectionIdSupplier = connectionIdSupplier;
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
         setAccessibleText("Maintenance approvals queue");
         setAccessibleHelp(
@@ -103,7 +103,7 @@ public final class ApprovalsPane extends BorderPane {
                 "Two-person approvals for destructive maintenance actions. "
                 + "Reviewers approve or reject; executors consume the "
                 + "APPROVED row when the action fires.");
-        hint.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        hint.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         hint.setWrapText(true);
         VBox v = new VBox(4, title, hint);
         v.setPadding(new Insets(0, 0, 10, 0));
@@ -138,7 +138,7 @@ public final class ApprovalsPane extends BorderPane {
         detailArea.setPrefRowCount(6);
         detailArea.setAccessibleText("Action detail for the selected approval");
         Label detailLabel = new Label("Action detail");
-        detailLabel.setStyle("-fx-text-fill: #4b5563; -fx-font-size: 11px; -fx-font-weight: 600;");
+        detailLabel.setStyle("-fx-text-fill: -color-fg-default; -fx-font-size: 11px; -fx-font-weight: 600;");
         VBox v = new VBox(6, table, detailLabel, detailArea);
         VBox.setVgrow(detailArea, Priority.ALWAYS);
         return v;
@@ -169,7 +169,7 @@ public final class ApprovalsPane extends BorderPane {
                 grow, refreshBtn);
         actions.setPadding(new Insets(10, 0, 0, 0));
 
-        statusLabel.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        statusLabel.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         statusLabel.setWrapText(true);
         VBox v = new VBox(6, actions, statusLabel);
         return v;

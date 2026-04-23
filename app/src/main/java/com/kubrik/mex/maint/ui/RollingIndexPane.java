@@ -58,7 +58,7 @@ public final class RollingIndexPane extends BorderPane {
                             java.util.function.Function<String, MongoClient> memberOpener) {
         this.clientSupplier = clientSupplier;
         this.memberOpener = memberOpener;
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
         setAccessibleText("Rolling index build pane");
         setAccessibleHelp(
@@ -77,7 +77,7 @@ public final class RollingIndexPane extends BorderPane {
                 "Build an index one member at a time — secondaries first "
                 + "(lowest priority first), then step-down + primary "
                 + "last. commitQuorum=0 keeps the build node-local.");
-        hint.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        hint.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         hint.setWrapText(true);
         VBox v = new VBox(6, title, hint);
         v.setPadding(new Insets(0, 0, 10, 0));
@@ -101,7 +101,7 @@ public final class RollingIndexPane extends BorderPane {
         g.add(new HBox(12, uniqueBox, sparseBox), 1, row++, 3, 1);
 
         Label stripLabel = new Label("Progress");
-        stripLabel.setStyle("-fx-text-fill: #4b5563; -fx-font-size: 11px; -fx-font-weight: 600;");
+        stripLabel.setStyle("-fx-text-fill: -color-fg-default; -fx-font-size: 11px; -fx-font-weight: 600;");
         VBox v = new VBox(10, g, stripLabel, progressStrip);
         return v;
     }
@@ -120,7 +120,7 @@ public final class RollingIndexPane extends BorderPane {
         HBox actions = new HBox(8, planBtn, grow, runBtn);
         actions.setPadding(new Insets(10, 0, 0, 0));
 
-        statusLabel.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        statusLabel.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         statusLabel.setWrapText(true);
         VBox v = new VBox(6, actions, statusLabel);
         return v;
@@ -145,7 +145,7 @@ public final class RollingIndexPane extends BorderPane {
             for (RollingIndexPlanner.Step step : plan) {
                 Label l = new Label("⏳ " + step.member().host()
                         + (step.isPrimary() ? " (primary, step-down)" : ""));
-                l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 12px;");
+                l.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 12px;");
                 progressStrip.getChildren().add(l);
                 memberLabels.put(step.member().id(), l);
             }
@@ -307,19 +307,19 @@ public final class RollingIndexPane extends BorderPane {
 
     private void ok(String msg) {
         statusLabel.setText(msg);
-        statusLabel.setStyle("-fx-text-fill: #166534; -fx-font-size: 11px; -fx-font-weight: 600;");
+        statusLabel.setStyle("-fx-text-fill: -color-success-emphasis; -fx-font-size: 11px; -fx-font-weight: 600;");
     }
 
     private void fail(String msg) {
         statusLabel.setText(msg);
-        statusLabel.setStyle("-fx-text-fill: #b91c1c; -fx-font-size: 11px; -fx-font-weight: 600;");
+        statusLabel.setStyle("-fx-text-fill: -color-danger-emphasis; -fx-font-size: 11px; -fx-font-weight: 600;");
     }
 
     private static boolean blank(String s) { return s == null || s.isBlank(); }
 
     private static Label small(String text) {
         Label l = new Label(text);
-        l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        l.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         return l;
     }
 

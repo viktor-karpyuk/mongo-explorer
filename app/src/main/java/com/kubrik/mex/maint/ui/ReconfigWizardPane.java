@@ -83,7 +83,7 @@ public final class ReconfigWizardPane extends BorderPane {
 
     public ReconfigWizardPane(java.util.function.Supplier<MongoClient> clientSupplier) {
         this.clientSupplier = clientSupplier;
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
         setAccessibleText("Replica-set reconfig wizard");
         setAccessibleHelp(
@@ -121,7 +121,7 @@ public final class ReconfigWizardPane extends BorderPane {
                 + "replSetGetConfig; Preview runs the preflight client-"
                 + "side; Apply dispatches with writeConcern majority + "
                 + "emits a rollback plan.");
-        hint.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        hint.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         hint.setWrapText(true);
 
         HBox pickerRow = new HBox(8, small("Change kind"), kindPicker);
@@ -154,9 +154,9 @@ public final class ReconfigWizardPane extends BorderPane {
                 if (empty || item == null) {
                     setStyle("");
                 } else if (item.severity() == ReconfigPreflight.Severity.BLOCKING) {
-                    setStyle("-fx-background-color: #fef2f2;");
+                    setStyle("-fx-background-color: -color-danger-subtle;");
                 } else {
-                    setStyle("-fx-background-color: #fffbeb;");
+                    setStyle("-fx-background-color: -color-warning-subtle;");
                 }
             }
         });
@@ -164,7 +164,7 @@ public final class ReconfigWizardPane extends BorderPane {
         findingsTable.setAccessibleText("Preflight findings — BLOCKING rows refuse Apply");
 
         Label paramsLabel = new Label("Change parameters");
-        paramsLabel.setStyle("-fx-text-fill: #4b5563; -fx-font-size: 11px; -fx-font-weight: 600;");
+        paramsLabel.setStyle("-fx-text-fill: -color-fg-default; -fx-font-size: 11px; -fx-font-weight: 600;");
         VBox left = new VBox(6, small("Current members"), currentMembers,
                 small("Preflight findings"), findingsTable);
         VBox right = new VBox(6, paramsLabel, paramsBox);
@@ -192,7 +192,7 @@ public final class ReconfigWizardPane extends BorderPane {
         HBox actions = new HBox(8, loadBtn, previewBtn, grow, applyBtn);
         actions.setPadding(new Insets(10, 0, 0, 0));
 
-        statusLabel.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        statusLabel.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         statusLabel.setWrapText(true);
         VBox v = new VBox(6, actions, statusLabel);
         return v;
@@ -275,7 +275,7 @@ public final class ReconfigWizardPane extends BorderPane {
         } else {
             statusLabel.setText("Preflight warnings only — Apply allowed.");
             statusLabel.setStyle(
-                    "-fx-text-fill: #d97706; -fx-font-size: 11px; -fx-font-weight: 600;");
+                    "-fx-text-fill: -color-warning-emphasis; -fx-font-size: 11px; -fx-font-weight: 600;");
         }
     }
 
@@ -374,18 +374,18 @@ public final class ReconfigWizardPane extends BorderPane {
     private void ok(String msg) {
         statusLabel.setText(msg);
         statusLabel.setStyle(
-                "-fx-text-fill: #166534; -fx-font-size: 11px; -fx-font-weight: 600;");
+                "-fx-text-fill: -color-success-emphasis; -fx-font-size: 11px; -fx-font-weight: 600;");
     }
 
     private void fail(String msg) {
         statusLabel.setText(msg);
         statusLabel.setStyle(
-                "-fx-text-fill: #b91c1c; -fx-font-size: 11px; -fx-font-weight: 600;");
+                "-fx-text-fill: -color-danger-emphasis; -fx-font-size: 11px; -fx-font-weight: 600;");
     }
 
     private static Label small(String text) {
         Label l = new Label(text);
-        l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        l.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         return l;
     }
 

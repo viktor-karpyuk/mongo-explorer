@@ -46,7 +46,7 @@ public final class UpgradePlannerPane extends BorderPane {
     private UpgradePlan.Plan lastPlan;
 
     public UpgradePlannerPane() {
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
         setAccessibleText("Upgrade planner pane");
         setAccessibleHelp(
@@ -66,7 +66,7 @@ public final class UpgradePlannerPane extends BorderPane {
                 + "restart runbook. Supports immediate-neighbour major "
                 + "hops only (4.4→5.0, 5.0→6.0, 6.0→7.0). Binary "
                 + "replacement itself remains out-of-scope per NG-2.7-1.");
-        hint.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        hint.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         hint.setWrapText(true);
 
         fromField.setPromptText("6.0.0");
@@ -100,7 +100,7 @@ public final class UpgradePlannerPane extends BorderPane {
         preview.setStyle("-fx-font-family: 'Menlo', 'Courier New', monospace; -fx-font-size: 11px;");
 
         Label previewLabel = new Label("Markdown runbook preview");
-        previewLabel.setStyle("-fx-text-fill: #4b5563; -fx-font-size: 11px; -fx-font-weight: 600;");
+        previewLabel.setStyle("-fx-text-fill: -color-fg-default; -fx-font-size: 11px; -fx-font-weight: 600;");
         VBox v = new VBox(6, findingsTable, previewLabel, preview);
         VBox.setVgrow(preview, Priority.ALWAYS);
         return v;
@@ -119,7 +119,7 @@ public final class UpgradePlannerPane extends BorderPane {
         HBox actions = new HBox(8, scanBtn, grow, exportMdBtn, exportHtmlBtn);
         actions.setPadding(new Insets(10, 0, 0, 0));
 
-        statusLabel.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        statusLabel.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         statusLabel.setWrapText(true);
         return new VBox(6, actions, statusLabel);
     }
@@ -168,15 +168,15 @@ public final class UpgradePlannerPane extends BorderPane {
 
     private void ok(String msg) {
         statusLabel.setText(msg);
-        statusLabel.setStyle("-fx-text-fill: #166534; -fx-font-size: 11px; -fx-font-weight: 600;");
+        statusLabel.setStyle("-fx-text-fill: -color-success-emphasis; -fx-font-size: 11px; -fx-font-weight: 600;");
     }
     private void fail(String msg) {
         statusLabel.setText(msg);
-        statusLabel.setStyle("-fx-text-fill: #b91c1c; -fx-font-size: 11px; -fx-font-weight: 600;");
+        statusLabel.setStyle("-fx-text-fill: -color-danger-emphasis; -fx-font-size: 11px; -fx-font-weight: 600;");
     }
     private static Label small(String text) {
         Label l = new Label(text);
-        l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        l.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         return l;
     }
     private static <T> TableColumn<T, String> col(String title, int width,

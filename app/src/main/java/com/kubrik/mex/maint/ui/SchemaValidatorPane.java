@@ -58,7 +58,7 @@ public final class SchemaValidatorPane extends BorderPane {
 
     public SchemaValidatorPane(java.util.function.Supplier<MongoClient> clientSupplier) {
         this.clientSupplier = clientSupplier;
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
         setAccessibleText("Schema validator editor");
         setAccessibleHelp(
@@ -81,7 +81,7 @@ public final class SchemaValidatorPane extends BorderPane {
                 + "preview of how many sampled docs would fail. Apply "
                 + "through a rollout dialog gated by the approval "
                 + "workflow.");
-        hint.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        hint.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         hint.setWrapText(true);
 
         templatePicker.setTooltip(tip(
@@ -113,7 +113,7 @@ public final class SchemaValidatorPane extends BorderPane {
         editor.setStyle("-fx-font-family: 'Menlo', 'Courier New', monospace; -fx-font-size: 12px;");
 
         Label offendersLabel = new Label("Offending sampled docs");
-        offendersLabel.setStyle("-fx-text-fill: #4b5563; -fx-font-size: 11px; -fx-font-weight: 600;");
+        offendersLabel.setStyle("-fx-text-fill: -color-fg-default; -fx-font-size: 11px; -fx-font-weight: 600;");
         offendersTable.setPlaceholder(new Label("Run Preview to populate."));
         offendersTable.getColumns().setAll(
                 col("_id", 140, ValidatorSpec.FailedDoc::id),
@@ -149,7 +149,7 @@ public final class SchemaValidatorPane extends BorderPane {
                 grow, loadBtn, previewBtn, applyBtn);
         actions.setPadding(new Insets(10, 0, 0, 0));
 
-        statusLabel.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        statusLabel.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         statusLabel.setWrapText(true);
         VBox v = new VBox(6, actions, statusLabel);
         return v;
@@ -251,20 +251,20 @@ public final class SchemaValidatorPane extends BorderPane {
     private void ok(String msg) {
         statusLabel.setText(msg);
         statusLabel.setStyle(
-                "-fx-text-fill: #166534; -fx-font-size: 11px; -fx-font-weight: 600;");
+                "-fx-text-fill: -color-success-emphasis; -fx-font-size: 11px; -fx-font-weight: 600;");
     }
 
     private void fail(String msg) {
         statusLabel.setText(msg);
         statusLabel.setStyle(
-                "-fx-text-fill: #b91c1c; -fx-font-size: 11px; -fx-font-weight: 600;");
+                "-fx-text-fill: -color-danger-emphasis; -fx-font-size: 11px; -fx-font-weight: 600;");
     }
 
     private static boolean blank(String s) { return s == null || s.isBlank(); }
 
     private static Label small(String text) {
         Label l = new Label(text);
-        l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        l.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         return l;
     }
 

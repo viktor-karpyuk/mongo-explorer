@@ -49,7 +49,7 @@ public final class ConfigDriftPane extends BorderPane {
         this.service = new ConfigSnapshotService(dao);
         this.clientSupplier = clientSupplier;
         this.connectionIdSupplier = connectionIdSupplier;
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
         setAccessibleText("Config drift pane");
         setAccessibleHelp(
@@ -68,7 +68,7 @@ public final class ConfigDriftPane extends BorderPane {
                 "Snapshots of cluster-wide parameters, cmdline (redacted), "
                 + "FCV, and sharding settings. Select two rows and click "
                 + "Diff to see what changed.");
-        hint.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        hint.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         hint.setWrapText(true);
         VBox v = new VBox(6, title, hint);
         v.setPadding(new Insets(0, 0, 10, 0));
@@ -93,7 +93,7 @@ public final class ConfigDriftPane extends BorderPane {
         diffArea.setStyle("-fx-font-family: 'Menlo', 'Courier New', monospace; -fx-font-size: 11px;");
 
         Label diffLabel = new Label("Diff");
-        diffLabel.setStyle("-fx-text-fill: #4b5563; -fx-font-size: 11px; -fx-font-weight: 600;");
+        diffLabel.setStyle("-fx-text-fill: -color-fg-default; -fx-font-size: 11px; -fx-font-weight: 600;");
         VBox v = new VBox(6, table, diffLabel, diffArea);
         VBox.setVgrow(diffArea, Priority.ALWAYS);
         return v;
@@ -112,7 +112,7 @@ public final class ConfigDriftPane extends BorderPane {
         HBox actions = new HBox(8, captureBtn, refreshBtn, grow, diffBtn);
         actions.setPadding(new Insets(10, 0, 0, 0));
 
-        statusLabel.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        statusLabel.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         statusLabel.setWrapText(true);
         return new VBox(6, actions, statusLabel);
     }
@@ -186,11 +186,11 @@ public final class ConfigDriftPane extends BorderPane {
 
     private void ok(String msg) {
         statusLabel.setText(msg);
-        statusLabel.setStyle("-fx-text-fill: #166534; -fx-font-size: 11px; -fx-font-weight: 600;");
+        statusLabel.setStyle("-fx-text-fill: -color-success-emphasis; -fx-font-size: 11px; -fx-font-weight: 600;");
     }
     private void fail(String msg) {
         statusLabel.setText(msg);
-        statusLabel.setStyle("-fx-text-fill: #b91c1c; -fx-font-size: 11px; -fx-font-weight: 600;");
+        statusLabel.setStyle("-fx-text-fill: -color-danger-emphasis; -fx-font-size: 11px; -fx-font-weight: 600;");
     }
     private static <T> TableColumn<T, String> col(String title, int width,
                                                    java.util.function.Function<T, String> getter) {

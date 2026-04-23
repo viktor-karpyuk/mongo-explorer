@@ -55,7 +55,7 @@ public final class ParameterTuningPane extends BorderPane {
 
     public ParameterTuningPane(java.util.function.Supplier<MongoClient> clientSupplier) {
         this.clientSupplier = clientSupplier;
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
         setAccessibleText("Parameter tuning pane");
         setAccessibleHelp(
@@ -80,7 +80,7 @@ public final class ParameterTuningPane extends BorderPane {
                 + "below + Refresh to see recommendations with rationale. "
                 + "Severity: ACT (red) / CONSIDER (amber) / INFO (already "
                 + "tuned).");
-        hint.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        hint.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         hint.setWrapText(true);
 
         GridPane g = new GridPane();
@@ -111,8 +111,8 @@ public final class ParameterTuningPane extends BorderPane {
                 super.updateItem(item, empty);
                 if (empty || item == null) { setStyle(""); return; }
                 setStyle(switch (item.severity()) {
-                    case ACT -> "-fx-background-color: #fef2f2;";
-                    case CONSIDER -> "-fx-background-color: #fffbeb;";
+                    case ACT -> "-fx-background-color: -color-danger-subtle;";
+                    case CONSIDER -> "-fx-background-color: -color-warning-subtle;";
                     case INFO -> "";
                 });
             }
@@ -125,7 +125,7 @@ public final class ParameterTuningPane extends BorderPane {
         rationaleArea.setPrefRowCount(4);
 
         Label rationaleLabel = new Label("Rationale");
-        rationaleLabel.setStyle("-fx-text-fill: #4b5563; -fx-font-size: 11px; -fx-font-weight: 600;");
+        rationaleLabel.setStyle("-fx-text-fill: -color-fg-default; -fx-font-size: 11px; -fx-font-weight: 600;");
         VBox v = new VBox(6, table, rationaleLabel, rationaleArea);
         VBox.setVgrow(table, Priority.ALWAYS);
         return v;
@@ -142,7 +142,7 @@ public final class ParameterTuningPane extends BorderPane {
         HBox actions = new HBox(8, refreshBtn, grow, applyBtn);
         actions.setPadding(new Insets(10, 0, 0, 0));
 
-        statusLabel.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        statusLabel.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         statusLabel.setWrapText(true);
         return new VBox(6, actions, statusLabel);
     }
@@ -215,15 +215,15 @@ public final class ParameterTuningPane extends BorderPane {
 
     private void ok(String msg) {
         statusLabel.setText(msg);
-        statusLabel.setStyle("-fx-text-fill: #166534; -fx-font-size: 11px; -fx-font-weight: 600;");
+        statusLabel.setStyle("-fx-text-fill: -color-success-emphasis; -fx-font-size: 11px; -fx-font-weight: 600;");
     }
     private void fail(String msg) {
         statusLabel.setText(msg);
-        statusLabel.setStyle("-fx-text-fill: #b91c1c; -fx-font-size: 11px; -fx-font-weight: 600;");
+        statusLabel.setStyle("-fx-text-fill: -color-danger-emphasis; -fx-font-size: 11px; -fx-font-weight: 600;");
     }
     private static Label small(String text) {
         Label l = new Label(text);
-        l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        l.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         return l;
     }
     private static <T> TableColumn<T, String> col(String title, int width,

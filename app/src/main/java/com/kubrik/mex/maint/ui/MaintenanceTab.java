@@ -34,7 +34,7 @@ public final class MaintenanceTab extends BorderPane {
                           Supplier<MongoClient> clientSupplier,
                           Supplier<String> connectionIdSupplier,
                           Function<String, MongoClient> memberOpener) {
-        setStyle("-fx-background-color: white;");
+        setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new javafx.geometry.Insets(14, 16, 14, 16));
 
         TabPane tabs = new TabPane(
