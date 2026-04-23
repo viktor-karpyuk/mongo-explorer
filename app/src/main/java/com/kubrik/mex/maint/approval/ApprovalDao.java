@@ -83,19 +83,23 @@ public final class ApprovalDao {
     }
 
     /** Flip a PENDING row to APPROVED with the reviewer name + JWS
-     *  signature attached. Refuses if the row is in any other state so
-     *  a replay can't overwrite a CONSUMED approval. */
+     *  signature attached. Refuses if the row is in any other state
+     *  so a replay can't overwrite a CONSUMED approval. Also refuses
+     *  if the row is past its expiry — the sweepExpired / approve
+     *  race previously let an EXPIRED-eligible row slip through. */
     public boolean approve(String actionUuid, String approver, String approvalSig,
                            long approvedAt) {
         synchronized (db.writeLock()) {
             try (PreparedStatement ps = db.connection().prepareStatement(
                     "UPDATE approvals SET approver = ?, approved_at = ?, " +
                     "approval_sig = ?, status = 'APPROVED' " +
-                    "WHERE action_uuid = ? AND status = 'PENDING'")) {
+                    "WHERE action_uuid = ? AND status = 'PENDING' " +
+                    "AND (expires_at IS NULL OR expires_at > ?)")) {
                 ps.setString(1, approver);
                 ps.setLong(2, approvedAt);
                 ps.setString(3, approvalSig);
                 ps.setString(4, actionUuid);
+                ps.setLong(5, approvedAt);
                 return ps.executeUpdate() > 0;
             } catch (SQLException e) {
                 return false;

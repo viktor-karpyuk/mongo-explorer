@@ -160,6 +160,42 @@ class ApprovalServiceTest {
         assertTrue(svc.requestToken(r, token).isEmpty());
     }
 
+    @Test
+    void token_without_exp_claim_is_refused() {
+        // Review round 2 regression: a crafted token lacking `exp`
+        // was silently treated as "no expiry" and given a fresh
+        // 1-hour window. Must now hard-reject.
+        Approval.Request r = sample("rcfg.apply", "alice");
+        // Build a JWS with no exp claim, signed with this install's
+        // key. The sig will verify; the service must still refuse.
+        com.kubrik.mex.maint.approval.JwsSigner signer =
+                new com.kubrik.mex.maint.approval.JwsSigner(
+                        new com.kubrik.mex.security.EvidenceSigner(
+                                db, new com.kubrik.mex.core.Crypto()));
+        String tokenNoExp = signer.sign(java.util.Map.of(
+                "auuid", r.actionUuid(),
+                "a", r.actionName(),
+                "ph", r.payloadHash(),
+                "rev", "bob",
+                "iat", clock.get()));
+        assertTrue(svc.requestToken(r, tokenNoExp).isEmpty(),
+                "token missing exp claim must be refused");
+    }
+
+    @Test
+    void approve_of_expired_pending_row_is_refused() {
+        // Review round 2 regression: sweep-then-approve race could
+        // flip an EXPIRED-eligible row to APPROVED if the sweep
+        // hadn't fired yet. approveTwoPerson now rechecks expires_at
+        // atomically in the UPDATE.
+        Approval.Request r = sample("rcfg.apply", "alice");
+        svc.requestTwoPerson(r);
+        clock.addAndGet(ApprovalService.DEFAULT_EXPIRY_MS + 1);
+        // Intentionally DO NOT sweep — simulate the race window.
+        assertFalse(svc.approveTwoPerson(r.actionUuid(), "bob"),
+                "approve must recheck expiry atomically");
+    }
+
     /* ============================ lifecycle ============================ */
 
     @Test

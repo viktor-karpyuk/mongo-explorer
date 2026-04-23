@@ -173,19 +173,36 @@ public final class ApprovalsPane extends BorderPane {
         TextInputDialog dlg = new TextInputDialog();
         dlg.setHeaderText("Approve " + sel.actionName() + "?");
         dlg.setContentText("Your name (not the requester's):");
-        dlg.showAndWait().ifPresent(name -> Platform.runLater(() -> {
+        dlg.showAndWait().ifPresent(name -> {
             String reviewer = name.trim();
             if (reviewer.isEmpty()) {
                 statusLabel.setText("Cancelled — blank reviewer name.");
                 return;
             }
-            boolean ok = service.approveTwoPerson(sel.actionUuid(), reviewer);
-            if (ok) statusLabel.setText("Approved by " + reviewer + ".");
-            else statusLabel.setText(
-                    "Approval refused — self-approval is not allowed; "
-                    + "only PENDING rows can be approved.");
-            refresh();
-        }));
+            statusLabel.setText("Approving…");
+            // Off the FX thread — approveTwoPerson takes the SQLite
+            // write lock and synchronously waits for it. On a slow
+            // disk or during another DB writer the FX thread would
+            // otherwise freeze the whole app.
+            Thread.startVirtualThread(() -> {
+                boolean ok;
+                try {
+                    ok = service.approveTwoPerson(sel.actionUuid(), reviewer);
+                } catch (Throwable t) {
+                    Platform.runLater(() -> statusLabel.setText(
+                            "Approve failed: " + t.getClass().getSimpleName()
+                                    + ": " + t.getMessage()));
+                    return;
+                }
+                Platform.runLater(() -> {
+                    if (ok) statusLabel.setText("Approved by " + reviewer + ".");
+                    else statusLabel.setText(
+                            "Approval refused — self-approval is not allowed; "
+                            + "only PENDING non-expired rows can be approved.");
+                    refresh();
+                });
+            });
+        });
     }
 
     private void onReject() {
@@ -195,10 +212,17 @@ public final class ApprovalsPane extends BorderPane {
                 "Reject approval for " + sel.actionName() + "?",
                 ButtonType.OK, ButtonType.CANCEL);
         confirm.showAndWait().ifPresent(b -> {
-            if (b == ButtonType.OK) {
-                service.reject(sel.actionUuid());
-                refresh();
-            }
+            if (b != ButtonType.OK) return;
+            statusLabel.setText("Rejecting…");
+            Thread.startVirtualThread(() -> {
+                try { service.reject(sel.actionUuid()); }
+                catch (Throwable t) {
+                    Platform.runLater(() -> statusLabel.setText(
+                            "Reject failed: " + t.getMessage()));
+                    return;
+                }
+                Platform.runLater(this::refresh);
+            });
         });
     }
 

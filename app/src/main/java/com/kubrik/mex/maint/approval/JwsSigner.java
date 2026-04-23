@@ -155,8 +155,17 @@ public final class JwsSigner {
                 if ("null".equals(token)) value = null;
                 else if ("true".equals(token)) value = Boolean.TRUE;
                 else if ("false".equals(token)) value = Boolean.FALSE;
-                else if (token.contains(".")) value = Double.parseDouble(token);
-                else value = Long.parseLong(token);
+                // Try Long first — integer-valued tokens written by
+                // this signer (iat, exp as epoch millis) must round-
+                // trip as Long so downstream `instanceof Long` checks
+                // stay honest. Only fall back to Double when the
+                // token really doesn't fit in a long.
+                else {
+                    try { value = Long.parseLong(token); }
+                    catch (NumberFormatException nfe) {
+                        value = Double.parseDouble(token);
+                    }
+                }
             }
             out.put(key, value);
         }

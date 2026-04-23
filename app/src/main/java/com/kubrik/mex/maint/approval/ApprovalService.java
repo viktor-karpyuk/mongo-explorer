@@ -103,19 +103,32 @@ public final class ApprovalService {
         if (!r.actionUuid().equals(c.get("auuid"))) return Optional.empty();
         if (!r.actionName().equals(c.get("a"))) return Optional.empty();
         if (!r.payloadHash().equals(c.get("ph"))) return Optional.empty();
+
+        // exp is REQUIRED and MUST be a Number. A missing or
+        // mistyped exp claim was previously treated as "no expiry
+        // check" which silently gave the executor a fresh 1-hour
+        // window — a replay-window bypass. Now it's a hard reject.
         Object exp = c.get("exp");
+        if (!(exp instanceof Number)) return Optional.empty();
+        long expMs = ((Number) exp).longValue();
         long now = clock.getAsLong();
-        if (exp instanceof Long expMs && now > expMs) return Optional.empty();
+        if (now > expMs) return Optional.empty();
+
         Object reviewer = c.get("rev");
         String reviewerName = reviewer == null ? "token" : reviewer.toString();
+
+        // Re-sign the approval descriptor locally so approval_sig
+        // column is type-uniform across modes (SOLO / TWO_PERSON also
+        // store a descriptor signature, not the raw request token).
+        // The raw reviewer JWS is preserved via review-time audit.
+        String descriptorSig = signApprovalDescriptor(r, reviewerName, now);
 
         Approval.Row row = new Approval.Row(
                 -1, r.actionUuid(), r.connectionId(), r.actionName(),
                 r.payloadJson(), r.payloadHash(), r.requestedAt(),
                 r.requestedBy(), Approval.Mode.TOKEN,
-                reviewerName, now, reviewerJws,
-                Approval.Status.APPROVED,
-                exp instanceof Long expMs ? expMs : now + DEFAULT_EXPIRY_MS);
+                reviewerName, now, descriptorSig,
+                Approval.Status.APPROVED, expMs);
         return Optional.of(dao.insert(row));
     }
 
