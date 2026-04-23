@@ -69,16 +69,16 @@ public final class RollingIndexRunner {
         //    asks the server to wait until every voting member has
         //    committed before returning — gives us majority durability
         //    without tying up the UI on each secondary individually.
-        MongoClient primary = null;
-        try {
-            primary = ctx.openMember(primaryHost);
+        // try-with on the primary client; the earlier draft closed in
+        // both catch blocks AND in finally (double-close — safe but
+        // sloppy). A single try-with gives us one close site.
+        try (MongoClient primary = ctx.openMember(primaryHost)) {
             MongoDatabase db = primary.getDatabase(spec.db());
             Document cmd = new Document("createIndexes", spec.coll())
                     .append("indexes", spec.asCreateIndexesArgs())
                     .append("commitQuorum", "votingMembers");
             db.runCommand(cmd);
         } catch (com.mongodb.MongoCommandException mce) {
-            if (primary != null) primary.close();
             // Fire-time failure — nothing committed on any member.
             return new Result(
                     List.of(new MemberOutcome(-1, primaryHost, false,
@@ -86,16 +86,11 @@ public final class RollingIndexRunner {
                             System.currentTimeMillis() - t0)),
                     false, System.currentTimeMillis() - t0);
         } catch (Exception e) {
-            if (primary != null) primary.close();
             return new Result(
                     List.of(new MemberOutcome(-1, primaryHost, false,
                             e.getClass().getSimpleName(), e.getMessage(),
                             System.currentTimeMillis() - t0)),
                     false, System.currentTimeMillis() - t0);
-        } finally {
-            if (primary != null) {
-                try { primary.close(); } catch (Exception ignored) {}
-            }
         }
 
         // 2. Per-member verification — listIndexes on every node and
@@ -114,7 +109,20 @@ public final class RollingIndexRunner {
     private MemberOutcome verifyIndexOn(DispatchContext ctx,
                                         IndexBuildSpec spec, String host) {
         long t0 = System.currentTimeMillis();
-        try (MongoClient member = ctx.openMember(host)) {
+        // Open is its own failure path (unreachable member / auth /
+        // TLS). Distinguish from a successful listIndexes returning
+        // nothing — the UI wants to render "couldn't ask" differently
+        // from "asked, index missing".
+        MongoClient member;
+        try {
+            member = ctx.openMember(host);
+        } catch (Exception e) {
+            return new MemberOutcome(-1, host, false,
+                    "Unreachable",
+                    "could not connect to " + host + ": " + e.getMessage(),
+                    System.currentTimeMillis() - t0);
+        }
+        try (member) {
             MongoDatabase db = member.getDatabase(spec.db());
             for (Document ix : db.getCollection(spec.coll()).listIndexes()) {
                 if (spec.name().equals(ix.getString("name"))) {
@@ -123,9 +131,14 @@ public final class RollingIndexRunner {
                             System.currentTimeMillis() - t0);
                 }
             }
-            return new MemberOutcome(-1, host, false, "IndexNotFound",
+            return new MemberOutcome(-1, host, false, "IndexNotReplicated",
                     "index " + spec.name() + " not yet on " + host
                             + " — likely lagging",
+                    System.currentTimeMillis() - t0);
+        } catch (com.mongodb.MongoExecutionTimeoutException te) {
+            return new MemberOutcome(-1, host, false, "VerifyTimeout",
+                    "listIndexes on " + host + " timed out; "
+                            + "index state unknown",
                     System.currentTimeMillis() - t0);
         } catch (Exception e) {
             return new MemberOutcome(-1, host, false,

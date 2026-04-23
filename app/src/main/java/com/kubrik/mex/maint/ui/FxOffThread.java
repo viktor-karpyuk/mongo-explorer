@@ -34,6 +34,18 @@ public final class FxOffThread {
         Thread.startVirtualThread(() -> {
             try {
                 body.run();
+            } catch (InterruptedException ie) {
+                // Preserve the interrupt flag so any joiner upstream
+                // notices, then report. Don't consume the interrupt.
+                Thread.currentThread().interrupt();
+                Platform.runLater(() -> onError.accept("interrupted"));
+            } catch (Error err) {
+                // OutOfMemoryError / StackOverflowError / VirtualMachineError
+                // must NOT be swallowed — let them propagate so the app
+                // crashes cleanly under resource exhaustion instead of
+                // limping along with corrupted state.
+                log.error("fatal Error on virtual thread", err);
+                throw err;
             } catch (Throwable t) {
                 log.warn("background body threw on virtual thread", t);
                 String msg = t.getClass().getSimpleName()

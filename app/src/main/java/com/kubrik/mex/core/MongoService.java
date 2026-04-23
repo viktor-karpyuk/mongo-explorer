@@ -121,7 +121,14 @@ public class MongoService implements AutoCloseable {
                         Integer.parseInt(trimmed.substring(colon + 1)))
                 : new com.mongodb.ServerAddress(trimmed);
 
+        // Start from the full connection string so retryWrites,
+        // retryReads, appName, compressors, readPreference, and any
+        // other URI options carry through. THEN override cluster
+        // settings to pin the single host with SINGLE mode + the
+        // caller's timeout. Without applyConnectionString the earlier
+        // draft dropped every URI option silently.
         MongoClientSettings.Builder b = MongoClientSettings.builder()
+                .applyConnectionString(cs)
                 .applyToClusterSettings(c -> {
                     c.hosts(java.util.List.of(addr));
                     c.mode(com.mongodb.connection.ClusterConnectionMode.SINGLE);
@@ -134,9 +141,7 @@ public class MongoService implements AutoCloseable {
                     c.readTimeout(timeoutMs,
                             java.util.concurrent.TimeUnit.MILLISECONDS);
                 })
-                .applyToSslSettings(c -> c.enabled(Boolean.TRUE.equals(cs.getSslEnabled())))
                 .applyToConnectionPoolSettings(c -> c.maxSize(2));
-        if (cs.getCredential() != null) b.credential(cs.getCredential());
         return MongoClients.create(b.build());
     }
 

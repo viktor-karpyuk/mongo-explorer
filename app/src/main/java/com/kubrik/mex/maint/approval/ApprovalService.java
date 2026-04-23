@@ -72,7 +72,8 @@ public final class ApprovalService {
                 r.requestedBy(), Approval.Mode.SOLO,
                 r.requestedBy(), now, sig,
                 Approval.Status.APPROVED,
-                now + DEFAULT_EXPIRY_MS);
+                now + DEFAULT_EXPIRY_MS,
+                /*reviewerJws=*/null);
         return dao.insert(row);
     }
 
@@ -86,7 +87,8 @@ public final class ApprovalService {
                 r.requestedBy(), Approval.Mode.TWO_PERSON,
                 null, null, null,
                 Approval.Status.PENDING,
-                now + DEFAULT_EXPIRY_MS);
+                now + DEFAULT_EXPIRY_MS,
+                /*reviewerJws=*/null);
         return dao.insert(row);
     }
 
@@ -120,7 +122,9 @@ public final class ApprovalService {
         // Re-sign the approval descriptor locally so approval_sig
         // column is type-uniform across modes (SOLO / TWO_PERSON also
         // store a descriptor signature, not the raw request token).
-        // The raw reviewer JWS is preserved via review-time audit.
+        // The reviewer's original JWS is ALSO persisted — v2.7 review
+        // GA — so an auditor can later verify chain-of-trust against
+        // the reviewer's install key.
         String descriptorSig = signApprovalDescriptor(r, reviewerName, now);
 
         Approval.Row row = new Approval.Row(
@@ -128,7 +132,7 @@ public final class ApprovalService {
                 r.payloadJson(), r.payloadHash(), r.requestedAt(),
                 r.requestedBy(), Approval.Mode.TOKEN,
                 reviewerName, now, descriptorSig,
-                Approval.Status.APPROVED, expMs);
+                Approval.Status.APPROVED, expMs, reviewerJws);
         return Optional.of(dao.insert(row));
     }
 

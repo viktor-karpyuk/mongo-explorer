@@ -27,8 +27,8 @@ public final class ApprovalDao {
                 INSERT INTO approvals(action_uuid, connection_id, action_name,
                     payload_json, payload_hash, requested_at, requested_by,
                     mode, approver, approved_at, approval_sig, status,
-                    expires_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    expires_at, reviewer_jws)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         synchronized (db.writeLock()) {
             try (PreparedStatement ps = db.connection().prepareStatement(sql,
@@ -50,6 +50,8 @@ public final class ApprovalDao {
                 ps.setString(12, r.status().name());
                 if (r.expiresAt() == null) ps.setNull(13, java.sql.Types.INTEGER);
                 else ps.setLong(13, r.expiresAt());
+                if (r.reviewerJws() == null) ps.setNull(14, java.sql.Types.VARCHAR);
+                else ps.setString(14, r.reviewerJws());
                 ps.executeUpdate();
                 try (ResultSet keys = ps.getGeneratedKeys()) {
                     long id = keys.next() ? keys.getLong(1) : -1L;
@@ -180,7 +182,8 @@ public final class ApprovalDao {
                 nullableLong(rs, "approved_at"),
                 rs.getString("approval_sig"),
                 Approval.Status.valueOf(rs.getString("status")),
-                nullableLong(rs, "expires_at"));
+                nullableLong(rs, "expires_at"),
+                nullableString(rs, "reviewer_jws"));
     }
 
     private static Long nullableLong(ResultSet rs, String col) throws SQLException {
@@ -188,10 +191,18 @@ public final class ApprovalDao {
         return rs.wasNull() ? null : v;
     }
 
+    /** reviewer_jws is a v2.7-review-GA additive column; older rows
+     *  don't have it. Defend against a reader racing a migration. */
+    private static String nullableString(ResultSet rs, String col) {
+        try { return rs.getString(col); }
+        catch (SQLException e) { return null; }
+    }
+
     private static Approval.Row withId(Approval.Row r, long id) {
         return new Approval.Row(id, r.actionUuid(), r.connectionId(),
                 r.actionName(), r.payloadJson(), r.payloadHash(),
                 r.requestedAt(), r.requestedBy(), r.mode(), r.approver(),
-                r.approvedAt(), r.approvalSig(), r.status(), r.expiresAt());
+                r.approvedAt(), r.approvalSig(), r.status(), r.expiresAt(),
+                r.reviewerJws());
     }
 }

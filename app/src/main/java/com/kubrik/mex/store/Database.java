@@ -676,6 +676,24 @@ public class Database implements AutoCloseable {
                 """);
             st.execute("CREATE INDEX IF NOT EXISTS idx_approvals_status_time " +
                     "ON approvals(status, requested_at)");
+            // v2.7 review GA — preserve the reviewer's original JWS
+            // for TOKEN-mode approvals. approval_sig holds the
+            // install-local descriptor signature (uniform across
+            // modes); reviewer_jws holds the raw token the reviewer
+            // produced so an auditor can later verify chain-of-trust
+            // against the reviewer's install key.
+            try { st.execute("ALTER TABLE approvals ADD COLUMN reviewer_jws TEXT"); }
+            catch (SQLException ignored) { /* column already present */ }
+            // v2.7 review GA — sweepExpired scans approvals by
+            // (status='PENDING' AND expires_at < now). Without a
+            // partial index on expires_at, every sweep is O(n) in
+            // total approvals — fine for a dev cluster but scales
+            // badly once the queue has thousands of rows. The
+            // idx_approvals_status_time index above helps narrow to
+            // PENDING but then still scans every PENDING row for
+            // the expiry comparison.
+            st.execute("CREATE INDEX IF NOT EXISTS idx_approvals_expires_at " +
+                    "ON approvals(expires_at) WHERE status = 'PENDING'");
 
             // rollback_plans.audit_id references ops_audit(id) — no FK
             // (ops_audit pre-dates FK discipline; adding one here would

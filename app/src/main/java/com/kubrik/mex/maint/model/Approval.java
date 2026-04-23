@@ -78,7 +78,10 @@ public final class Approval {
             Long approvedAt,
             String approvalSig,
             Status status,
-            Long expiresAt
+            Long expiresAt,
+            /** TOKEN mode only — the reviewer's raw JWS. null for
+             *  SOLO / TWO_PERSON rows where no external token exists. */
+            String reviewerJws
     ) {}
 
     private Approval() {}
