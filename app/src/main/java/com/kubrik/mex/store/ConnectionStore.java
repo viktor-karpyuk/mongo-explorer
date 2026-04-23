@@ -125,6 +125,49 @@ public class ConnectionStore {
         return get(id);
     }
 
+    /**
+     * v2.8.4 LAB-CONN-1 — Inserts a minimal Lab-origin connection
+     * row and returns its id. Kept separate from {@link #upsert} so
+     * the 35-column general path doesn't need to know about the
+     * lab-specific fields.
+     *
+     * @param name   user-visible name ({@code display_name} in the
+     *               lab_deployments row).
+     * @param uri    {@code mongodb://localhost:<port>[/?replicaSet=X]}.
+     * @param labDeploymentId FK back-pointer to lab_deployments.id.
+     * @return the new connection's UUID.
+     */
+    public String insertLabOrigin(String name, String uri, long labDeploymentId) {
+        long now = System.currentTimeMillis();
+        String id = UUID.randomUUID().toString();
+        // First insert the row via a minimal raw INSERT so we don't
+        // depend on upsert's column-by-column ritual; then stamp the
+        // two labs-only columns (origin, lab_deployment_id) that
+        // upsert doesn't know about.
+        String sql = """
+                INSERT INTO connections(id, name, mode, uri, tls, allow_invalid_certs,
+                    connection_type, hosts, auth_mode, ssh_auth_mode,
+                    ssh_port, proxy_type, proxy_port, read_preference,
+                    tls_allow_invalid_hostnames, ssh_enabled,
+                    created_at, updated_at, origin, lab_deployment_id)
+                VALUES (?, ?, 'FORM', ?, 0, 0, 'STANDALONE', '',
+                    'NONE', 'PASSWORD', 22, 'NONE', 1080, 'primary',
+                    0, 0, ?, ?, 'LAB', ?)
+                """;
+        try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+            ps.setString(1, id);
+            ps.setString(2, name);
+            ps.setString(3, uri);
+            ps.setLong(4, now);
+            ps.setLong(5, now);
+            ps.setLong(6, labDeploymentId);
+            ps.executeUpdate();
+            return id;
+        } catch (SQLException e) {
+            throw new RuntimeException("lab-origin connection insert failed", e);
+        }
+    }
+
     public void delete(String id) {
         // Cascade delete: SQLite's FK constraints are off by default, so we
         // perform the v2.4 cluster-table cleanup manually inside a single

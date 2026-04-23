@@ -56,6 +56,9 @@ public class EventBus {
             new ConcurrentHashMap<>();
     private final ConcurrentMap<Object, Consumer<CertExpiryEvent>> certExpiryListeners =
             new ConcurrentHashMap<>();
+    // v2.8.4 — Labs lifecycle feed. One listener per wizard / pane.
+    private final ConcurrentMap<Object, Consumer<com.kubrik.mex.labs.events.LabLifecycleEvent>> labListeners =
+            new ConcurrentHashMap<>();
 
     /** Latest topology snapshot per connection — delivered to late subscribers so newly-mounted
      *  UI can render without waiting for the next sampler tick (v2.4 TOPO-17). */
@@ -255,6 +258,21 @@ public class EventBus {
     public void publishBackup(BackupEvent e) {
         if (e == null) return;
         for (Consumer<BackupEvent> l : backupListeners.values()) {
+            try { l.accept(e); } catch (Exception ignored) {}
+        }
+    }
+
+    // v2.8.4 — Labs lifecycle feed. See com.kubrik.mex.labs.events.LabLifecycleEvent.
+    public Subscription onLab(Consumer<com.kubrik.mex.labs.events.LabLifecycleEvent> l) {
+        Object key = new Object();
+        labListeners.put(key, l);
+        return () -> labListeners.remove(key);
+    }
+
+    /** Alias matching the publish/onX symmetry of other feeds. */
+    public void publish(com.kubrik.mex.labs.events.LabLifecycleEvent e) {
+        if (e == null) return;
+        for (Consumer<com.kubrik.mex.labs.events.LabLifecycleEvent> l : labListeners.values()) {
             try { l.accept(e); } catch (Exception ignored) {}
         }
     }
