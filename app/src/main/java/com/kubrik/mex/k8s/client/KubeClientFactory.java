@@ -43,7 +43,7 @@ import java.util.concurrent.ConcurrentMap;
  * exec-plugin credentials have short TTLs and the next boot should
  * re-probe fresh.</p>
  */
-public final class KubeClientFactory {
+public class KubeClientFactory {
 
     private static final Logger log = LoggerFactory.getLogger(KubeClientFactory.class);
 

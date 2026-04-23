@@ -1,5 +1,34 @@
 # Changelog
 
+## v2.8.0-alpha — Kubernetes port-forward (Q2.8.1-C)
+
+Closes the "awaiting Q2.8.1-C" loop from the discovery chunk: spin a port-forward against a discovered Mongo workload, bind a loopback listener, and pump bytes through the Kubernetes API's SPDY upgrade to the backing pod.
+
+### Highlights
+
+- **`PortForwardService`.** `open(clusterRef, connectionId, target) → PortForwardSession`: resolves the backing pod (Service → Endpoints lookup for Service targets; direct pass-through for Pod targets), binds a kernel-assigned ephemeral port on 127.0.0.1, and starts an accept loop on a virtual thread. Each accepted client connection spins off a fresh `io.kubernetes.client.PortForward` WebSocket and pumps bytes bidirectionally on its own virtual-thread pair. No single long-lived upstream, so a pod restart doesn't kill the session — the next client connection just opens a fresh SPDY stream.
+- **`PortForwardTarget`.** Sealed-like xor: exactly one of `pod` or `service` is set. Canonical constructor validates the invariant so the service layer can't accidentally dereference an empty target.
+- **`PortForwardAuditDao`.** Writes open + close rows into `portforward_audit`; first-write-wins close stays idempotent under app-exit + explicit-close races.
+- **`PodResolver`.** Service target resolution via the Endpoints object (ready addresses only; `notReadyAddresses` filtered out). Pod target pass-through is direct with no API call.
+- **Shutdown hook.** `PortForwardService.closeAll()` wired into a JVM shutdown hook by `MainView.ensureK8sWiring`; every live forward gets a `reason_closed = 'APP_EXIT'` audit update before the process exits.
+- **`DiscoveryPanel` integration.** New "Open forward" button next to Refresh / Resolve credentials / Create connection. Records the ephemeral local port in the status line so the user can paste it straight into a connection form.
+- **Event bus.** `onPortForward` / `publishPortForward` with sealed `PortForwardEvent` (`Opened` / `Closed` / `Error`).
+
+### Scope notes
+
+Deliberately kept narrow. Richer patterns from our in-house reference implementation at `~/dev/port-forward-app` are left for follow-up chunks:
+
+- **TCP health probes.** Port-forward-app polls `Socket.connect(..)` every 5s against the local listener and marks the session `ERROR` on failure. Unnecessary here because each client connection opens its own WebSocket — a dead WebSocket only takes down one client connection, and the accept loop survives.
+- **Exponential-backoff auto-restart.** Needs a per-target autoRestart flag + a restart counter on the session. Deferred until the wizard path (Q2.8.1-D+) actually needs "keep this forward alive through a rolling restart."
+- **kubectl subprocess fallback.** Port-forward-app falls back to a `kubectl port-forward` process for MFA-heavy auth flows (AWS SSO w/ browser redirect) that stress the Java client's exec-plugin path. Deferred to Q2.8.1-L hardening — foundation code ships pure-Java.
+- **Service selector → labelled pod list.** An alternative to Endpoints-based resolution; slightly lower latency when Endpoints lag a pod becoming ready. Not shipped because Endpoints filtered for ready addresses is already the canonical signal.
+
+### Tests
+
+16 new unit tests across four classes: `EphemeralPortAllocatorTest` (loopback + distinctness), `PortForwardTargetTest` (xor invariant + validation), `PortForwardAuditDaoTest` (open / close / idempotence / count-open), `PortForwardServiceTest` (open → audit → bus events; close idempotence; closeAll; end-to-end byte pipe with a stubbed opener). All run on the JVM without a live cluster via a `PortForwardOpener` seam.
+
+Live streaming against kind is tracked for Q2.8.1-L (matrix hardening).
+
 ## v2.8.0-alpha — Kubernetes discovery + secret pickup (Q2.8.1-B)
 
 Builds on Q2.8.1-A to surface `DISC-*` and `SEC-*`: enumerate Mongo workloads on an attached cluster, resolve credentials from operator-convention Secrets, and record a placeholder connection row that port-forward (Q2.8.1-C) will make live.

@@ -6,6 +6,9 @@ import com.kubrik.mex.k8s.events.DiscoveryEvent;
 import com.kubrik.mex.k8s.model.DiscoveredMongo;
 import com.kubrik.mex.k8s.model.K8sClusterRef;
 import com.kubrik.mex.k8s.model.MongoCredentials;
+import com.kubrik.mex.k8s.model.PortForwardSession;
+import com.kubrik.mex.k8s.model.PortForwardTarget;
+import com.kubrik.mex.k8s.portforward.PortForwardService;
 import com.kubrik.mex.k8s.secret.SecretPickupService;
 import com.kubrik.mex.store.ConnectionStore;
 import javafx.application.Platform;
@@ -50,6 +53,7 @@ public final class DiscoveryPanel extends VBox {
 
     private final DiscoveryService discoveryService;
     private final SecretPickupService secretService;
+    private final PortForwardService portForwardService;
     private final ConnectionStore connectionStore;
     private final EventBus events;
 
@@ -62,11 +66,13 @@ public final class DiscoveryPanel extends VBox {
 
     public DiscoveryPanel(DiscoveryService discoveryService,
                            SecretPickupService secretService,
+                           PortForwardService portForwardService,
                            ConnectionStore connectionStore,
                            EventBus events) {
         super(6);
         this.discoveryService = discoveryService;
         this.secretService = secretService;
+        this.portForwardService = portForwardService;
         this.connectionStore = connectionStore;
         this.events = events;
 
@@ -97,10 +103,12 @@ public final class DiscoveryPanel extends VBox {
         refreshBtn.setOnAction(e -> onRefresh());
         Button resolveBtn = new Button("Resolve credentials");
         resolveBtn.setOnAction(e -> onResolve());
+        Button forwardBtn = new Button("Open forward");
+        forwardBtn.setOnAction(e -> onOpenForward());
         Button connectBtn = new Button("Create connection");
         connectBtn.setOnAction(e -> onConnect());
 
-        HBox actions = new HBox(8, refreshBtn, resolveBtn, connectBtn);
+        HBox actions = new HBox(8, refreshBtn, resolveBtn, forwardBtn, connectBtn);
 
         statusLabel.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
         statusLabel.setWrapText(true);
@@ -159,6 +167,32 @@ public final class DiscoveryPanel extends VBox {
         Thread.startVirtualThread(() -> {
             MongoCredentials creds = secretService.resolve(ref, sel);
             Platform.runLater(() -> renderCredentials(sel, creds));
+        });
+    }
+
+    private void onOpenForward() {
+        DiscoveredMongo sel = table.getSelectionModel().getSelectedItem();
+        if (sel == null || currentRef == null) {
+            statusLabel.setText("Pick a discovered Mongo first.");
+            return;
+        }
+        K8sClusterRef ref = currentRef;
+        String svc = sel.serviceName().orElse(sel.name());
+        int port = sel.port().orElse(27017);
+        String connectionId = "preview:" + sel.coordinates();
+        statusLabel.setText("Opening forward to " + sel.coordinates() + "…");
+        Thread.startVirtualThread(() -> {
+            try {
+                PortForwardSession session = portForwardService.open(ref, connectionId,
+                        PortForwardTarget.forService(sel.namespace(), svc, port));
+                Platform.runLater(() -> statusLabel.setText(
+                        "Forwarding 127.0.0.1:" + session.localPort() + " → "
+                        + sel.coordinates() + " (session " + session.auditRowId()
+                        + "). Use that address in Create connection."));
+            } catch (Throwable t) {
+                Platform.runLater(() ->
+                        statusLabel.setText("Open forward failed: " + t.getMessage()));
+            }
         });
     }
 

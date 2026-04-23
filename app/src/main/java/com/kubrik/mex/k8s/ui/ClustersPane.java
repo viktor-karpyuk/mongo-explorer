@@ -6,6 +6,7 @@ import com.kubrik.mex.k8s.discovery.DiscoveryService;
 import com.kubrik.mex.k8s.events.ClusterEvent;
 import com.kubrik.mex.k8s.model.ClusterProbeResult;
 import com.kubrik.mex.k8s.model.K8sClusterRef;
+import com.kubrik.mex.k8s.portforward.PortForwardService;
 import com.kubrik.mex.k8s.secret.SecretPickupService;
 import com.kubrik.mex.store.ConnectionStore;
 import javafx.application.Platform;
@@ -69,11 +70,13 @@ public final class ClustersPane extends BorderPane {
     public ClustersPane(KubeClusterService service, EventBus events,
                          DiscoveryService discoveryService,
                          SecretPickupService secretService,
+                         PortForwardService portForwardService,
                          ConnectionStore connectionStore) {
         this.service = service;
         this.events = events;
         this.discoveryPanel = new DiscoveryPanel(
-                discoveryService, secretService, connectionStore, events);
+                discoveryService, secretService, portForwardService,
+                connectionStore, events);
 
         setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));

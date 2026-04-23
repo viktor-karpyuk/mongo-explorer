@@ -563,6 +563,8 @@ public class MainView extends BorderPane {
     private com.kubrik.mex.k8s.cluster.ClusterProbeService kubeProbeService;
     private com.kubrik.mex.k8s.discovery.DiscoveryService kubeDiscoveryService;
     private com.kubrik.mex.k8s.secret.SecretPickupService kubeSecretService;
+    private com.kubrik.mex.k8s.portforward.PortForwardAuditDao kubePortForwardAuditDao;
+    private com.kubrik.mex.k8s.portforward.PortForwardService kubePortForwardService;
     private com.kubrik.mex.security.baseline.SecurityBaselineDao securityBaselineDao;
     private com.kubrik.mex.security.drift.DriftAckDao driftAckDao;
     private com.kubrik.mex.security.cis.CisSuppressionsDao cisSuppressionsDao;
@@ -883,7 +885,8 @@ public class MainView extends BorderPane {
         ensureK8sWiring();
         clustersPane = new com.kubrik.mex.k8s.ui.ClustersPane(
                 kubeClusterService, events,
-                kubeDiscoveryService, kubeSecretService, connectionStore);
+                kubeDiscoveryService, kubeSecretService,
+                kubePortForwardService, connectionStore);
         clustersTab = new Tab("Clusters", clustersPane);
         clustersTab.setOnClosed(e -> {
             if (clustersPane != null) clustersPane.close();
@@ -904,6 +907,15 @@ public class MainView extends BorderPane {
         kubeDiscoveryService = new com.kubrik.mex.k8s.discovery.DiscoveryService(
                 kubeClientFactory, events);
         kubeSecretService = new com.kubrik.mex.k8s.secret.SecretPickupService(kubeClientFactory);
+        kubePortForwardAuditDao = new com.kubrik.mex.k8s.portforward.PortForwardAuditDao(database);
+        kubePortForwardService = new com.kubrik.mex.k8s.portforward.PortForwardService(
+                kubeClientFactory, kubePortForwardAuditDao, events);
+        // Tear every live forward down on JVM exit so SQLite rows
+        // get their closed_at stamp and no dangling listeners leak
+        // past app shutdown.
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (kubePortForwardService != null) kubePortForwardService.closeAll();
+        }, "k8s-pfwd-shutdown"));
     }
 
     private static boolean isK8sEnabled() {
