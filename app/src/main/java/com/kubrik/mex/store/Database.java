@@ -743,6 +743,60 @@ public class Database implements AutoCloseable {
                 """);
             st.execute("CREATE INDEX IF NOT EXISTS idx_param_proposals_conn " +
                     "ON param_tuning_proposals(connection_id, status)");
+
+            // v2.8.4 Q2.8.4-A — Local Sandbox Labs schema. Separate
+            // from ops_audit on purpose: Lab lifecycle is demo/
+            // training noise and must not pollute the compliance
+            // audit trail a DBA relies on.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS lab_deployments (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    template_id         TEXT    NOT NULL,
+                    template_version    TEXT    NOT NULL,
+                    display_name        TEXT    NOT NULL,
+                    compose_project     TEXT    NOT NULL UNIQUE,
+                    compose_file_path   TEXT    NOT NULL,
+                    port_map_json       TEXT    NOT NULL,
+                    status              TEXT    NOT NULL,
+                    keep_data_on_stop   INTEGER NOT NULL,
+                    auth_enabled        INTEGER NOT NULL,
+                    created_at          INTEGER NOT NULL,
+                    last_started_at     INTEGER,
+                    last_stopped_at     INTEGER,
+                    destroyed_at        INTEGER,
+                    mongo_version       TEXT    NOT NULL,
+                    connection_id       TEXT
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_lab_status " +
+                    "ON lab_deployments(status)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS lab_events (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lab_id              INTEGER NOT NULL
+                                        REFERENCES lab_deployments(id)
+                                        ON DELETE CASCADE,
+                    at                  INTEGER NOT NULL,
+                    kind                TEXT    NOT NULL,
+                    message             TEXT
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_lab_events_lab_time " +
+                    "ON lab_events(lab_id, at)");
+
+            // connections.lab_deployment_id — nullable FK-ish back
+            // pointer. ON DELETE SET NULL in Lab destruction via the
+            // DAO (SQLite doesn't retro-fit FKs on existing tables,
+            // so the DAO enforces the clear).
+            try { st.execute("ALTER TABLE connections ADD COLUMN lab_deployment_id INTEGER"); }
+            catch (SQLException ignored) { /* column already present */ }
+            // connections.origin — discriminates LOCAL (default pre-
+            // v2.8) / K8S (v2.8.0) / LAB (v2.8.4). Default text is
+            // backwards-compat: any row without origin is treated as
+            // LOCAL.
+            try { st.execute("ALTER TABLE connections ADD COLUMN origin TEXT NOT NULL DEFAULT 'LOCAL'"); }
+            catch (SQLException ignored) { /* column already present */ }
         }
     }
 
