@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.8.0-alpha — Pre-flight engine + check modules (Q2.8.1-G)
+
+Eight pre-flight checks run in parallel against the target cluster + `ProvisionModel`, folded into a single `PreflightSummary` the wizard's pre-flight panel renders. Apply stays disabled while any check fails; each warning requires an acknowledge checkbox (milestone §2.7).
+
+### Checks shipped
+
+- `OperatorInstalledCheck` — CRD read; absence → FAIL with install-link hint.
+- `ClusterVersionCheck` — `/version` probe; blessed matrix 1.29 / 1.30 / 1.31 (milestone §7.8); out-of-matrix → WARN.
+- `NamespaceCheck` — read the namespace; missing + `createNamespace=false` → FAIL.
+- `RbacCheck` — SSAR batch via `RBACProbeService`; any missing create/read on pods/events/secrets/PVCs/operator-CR → FAIL with the specific list.
+- `StorageClassCheck` — list storage classes; explicit class not found → FAIL; no class + no cluster default → FAIL.
+- `NodeFeasibilityCheck` — node count ≥ topology replicas → FAIL/PASS; topology spread on + single-zone → WARN.
+- `CertManagerCheck` — conditional on TLS = CERT_MANAGER; CRD + Issuer presence in the target namespace.
+- `QuotaCheck` — ResourceQuota `requests.storage` hard-minus-used ≥ estimated deployment footprint (members × size + configServers × 3 for sharded).
+
+### Engine
+
+- Runs checks in parallel on a virtual-thread-per-task executor; 10 s global budget (spec §6). Any check still pending at the deadline records as `skipped` with a timeout hint rather than failing the whole flow.
+- `PreflightCheck.scope(model)` lets a check opt out (e.g. `CertManagerCheck` skips when TLS isn't cert-manager).
+- `PreflightSummary.hasAnyFail()` / `warnsToAck()` / `passing()` / `failing()` / `skipped()` drive the panel layout.
+
+### Tests
+
+14 new unit tests: `PreflightResultTest` (4 — pass / warn / fail / skipped), `PreflightSummaryTest` (4 — fail detection, warn filtering, passing filtering, empty), `ClusterVersionCheckTest` (4 — parse `v1.30.2`, no-v prefix, two-part, unparseable), `QuotaCheckTest` (5 — estimate for RS3 + sharded, Gi / Ti / Mi parsing, unparseable), `CertManagerCheckScopeTest` (3 — scope decisions per TLS mode). Pure-function; live-API checks themselves land with Q2.8.1-L kind IT coverage.
+
 ## v2.8.0-alpha — PSMDB adapter + CR renderer (Q2.8.1-F)
 
 Second operator shipped: Percona Server for MongoDB. Parallel in structure to the MCO adapter, richer in CR surface — sharded clusters, native PBM backup, PMM monitoring all hang off the same `OperatorAdapter` interface Q2.8.1-E landed.
