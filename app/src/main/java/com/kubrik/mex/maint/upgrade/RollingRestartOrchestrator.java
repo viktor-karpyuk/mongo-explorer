@@ -99,14 +99,31 @@ public final class RollingRestartOrchestrator {
                 if (step.targetHost() == null) {
                     return info(step, t0, "cluster-wide binary-swap step");
                 }
-                try (MongoClient c = opener.open(step.targetHost())) {
+                // Two distinct socket-failure sources:
+                //   (a) opener.open() — client can't connect (host down
+                //       BEFORE we ever reached it). That's a real
+                //       failure; a network blip or pre-killed server
+                //       must NOT be silently treated as "swap complete".
+                //   (b) runCommand(shutdown) — the server tore down the
+                //       connection as part of handling shutdown. THAT
+                //       is the success signal.
+                MongoClient c;
+                try {
+                    c = opener.open(step.targetHost());
+                } catch (Exception e) {
+                    return fail(step, t0, "could not connect to "
+                            + step.targetHost() + " before shutdown: "
+                            + e.getMessage());
+                }
+                try (c) {
                     MongoDatabase admin = c.getDatabase("admin");
-                    admin.runCommand(new Document("shutdown", 1)
-                            .append("timeoutSecs",
-                                    (int) shutdownTimeout.toSeconds()));
-                } catch (com.mongodb.MongoSocketException expected) {
-                    // Shutdown closes the connection — the socket
-                    // exception is the success signal, not an error.
+                    try {
+                        admin.runCommand(new Document("shutdown", 1)
+                                .append("timeoutSecs",
+                                        (int) shutdownTimeout.toSeconds()));
+                    } catch (com.mongodb.MongoSocketException expected) {
+                        // Post-shutdown connection teardown = success.
+                    }
                 } catch (Exception e) {
                     return fail(step, t0, "shutdown failed: " + e.getMessage());
                 }
@@ -121,16 +138,25 @@ public final class RollingRestartOrchestrator {
                 if (step.targetHost() == null) {
                     return info(step, t0, "cluster-wide restart step");
                 }
-                try (MongoClient c = opener.open(step.targetHost())) {
+                MongoClient c;
+                try {
+                    c = opener.open(step.targetHost());
+                } catch (Exception e) {
+                    return fail(step, t0, "could not connect to primary "
+                            + step.targetHost() + ": " + e.getMessage());
+                }
+                try (c) {
                     MongoDatabase admin = c.getDatabase("admin");
-                    admin.runCommand(new Document("replSetStepDown", 60)
-                            .append("force", false));
-                    return ok(step, t0, "step-down completed");
-                } catch (com.mongodb.MongoSocketException se) {
-                    // Same as BINARY_SWAP — the replSetStepDown closes
-                    // the connection once the election wins.
-                    return ok(step, t0,
-                            "step-down completed (connection closed)");
+                    try {
+                        admin.runCommand(new Document("replSetStepDown", 60)
+                                .append("force", false));
+                        return ok(step, t0, "step-down completed");
+                    } catch (com.mongodb.MongoSocketException se) {
+                        // Same as BINARY_SWAP — the replSetStepDown
+                        // closes the connection once the election wins.
+                        return ok(step, t0,
+                                "step-down completed (connection closed)");
+                    }
                 } catch (Exception e) {
                     return fail(step, t0,
                             "step-down failed: " + e.getMessage());

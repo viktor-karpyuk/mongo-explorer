@@ -95,21 +95,21 @@ public final class ReconfigRunner {
     /** Build the rollback plan JSON for the given {@code currentConfig}
      *  reply — the caller stores this alongside the audit row. Keeping
      *  the builder here keeps the "apply + rollback are paired" pattern
-     *  obvious to a reader. */
+     *  obvious to a reader.
+     *
+     *  <p>The plan is a raw passthrough of the pre-change {@code
+     *  config} sub-document so a replay of this rollback feeds directly
+     *  into {@code replSetReconfig(priorConfig)}. No typed
+     *  round-trip through {@link ReconfigSerializer} is needed here —
+     *  the earlier implementation passed a dummy
+     *  {@code WholeConfig(List.of())} which was a foot-gun waiting to
+     *  misfire if a caller ever fed it back through the preflight.</p> */
     public String buildRollbackPlanJson(Document currentConfigReply) {
-        Optional<ReconfigSpec.Request> typed = serializer.fromConfigReply(
-                currentConfigReply, new ReconfigSpec.WholeConfig(
-                        java.util.List.of()));  // dummy change
-        if (typed.isEmpty()) {
-            // Raw passthrough — at least the JSON is recoverable.
-            return currentConfigReply == null ? "{}"
-                    : currentConfigReply.toJson();
-        }
-        // Emit a plan the replay runner can feed straight back into
-        // replSetReconfig: the original config body, unchanged.
+        if (currentConfigReply == null) return "{}";
+        Object priorConfig = currentConfigReply.get("config");
         Document priorBody = new Document()
-                .append("command", "replSetReconfig")
-                .append("priorConfig", currentConfigReply.get("config"));
+                .append("command", "replSetReconfig");
+        if (priorConfig != null) priorBody.append("priorConfig", priorConfig);
         return priorBody.toJson();
     }
 }

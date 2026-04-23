@@ -60,9 +60,23 @@ public final class CompactRunner {
 
     /** CMPT-1 helper — client-side primary refusal, used by the wizard
      *  when the user picks a target. Checking here as well as in
-     *  {@link #run} means the bad path never opens an SSH/SRV client. */
+     *  {@link #run} means the bad path never opens an SSH/SRV client.
+     *
+     *  <p>Compares hostnames case-insensitively and normalizes missing
+     *  ports to 27017 so a paste-mismatch (e.g. {@code h1} vs
+     *  {@code h1:27017}, or {@code H1} vs {@code h1}) doesn't sneak
+     *  the primary past the client-side guard.</p> */
     public static boolean wouldTargetPrimary(String targetHost,
                                              String primaryHost) {
-        return targetHost.equals(primaryHost);
+        return normalize(targetHost).equals(normalize(primaryHost));
+    }
+
+    static String normalize(String hostPort) {
+        if (hostPort == null) return "";
+        String s = hostPort.trim().toLowerCase();
+        // Default port if omitted — rs.conf stores the explicit port
+        // but user-pasted strings often drop it.
+        if (!s.contains(":")) s = s + ":27017";
+        return s;
     }
 }

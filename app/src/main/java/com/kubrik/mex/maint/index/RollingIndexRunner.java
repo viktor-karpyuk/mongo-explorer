@@ -110,12 +110,26 @@ public final class RollingIndexRunner {
             }
         }
         if (activeOpId != null && activeHost != null) {
+            long ts = System.currentTimeMillis();
             try (MongoClient active = ctx.openMember(activeHost)) {
                 MongoDatabase admin = active.getDatabase("admin");
                 admin.runCommand(new Document("killOp", 1)
                         .append("op", activeOpId));
+                drops.add(new MemberOutcome(-1, activeHost, true,
+                        null, "killOp " + activeOpId + " sent",
+                        System.currentTimeMillis() - ts));
+            } catch (com.mongodb.MongoSocketException expected) {
+                // Server tore down the connection on killOp — expected
+                // when the operation was actively running.
+                drops.add(new MemberOutcome(-1, activeHost, true,
+                        null, "killOp " + activeOpId
+                                + " (connection closed)",
+                        System.currentTimeMillis() - ts));
             } catch (Exception e) {
                 log.warn("killOp failed on {}: {}", activeHost, e.getMessage());
+                drops.add(new MemberOutcome(-1, activeHost, false,
+                        e.getClass().getSimpleName(), e.getMessage(),
+                        System.currentTimeMillis() - ts));
             }
         }
         boolean overall = drops.stream().allMatch(MemberOutcome::success);
