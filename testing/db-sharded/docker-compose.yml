@@ -1,0 +1,146 @@
+# v2.7 — sharded cluster for maintenance / reconfig / rolling-index
+# testing. One mongos, three-node config replset (cfgrs), one shard's
+# three-node replset (shard1rs). Init container runs once and exits
+# after electing primaries + adding the shard via mongos.
+#
+# Host port map (picked to avoid collision with db-source 27018,
+# db-target 27019/27020, db-target-sample 28000):
+#   mongos          -> 27100  (primary entry point; use this from Mongo Explorer)
+#   cfg1/2/3        -> 27101 / 27102 / 27103
+#   shard1a/b/c     -> 27111 / 27112 / 27113
+#
+# Each member listens on 27017 inside the compose network and is
+# reachable by service name (cfg1, shard1b, …) — that's what the
+# replset member specs use, so the names you type in the reconfig
+# wizard match what mongod reports in rs.conf().
+
+name: mex-sharded
+
+services:
+  # ============================== config ==============================
+  cfg1:
+    image: mongo:7
+    container_name: mex-cfg1
+    command: >
+      mongod --configsvr --replSet cfgrs
+      --port 27017 --bind_ip_all
+    ports: ["27101:27017"]
+    volumes: [mex-cfg1-data:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  cfg2:
+    image: mongo:7
+    container_name: mex-cfg2
+    command: mongod --configsvr --replSet cfgrs --port 27017 --bind_ip_all
+    ports: ["27102:27017"]
+    volumes: [mex-cfg2-data:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  cfg3:
+    image: mongo:7
+    container_name: mex-cfg3
+    command: mongod --configsvr --replSet cfgrs --port 27017 --bind_ip_all
+    ports: ["27103:27017"]
+    volumes: [mex-cfg3-data:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ============================= shard 1 =============================
+  shard1a:
+    image: mongo:7
+    container_name: mex-shard1a
+    command: mongod --shardsvr --replSet shard1rs --port 27017 --bind_ip_all
+    ports: ["27111:27017"]
+    volumes: [mex-shard1a-data:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  shard1b:
+    image: mongo:7
+    container_name: mex-shard1b
+    command: mongod --shardsvr --replSet shard1rs --port 27017 --bind_ip_all
+    ports: ["27112:27017"]
+    volumes: [mex-shard1b-data:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  shard1c:
+    image: mongo:7
+    container_name: mex-shard1c
+    command: mongod --shardsvr --replSet shard1rs --port 27017 --bind_ip_all
+    ports: ["27113:27017"]
+    volumes: [mex-shard1c-data:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # =============================== router ===============================
+  # mongos depends only on the config servers being reachable — NOT on
+  # `init`. mongos's ping healthcheck fails until cfgrs has an elected
+  # primary, so `init` cannot depend on mongos being healthy without a
+  # circular dependency. Instead, `init` polls mongos via its own
+  # wait_ping loop after electing the cfg primary.
+  mongos:
+    image: mongo:7
+    container_name: mex-mongos
+    command: >
+      mongos
+      --configdb cfgrs/cfg1:27017,cfg2:27017,cfg3:27017
+      --port 27017 --bind_ip_all
+    ports: ["27100:27017"]
+    depends_on:
+      cfg1: { condition: service_healthy }
+      cfg2: { condition: service_healthy }
+      cfg3: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+
+  # ============================== bootstrap ==============================
+  # Runs once: initiates both replsets, waits for primary election on
+  # each, then polls mongos until it comes up and adds the shard. Exits
+  # 0 on success. Safe to re-run — rs.initiate is guarded by a pre-check
+  # and sh.addShard is idempotent server-side.
+  init:
+    image: mongo:7
+    container_name: mex-sharded-init
+    depends_on:
+      cfg1: { condition: service_healthy }
+      cfg2: { condition: service_healthy }
+      cfg3: { condition: service_healthy }
+      shard1a: { condition: service_healthy }
+      shard1b: { condition: service_healthy }
+      shard1c: { condition: service_healthy }
+    volumes:
+      - ./init:/init:ro
+    entrypoint: ["bash", "/init/init-cluster.sh"]
+    restart: "no"
+
+volumes:
+  mex-cfg1-data:
+  mex-cfg2-data:
+  mex-cfg3-data:
+  mex-shard1a-data:
+  mex-shard1b-data:
+  mex-shard1c-data:
