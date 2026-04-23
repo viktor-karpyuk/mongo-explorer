@@ -78,6 +78,14 @@ public final class RollingIndexRunner {
             db.runCommand(cmd);
             return new MemberOutcome(step.member().id(), step.member().host(),
                     true, null, null, System.currentTimeMillis() - t0);
+        } catch (com.mongodb.MongoCommandException mce) {
+            // Preserve the real Mongo error code name (e.g.
+            // "IndexOptionsConflict", "DuplicateKey") instead of
+            // discarding it as "MongoCommandException" — the audit
+            // row needs to be actionable.
+            return new MemberOutcome(step.member().id(), step.member().host(),
+                    false, mce.getErrorCodeName(), mce.getErrorMessage(),
+                    System.currentTimeMillis() - t0);
         } catch (Exception e) {
             return new MemberOutcome(step.member().id(), step.member().host(),
                     false, e.getClass().getSimpleName(), e.getMessage(),

@@ -21,6 +21,9 @@ import java.util.TreeMap;
  */
 public final class ConfigSnapshotService {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(ConfigSnapshotService.class);
+
     private final ConfigSnapshotDao dao;
 
     public ConfigSnapshotService(ConfigSnapshotDao dao) {
@@ -36,19 +39,28 @@ public final class ConfigSnapshotService {
         java.util.List<Long> ids = new java.util.ArrayList<>(4);
         MongoDatabase admin = client.getDatabase("admin");
 
-        // Parameters — getParameter(*: 1) returns every param.
+        // Parameters — getParameter(*: 1) returns every param. A
+        // locked-down server may refuse; log at debug so an operator
+        // can see why a capture came up short without scaring the
+        // user with an error toast.
         try {
             Document reply = admin.runCommand(new Document("getParameter", "*"));
             ids.add(persist(connectionId, host, ConfigSnapshot.Kind.PARAMETERS,
                     canonicalize(sanitize(reply)), now));
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.debug("PARAMETERS capture failed on {}/{}: {}",
+                    connectionId, host, e.getMessage());
+        }
 
         // Command line — redacted.
         try {
             Document reply = admin.runCommand(new Document("getCmdLineOpts", 1));
             ids.add(persist(connectionId, host, ConfigSnapshot.Kind.CMDLINE,
                     canonicalize(redactCmdLine(reply)), now));
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.debug("CMDLINE capture failed on {}/{}: {}",
+                    connectionId, host, e.getMessage());
+        }
 
         // FCV — getParameter: featureCompatibilityVersion.
         try {
@@ -57,16 +69,27 @@ public final class ConfigSnapshotService {
             ids.add(persist(connectionId, /*host=*/null,
                     ConfigSnapshot.Kind.FCV,
                     canonicalize(reply), now));
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.debug("FCV capture failed on {}: {}",
+                    connectionId, e.getMessage());
+        }
 
         // Sharding — balancerStatus when the cluster is sharded.
+        // Replica-set / standalone: command is unknown, which is the
+        // benign "not a sharded cluster" signal — no log.
         try {
             Document reply = admin.runCommand(new Document("balancerStatus", 1));
             ids.add(persist(connectionId, /*host=*/null,
                     ConfigSnapshot.Kind.SHARDING,
                     canonicalize(reply), now));
-        } catch (Exception ignored) {
-            // Replica-set / standalone: balancerStatus is a no-op.
+        } catch (com.mongodb.MongoCommandException mce) {
+            if (mce.getErrorCode() != 59 /* CommandNotFound */) {
+                log.debug("SHARDING capture failed on {}: {}",
+                        connectionId, mce.getMessage());
+            }
+        } catch (Exception e) {
+            log.debug("SHARDING capture failed on {}: {}",
+                    connectionId, e.getMessage());
         }
 
         return ids;
@@ -140,14 +163,27 @@ public final class ConfigSnapshotService {
         return out;
     }
 
+    /** Exact-match denylist of config keys that carry secret-adjacent
+     *  values. Earlier draft used a {@code contains("key")} substring
+     *  test which wrongly redacted legitimate fields like
+     *  {@code shardKey}, {@code primaryKey}, {@code indexKey} — the
+     *  drift engine keys on SHA-256 of the canonical JSON so blanket
+     *  redaction collapsed real changes on those fields into identity
+     *  hashes. An exact denylist keeps the false-positive rate at 0
+     *  while still redacting the fields that actually matter. */
+    private static final java.util.Set<String> SENSITIVE_KEYS = java.util.Set.of(
+            "password", "passwd", "secret", "secretkey",
+            "token", "authtoken", "bearertoken", "apikey", "apisecret",
+            "keyfile", "keyfilepassword",
+            "awssecretaccesskey", "awssessiontoken",
+            "tlsclientcertpassword", "tlscertificatekeyfilepassword",
+            "ldapbindpassword", "ldapquerypassword",
+            "kmipclientcertificatepassword",
+            "pemkeyfilepassword", "clusterkeypassword",
+            "encryptionkeyfile");
+
     private static boolean looksSensitive(String key) {
-        String k = key.toLowerCase();
-        // "keyFile" / "tlsCAFile" / etc. — any key containing one of
-        // these substrings is treated as secret-adjacent and
-        // redacted. Over-redaction is fine for snapshot purposes
-        // (the diff engine compares hashes, not values).
-        return k.contains("password") || k.contains("secret")
-                || k.contains("token") || k.contains("key");
+        return SENSITIVE_KEYS.contains(key.toLowerCase());
     }
 
     /** Canonicalise a map — used by tests to exercise the sort pass

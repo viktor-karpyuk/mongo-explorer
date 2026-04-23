@@ -19,6 +19,19 @@ import java.util.List;
  */
 public final class CompactRunner {
 
+    /** Default per-collection compact timeout — 1 hour. Compact on a
+     *  large collection can legitimately run for minutes, but without
+     *  an upper bound the UI would hang indefinitely on a stuck call. */
+    public static final long DEFAULT_MAX_TIME_MS = 60L * 60L * 1000L;
+
+    private final long maxTimeMs;
+
+    public CompactRunner() { this(DEFAULT_MAX_TIME_MS); }
+
+    public CompactRunner(long maxTimeMs) {
+        this.maxTimeMs = maxTimeMs;
+    }
+
     public record CollectionOutcome(
             String db, String coll, boolean success,
             String errorCode, String errorMessage, long elapsedMs) {}
@@ -43,11 +56,21 @@ public final class CompactRunner {
         for (String coll : spec.collections()) {
             long ts = System.currentTimeMillis();
             try {
-                Document cmd = new Document("compact", coll);
+                Document cmd = new Document("compact", coll)
+                        .append("maxTimeMS", maxTimeMs);
                 if (spec.force()) cmd.append("force", true);
                 db.runCommand(cmd);
                 outcomes.add(new CollectionOutcome(spec.db(), coll, true,
                         null, null, System.currentTimeMillis() - ts));
+            } catch (com.mongodb.MongoExecutionTimeoutException te) {
+                outcomes.add(new CollectionOutcome(spec.db(), coll, false,
+                        "MaxTimeMSExpired",
+                        "compact exceeded maxTimeMS=" + maxTimeMs + "ms",
+                        System.currentTimeMillis() - ts));
+            } catch (com.mongodb.MongoCommandException mce) {
+                outcomes.add(new CollectionOutcome(spec.db(), coll, false,
+                        mce.getErrorCodeName(), mce.getErrorMessage(),
+                        System.currentTimeMillis() - ts));
             } catch (Exception e) {
                 outcomes.add(new CollectionOutcome(spec.db(), coll, false,
                         e.getClass().getSimpleName(), e.getMessage(),

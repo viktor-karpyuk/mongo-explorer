@@ -220,6 +220,13 @@ public final class CompactResyncPane extends BorderPane {
                                     + "Monitoring tab.");
                         } else if (outcome instanceof ResyncRunner.Outcome.PrimaryRefused) {
                             fail("Server refused — target is primary.");
+                        } else if (outcome instanceof ResyncRunner.Outcome.NotSupported ns) {
+                            fail("Resync command removed in MongoDB 5.0 "
+                                    + "(server is " + ns.serverVersion()
+                                    + "). Use the dbpath-wipe + restart "
+                                    + "flow: shut down the member, delete "
+                                    + "its data files, start it again — "
+                                    + "it will initial-sync from scratch.");
                         } else if (outcome instanceof ResyncRunner.Outcome.Failed f) {
                             fail("Resync failed: " + f.code() + " — " + f.message());
                         }
