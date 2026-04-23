@@ -183,6 +183,24 @@ public final class ApplyOrchestrator {
                                       com.kubrik.mex.k8s.operator.OperatorAdapter adapter,
                                       com.kubrik.mex.k8s.provision.ProvisionModel model,
                                       com.kubrik.mex.k8s.rollout.RolloutWatcher watcher) throws java.io.IOException {
+        return applyAndWatch(clusterRef, adapter, model, watcher, null);
+    }
+
+    /**
+     * Same as {@link #applyAndWatch(com.kubrik.mex.k8s.model.K8sClusterRef,
+     * com.kubrik.mex.k8s.operator.OperatorAdapter,
+     * com.kubrik.mex.k8s.provision.ProvisionModel,
+     * com.kubrik.mex.k8s.rollout.RolloutWatcher)} but runs
+     * {@code connector.connect} on a READY outcome so the caller
+     * drops straight into a usable connection — no manual
+     * "Open forward" + "Create connection" clicks.
+     */
+    public ApplyResult applyAndWatch(com.kubrik.mex.k8s.model.K8sClusterRef clusterRef,
+                                      com.kubrik.mex.k8s.operator.OperatorAdapter adapter,
+                                      com.kubrik.mex.k8s.provision.ProvisionModel model,
+                                      com.kubrik.mex.k8s.rollout.RolloutWatcher watcher,
+                                      com.kubrik.mex.k8s.rollout.PostReadyConnector connector)
+            throws java.io.IOException {
         ApplyResult applyResult = apply(clusterRef, adapter, model);
         if (!applyResult.ok()) return applyResult;
 
@@ -207,6 +225,18 @@ public final class ApplyOrchestrator {
         try {
             if (wr.ok()) {
                 markReady(rowId, model.deploymentName());
+                if (connector != null) {
+                    com.kubrik.mex.k8s.rollout.PostReadyConnector.ConnectOutcome out =
+                            connector.connect(clusterRef, rowId, model);
+                    if (!out.ok()) {
+                        // Auto-connect failure isn't a provision failure —
+                        // the deployment is live, just the UI shortcut
+                        // didn't land. Surface as a Progress event.
+                        events.publishProvision(new ProvisionEvent.Progress(
+                                rowId, "auto-connect: " + out.failureReason().orElse("?"),
+                                System.currentTimeMillis()));
+                    }
+                }
             } else {
                 markFailed(rowId, wr.summary());
             }
