@@ -199,6 +199,13 @@ public final class ApprovalService {
         return dao.listPending(connectionId);
     }
 
+    /** Non-sweeping list of PENDING rows for a connection. Panes that
+     *  throttle their sweep cadence (approvals queue refresh) call
+     *  this directly instead of sweepAllAndReload. */
+    public java.util.List<Approval.Row> listPending(String connectionId) {
+        return dao.listPending(connectionId);
+    }
+
     /* ============================ internals ============================ */
 
     /** Signs the approval descriptor (action-uuid + payload hash +

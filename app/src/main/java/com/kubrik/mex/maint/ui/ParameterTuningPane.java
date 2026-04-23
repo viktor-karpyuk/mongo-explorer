@@ -158,7 +158,7 @@ public final class ParameterTuningPane extends BorderPane {
                 workloadPicker.getValue(),
                 verSpinner.getValue());
 
-        Thread.startVirtualThread(() -> {
+        FxOffThread.run(() -> {
             Map<String, String> current = new LinkedHashMap<>();
             for (ParamCatalogue.Entry entry : ParamCatalogue.all()) {
                 paramRunner.get(client, entry.name())
@@ -169,7 +169,7 @@ public final class ParameterTuningPane extends BorderPane {
                 proposals.setAll(out);
                 ok(out.size() + " proposals computed.");
             });
-        });
+        }, msg -> fail("Refresh failed: " + msg));
     }
 
     private void onApplySelected() {

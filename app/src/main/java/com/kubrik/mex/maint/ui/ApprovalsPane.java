@@ -64,20 +64,30 @@ public final class ApprovalsPane extends BorderPane {
         refresh();
     }
 
+    /** Minimum gap between sweeps. Every refresh click + every
+     *  post-approve reload previously took the SQLite write lock
+     *  via sweepExpired — a button-masher could pile up UI-blocking
+     *  UPDATEs. 30s is the tightest window that still catches newly-
+     *  expired rows before the next human interaction matters. */
+    private static final long SWEEP_THROTTLE_MS = 30_000L;
+    private volatile long lastSweepAt = 0L;
+
     public void refresh() {
-        // Expire stale PENDING rows before re-listing so the UI never
-        // offers to approve something beyond its window.
-        int expired = service.sweepExpired();
         String connId = connectionIdSupplier.get();
         if (connId == null) {
             rows.clear();
             statusLabel.setText("Select a connection to see its approval queue.");
             return;
         }
-        // Listing pending rows only — APPROVED rows are consumed
-        // synchronously with the action they gate, so they never
-        // linger for a human to act on.
-        List<Approval.Row> pending = service.sweepAllAndReload(connId);
+        // Throttle sweepExpired so a rapid refresh / approve cycle
+        // doesn't fire an UPDATE on every click.
+        long now = System.currentTimeMillis();
+        int expired = 0;
+        if (now - lastSweepAt > SWEEP_THROTTLE_MS) {
+            expired = service.sweepExpired();
+            lastSweepAt = now;
+        }
+        List<Approval.Row> pending = service.listPending(connId);
         rows.setAll(pending);
         statusLabel.setText(expired == 0
                 ? (pending.size() + " pending approval" + (pending.size() == 1 ? "" : "s"))

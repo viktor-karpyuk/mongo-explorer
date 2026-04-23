@@ -97,6 +97,17 @@ public class Main extends Application {
     public void start(Stage stage) throws Exception {
         Application.setUserAgentStylesheet(new PrimerLight().getUserAgentStylesheet());
 
+        // v2.7 review round 6 (#17) — every virtual thread spawned by
+        // the maintenance panes with a missed catch would otherwise
+        // drop its stack to stderr silently. A default handler at app
+        // scope guarantees at least the log captures the trace; the
+        // FxOffThread helper surfaces errors to the UI status label
+        // for the panes that opted in.
+        Thread.setDefaultUncaughtExceptionHandler((t, e) ->
+                org.slf4j.LoggerFactory.getLogger("uncaught")
+                        .warn("uncaught on thread {}: {}", t.getName(),
+                                e.toString(), e));
+
         db = new Database();
 
         // EXT-1 — load sink plugins once, before anything touches the sink registry.

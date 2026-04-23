@@ -52,46 +52,52 @@ public final class ValidatorPreviewService {
             schema = proposed;
         }
 
-        // Stage 1: cap the work at sampleSize — $sample is uniform
-        // random, cheap enough on a 1 M-doc collection.
-        // Stage 2: find docs that DO NOT match the proposed schema.
-        // Stage 3: return up to MAX_FIRST_FEW whole offenders. We used
-        // to emit a server-side $toString summary but $toString refuses
-        // object inputs (ConversionFailure error 241); rendering the
-        // summary client-side is the reliable path.
+        // Single-pass pipeline via $facet: one $sample feeds both the
+        // offenders list AND the total count, so `firstFew` is always
+        // a subset of the docs counted in `failedCount`. Earlier draft
+        // ran two parallel pipelines with independent $samples — the
+        // numbers didn't correspond and the server did 2x the work.
+        //
+        // Summary is still rendered client-side via Document.toJson()
+        // because $toString refuses object inputs (ConversionFailure
+        // error 241).
+        Document facetSpec = new Document()
+                .append("firstFew", List.of(
+                        new Document("$limit", MAX_FIRST_FEW)))
+                .append("total", List.of(
+                        new Document("$count", "n")));
         List<Document> pipeline = List.of(
                 new Document("$sample", new Document("size", sampleSize)),
                 new Document("$match", new Document("$nor",
                         List.of(new Document("$jsonSchema", schema)))),
-                new Document("$limit", MAX_FIRST_FEW)
+                new Document("$facet", facetSpec)
         );
 
         List<ValidatorSpec.FailedDoc> first = new ArrayList<>();
-        for (Document d : coll.aggregate(pipeline)) {
-            Object id = d.get("_id");
-            String summary = d.toJson();
-            if (summary.length() > 200) {
-                summary = summary.substring(0, 200) + "…";
-            }
-            first.add(new ValidatorSpec.FailedDoc(
-                    id == null ? "<null>" : id.toString(),
-                    summary));
-        }
-
-        // Second pass to get the full count of failing sampled docs —
-        // $count over a parallel pipeline. The two passes are both
-        // bounded by sampleSize + the server's cache so the wall-time
-        // stays predictable.
-        List<Document> countPipeline = List.of(
-                new Document("$sample", new Document("size", sampleSize)),
-                new Document("$match", new Document("$nor",
-                        List.of(new Document("$jsonSchema", schema)))),
-                new Document("$count", "failed")
-        );
         int failedCount = 0;
-        for (Document d : coll.aggregate(countPipeline)) {
-            Integer n = d.getInteger("failed");
-            if (n != null) failedCount = n;
+        for (Document wrapper : coll.aggregate(pipeline)) {
+            @SuppressWarnings("unchecked")
+            List<Document> offenders = (List<Document>) wrapper.get(
+                    "firstFew", List.class);
+            if (offenders != null) {
+                for (Document d : offenders) {
+                    Object id = d.get("_id");
+                    String summary = d.toJson();
+                    if (summary.length() > 200) {
+                        summary = summary.substring(0, 200) + "…";
+                    }
+                    first.add(new ValidatorSpec.FailedDoc(
+                            id == null ? "<null>" : id.toString(),
+                            summary));
+                }
+            }
+            @SuppressWarnings("unchecked")
+            List<Document> totals = (List<Document>) wrapper.get(
+                    "total", List.class);
+            if (totals != null && !totals.isEmpty()) {
+                Integer n = totals.get(0).getInteger("n");
+                if (n != null) failedCount = n;
+            }
         }
 
         return new ValidatorSpec.PreviewResult(sampleSize, failedCount, first);
