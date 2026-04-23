@@ -9,9 +9,11 @@ import org.slf4j.LoggerFactory;
 
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -69,16 +71,32 @@ public class KubeClientFactory {
         if (existing != null && existing.mtime == mtime) {
             return existing.client;
         }
-        ApiClient client = build(ref);
-        cache.put(key, new Cached(client, mtime));
-        return client;
+        // Atomic replace — concurrent get() calls for the same ref no longer
+        // each build and leak a redundant client. A prior Cached, whose
+        // mtime differs, is released so its OkHttp pool + dispatcher thread
+        // are torn down.
+        try {
+            Cached built = cache.compute(key, (k, current) -> {
+                if (current != null && current.mtime == mtime) return current;
+                ApiClient freshClient;
+                try { freshClient = build(ref); }
+                catch (IOException ioe) { throw new UncheckedIOException(ioe); }
+                if (current != null) releaseQuietly(current.client);
+                return new Cached(freshClient, mtime);
+            });
+            return built.client;
+        } catch (UncheckedIOException uio) {
+            throw uio.getCause();
+        }
     }
 
     /**
-     * Build a one-shot client without touching the cache. Used when a
-     * caller needs a short-lived connection with custom timeouts
-     * (e.g. the {@code ClusterProbeService} which uses an aggressive
-     * 5 s /version probe).
+     * Build a one-shot client without touching the cache. The caller MUST
+     * invoke {@link #releaseQuietly(ApiClient)} when the client is no longer
+     * needed so the underlying OkHttp connection pool + dispatcher threads
+     * get torn down — the Kubernetes Java client does not implement
+     * {@link AutoCloseable}, but its {@code OkHttpClient} + {@code
+     * Dispatcher} leak worker threads if we never shut them down.
      */
     public ApiClient fresh(K8sClusterRef ref) throws IOException {
         return build(ref);
@@ -86,11 +104,37 @@ public class KubeClientFactory {
 
     /** Evict the cached client for a ref — used after "refresh" UI actions. */
     public void invalidate(K8sClusterRef ref) {
-        cache.remove(new CacheKey(ref.kubeconfigPath(), ref.contextName()));
+        Cached removed = cache.remove(new CacheKey(ref.kubeconfigPath(), ref.contextName()));
+        if (removed != null) releaseQuietly(removed.client);
     }
 
     public void invalidateAll() {
-        cache.clear();
+        for (CacheKey k : List.copyOf(cache.keySet())) {
+            Cached removed = cache.remove(k);
+            if (removed != null) releaseQuietly(removed.client);
+        }
+    }
+
+    /**
+     * Best-effort shutdown of an {@link ApiClient}'s OkHttp plumbing. The
+     * Kubernetes Java client does not implement {@code AutoCloseable}; we
+     * walk the OkHttp tree to drain the connection pool + dispatcher
+     * executor. Safe to call multiple times and with a null client.
+     */
+    public static void releaseQuietly(ApiClient client) {
+        if (client == null) return;
+        try {
+            okhttp3.OkHttpClient http = client.getHttpClient();
+            if (http == null) return;
+            try { http.dispatcher().executorService().shutdown(); }
+            catch (Throwable ignored) {}
+            try { http.connectionPool().evictAll(); }
+            catch (Throwable ignored) {}
+            try { if (http.cache() != null) http.cache().close(); }
+            catch (Throwable ignored) {}
+        } catch (Throwable t) {
+            log.debug("releaseQuietly: {}", t.toString());
+        }
     }
 
     private ApiClient build(K8sClusterRef ref) throws IOException {

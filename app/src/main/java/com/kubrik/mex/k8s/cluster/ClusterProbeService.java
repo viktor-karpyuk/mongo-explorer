@@ -66,8 +66,13 @@ public class ClusterProbeService implements AutoCloseable {
     public ClusterProbeResult probe(K8sClusterRef ref) {
         long at = System.currentTimeMillis();
         try {
-            ApiClient client = clientFactory.fresh(ref);
-            client.setReadTimeout((int) Math.min(budgetMs, Integer.MAX_VALUE));
+            // Use the factory's cached client — a fresh() client per probe
+            // leaks OkHttp dispatcher threads + a connection pool every
+            // call, and mutating setReadTimeout on a shared client is
+            // forbidden by the factory's contract. callWithBudget()
+            // enforces the budget independently of the client's own read
+            // timeout.
+            ApiClient client = clientFactory.get(ref);
             VersionInfo info = callWithBudget(() -> new VersionApi(client).getCode().execute());
             String version = info == null ? null : info.getGitVersion();
 
@@ -162,14 +167,27 @@ public class ClusterProbeService implements AutoCloseable {
                         || m.contains("exec plugin") || m.contains("exec:"));
     }
 
+    /**
+     * Names of the exec plugins we recognise. Order matters only for
+     * readability — we match the first that appears anywhere in the
+     * message. Mirrors {@link #isPluginMissing} so a positive detection
+     * reliably extracts the right name.
+     */
+    private static final String[] KNOWN_PLUGINS = {
+            "aws-iam-authenticator",
+            "gke-gcloud-auth-plugin",
+            "aws-vault",
+            "kubelogin",
+            "kubectl-oidc_login"
+    };
+
     private static String extractBinary(String msg) {
         if (msg == null) return "exec plugin missing";
-        // Try to pluck the binary name from a "not found: $bin" style
-        // message; otherwise echo the message.
-        int idx = msg.lastIndexOf(':');
-        if (idx > 0 && idx + 1 < msg.length()) {
-            return "exec plugin missing:" + msg.substring(idx + 1);
+        for (String plugin : KNOWN_PLUGINS) {
+            if (msg.contains(plugin)) return "exec plugin missing: " + plugin;
         }
-        return msg;
+        // Fallback — return the full message so the UI shows the original
+        // system error rather than a misleading substring.
+        return "exec plugin missing: " + msg;
     }
 }
