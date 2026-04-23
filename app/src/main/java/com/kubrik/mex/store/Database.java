@@ -797,6 +797,96 @@ public class Database implements AutoCloseable {
             // LOCAL.
             try { st.execute("ALTER TABLE connections ADD COLUMN origin TEXT NOT NULL DEFAULT 'LOCAL'"); }
             catch (SQLException ignored) { /* column already present */ }
+
+            // v2.8.1 Q2.8.1-A1 — Kubernetes Integration schema.
+            // Four tables: k8s_clusters, provisioning_records,
+            // portforward_audit, rollout_events. See milestone §3.1.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS k8s_clusters (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    display_name        TEXT    NOT NULL,
+                    kubeconfig_path     TEXT    NOT NULL,
+                    context_name        TEXT    NOT NULL,
+                    default_namespace   TEXT,
+                    server_url          TEXT,
+                    added_at            INTEGER NOT NULL,
+                    last_used_at        INTEGER,
+                    UNIQUE(kubeconfig_path, context_name)
+                )
+                """);
+
+            // RESTRICT on the parent FK blocks a forget-cluster attempt
+            // while any provisioning_records still point here — matches
+            // milestone §3.1 semantics. Application-level check in
+            // KubeClusterService.remove tightens this further (refuses
+            // even for FAILED/DELETED rows unless the user opts in).
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS provisioning_records (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    k8s_cluster_id      INTEGER NOT NULL
+                                        REFERENCES k8s_clusters(id)
+                                        ON DELETE RESTRICT,
+                    namespace           TEXT    NOT NULL,
+                    name                TEXT    NOT NULL,
+                    operator            TEXT    NOT NULL,
+                    operator_version    TEXT    NOT NULL,
+                    mongo_version       TEXT    NOT NULL,
+                    topology            TEXT    NOT NULL,
+                    profile             TEXT    NOT NULL,
+                    cr_yaml             TEXT    NOT NULL,
+                    cr_sha256           TEXT    NOT NULL,
+                    deletion_protection INTEGER NOT NULL,
+                    created_at          INTEGER NOT NULL,
+                    applied_at          INTEGER,
+                    status              TEXT    NOT NULL,
+                    connection_id       TEXT,
+                    UNIQUE(k8s_cluster_id, namespace, name)
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_prov_status_time " +
+                    "ON provisioning_records(status, applied_at)");
+
+            // portforward_audit retains rows through cluster-forget so
+            // forensics survive the pane: SET NULL the FK instead of
+            // cascade-delete. Absence of a FK to `connections` is
+            // deliberate (connection_id is a UUID-string, not an
+            // integer row id).
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS portforward_audit (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id       TEXT    NOT NULL,
+                    k8s_cluster_id      INTEGER
+                                        REFERENCES k8s_clusters(id)
+                                        ON DELETE SET NULL,
+                    namespace           TEXT    NOT NULL,
+                    target_kind         TEXT    NOT NULL,
+                    target_name         TEXT    NOT NULL,
+                    remote_port         INTEGER NOT NULL,
+                    local_port          INTEGER NOT NULL,
+                    opened_at           INTEGER NOT NULL,
+                    closed_at           INTEGER,
+                    reason_closed       TEXT
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_pfwd_conn_time " +
+                    "ON portforward_audit(connection_id, opened_at)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS rollout_events (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provisioning_id     INTEGER NOT NULL
+                                        REFERENCES provisioning_records(id)
+                                        ON DELETE CASCADE,
+                    at                  INTEGER NOT NULL,
+                    source              TEXT    NOT NULL,
+                    severity            TEXT    NOT NULL,
+                    raw_reason          TEXT,
+                    raw_message         TEXT,
+                    diagnosis_hint      TEXT
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_rollout_prov_time " +
+                    "ON rollout_events(provisioning_id, at)");
         }
     }
 

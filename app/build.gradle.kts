@@ -70,6 +70,18 @@ dependencies {
     // doesn't support modern host-key algorithms.
     implementation("com.github.mwiede:jsch:0.2.18")
 
+    // v2.8.1 Q2.8.1-A — Kubernetes integration. The official Java
+    // client tracks upstream fastest and has first-party support
+    // for exec-plugin / OIDC auth, shared informers, and typed
+    // CRD generation. See docs/v2/v2.8/v2.8.1/technical-spec.md §3.2
+    // (decision: `io.kubernetes:client-java` over Fabric8).
+    implementation("io.kubernetes:client-java:20.0.1") {
+        // The client pulls in its own slf4j binding; we already
+        // route to logback via slf4j-api above, so drop the extra
+        // bridge to keep a single logging pipeline.
+        exclude(group = "org.slf4j", module = "slf4j-simple")
+    }
+
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     testImplementation("org.testcontainers:mongodb:1.20.1")
     testImplementation("org.testcontainers:junit-jupiter:1.20.1")

@@ -333,7 +333,14 @@ public class MainView extends BorderPane {
                 item("Labs",
                         new KeyCodeCombination(KeyCode.L,
                                 KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
-                        this::openLabsTab));
+                        this::openLabsTab),
+                // v2.8.1 UI-K8S — Kubernetes Clusters tab. Gated by
+                // the `k8s.enabled` system property so the Alpha gate
+                // (milestone §6.1) stays off-by-default until RC.
+                item("Clusters",
+                        new KeyCodeCombination(KeyCode.K,
+                                KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
+                        this::openClustersTab));
 
         // ----- Help -----
         Menu help = new Menu("Help");
@@ -544,6 +551,16 @@ public class MainView extends BorderPane {
     private com.kubrik.mex.labs.store.LabDeploymentDao labDeploymentDao;
     private com.kubrik.mex.labs.store.LabEventDao labEventDao;
     private com.kubrik.mex.labs.lifecycle.LabLifecycleService labLifecycle;
+
+    // v2.8.1 UI-K8S — Clusters tab. Also a singleton. Lazy-wired on
+    // first open because the kubernetes-client library is heavy to
+    // initialise and most users won't open the pane every session.
+    private Tab clustersTab;
+    private com.kubrik.mex.k8s.ui.ClustersPane clustersPane;
+    private com.kubrik.mex.k8s.client.KubeClientFactory kubeClientFactory;
+    private com.kubrik.mex.k8s.cluster.KubeClusterDao kubeClusterDao;
+    private com.kubrik.mex.k8s.cluster.KubeClusterService kubeClusterService;
+    private com.kubrik.mex.k8s.cluster.ClusterProbeService kubeProbeService;
     private com.kubrik.mex.security.baseline.SecurityBaselineDao securityBaselineDao;
     private com.kubrik.mex.security.drift.DriftAckDao driftAckDao;
     private com.kubrik.mex.security.cis.CisSuppressionsDao cisSuppressionsDao;
@@ -833,6 +850,60 @@ public class MainView extends BorderPane {
                 labLifecycle, labDeploymentDao,
                 com.kubrik.mex.labs.lifecycle.LabAppExitHook.parsePolicy(
                         System.getProperty("labs.on_exit"))).register();
+    }
+
+    /**
+     * v2.8.1 UI-K8S — open the singleton Clusters tab. Lazy-init the
+     * KubeClientFactory + DAOs on first use. Feature-flagged on
+     * {@code k8s.enabled}: when the flag is unset the menu item is
+     * still visible but the tab renders a feature-disabled explanation
+     * so users discover the pane during Alpha without accidentally
+     * wiring it into production. (Milestone §6.1.)
+     */
+    private void openClustersTab() {
+        if (clustersTab != null && tabs.getTabs().contains(clustersTab)) {
+            tabs.getSelectionModel().select(clustersTab);
+            return;
+        }
+        if (!isK8sEnabled()) {
+            Label disabled = new Label(
+                    "Kubernetes integration is gated behind the `k8s.enabled` "
+                    + "system property during v2.8.1 Alpha. Launch with "
+                    + "`-Dk8s.enabled=true` to attach clusters.");
+            disabled.setWrapText(true);
+            disabled.setPadding(new Insets(24));
+            clustersTab = new Tab("Clusters", disabled);
+            clustersTab.setOnClosed(e -> clustersTab = null);
+            tabs.getTabs().add(clustersTab);
+            tabs.getSelectionModel().select(clustersTab);
+            return;
+        }
+        ensureK8sWiring();
+        clustersPane = new com.kubrik.mex.k8s.ui.ClustersPane(
+                kubeClusterService, events);
+        clustersTab = new Tab("Clusters", clustersPane);
+        clustersTab.setOnClosed(e -> {
+            if (clustersPane != null) clustersPane.close();
+            clustersTab = null;
+            clustersPane = null;
+        });
+        tabs.getTabs().add(clustersTab);
+        tabs.getSelectionModel().select(clustersTab);
+    }
+
+    private void ensureK8sWiring() {
+        if (kubeClusterService != null) return;
+        kubeClientFactory = new com.kubrik.mex.k8s.client.KubeClientFactory();
+        kubeClusterDao = new com.kubrik.mex.k8s.cluster.KubeClusterDao(database);
+        kubeProbeService = new com.kubrik.mex.k8s.cluster.ClusterProbeService(kubeClientFactory);
+        kubeClusterService = new com.kubrik.mex.k8s.cluster.KubeClusterService(
+                kubeClusterDao, kubeClientFactory, kubeProbeService, events);
+    }
+
+    private static boolean isK8sEnabled() {
+        String v = System.getProperty("k8s.enabled");
+        return v != null && (v.equalsIgnoreCase("true") || v.equals("1")
+                || v.equalsIgnoreCase("yes"));
     }
 
     private static String mexVersion() {

@@ -1,5 +1,43 @@
 # Changelog
 
+## v2.8.0-alpha — Kubernetes foundation (Q2.8.1-A)
+
+First slice of the v2.8.1 Kubernetes Integration milestone — the `K8S-*` foundation: attach a cluster by kubeconfig context, probe it for reachability, and classify which auth strategy each context uses so pre-flight can catch `plugin X not on PATH` before an Apply. Discovery, port-forward, secret pickup, and provisioning land in subsequent chunks (Q2.8.1-B onwards).
+
+Spec set: `docs/v2/v2.8/v2.8.1/`. Package root: `com.kubrik.mex.k8s`. Gated behind the `k8s.enabled` system property so the Alpha surface is discoverable in the Tools menu without wiring into day-to-day use.
+
+### Highlights
+
+- **Kubeconfig aware picker.** `KubeConfigLoader` walks `$KUBECONFIG` / `~/.kube/config`, parses every context, and classifies each user stanza (`EXEC_PLUGIN`, `OIDC`, `TOKEN`, `CLIENT_CERT`, `BASIC_AUTH`, `IN_CLUSTER`, `UNKNOWN`). `exec:` rows surface the binary name (`aws-iam-authenticator`, `gke-gcloud-auth-plugin`) so pre-flight can show a friendly hint.
+- **Client factory with mtime cache.** One `io.kubernetes.client.openapi.ApiClient` per `(kubeconfig_path, context_name)` pair; rebuilt only when the kubeconfig file's mtime changes. Exec-plugin / OIDC / static-token / client-cert auth delegated to the upstream library.
+- **Reach probe.** `ClusterProbeService` runs `/version` on a bounded 8 s budget and opportunistically counts nodes, mapping failures into `REACHABLE` / `AUTH_FAILED` / `PLUGIN_MISSING` / `TIMED_OUT` / `UNREACHABLE` for the UI chip.
+- **RBAC probe.** `RBACProbeService` issues a batch of `SelfSubjectAccessReview` calls covering the facts the provisioning path will need: list pods, read / create Secrets, create PVCs, read Events, create `MongoDBCommunity` CRs, create `PerconaServerMongoDB` CRs, list / create namespaces.
+- **Clusters tab.** `ClustersPane` hosts Add / Probe / Probe-all / Forget actions over a TableView bound to `k8s_clusters`. Detail drawer shows kubeconfig path, context, default namespace, server URL, last-probe result. Bus-driven status chip — no polling.
+- **Forget guard.** `KubeClusterService.remove` refuses while any `provisioning_records` row in APPLYING or READY points at the cluster; RESTRICT FK on the schema is the second line.
+
+### Schema
+
+Four new tables (milestone §3.1 verbatim): `k8s_clusters`, `provisioning_records`, `portforward_audit`, `rollout_events`. Indexes on the hot lookup paths (`idx_prov_status_time`, `idx_pfwd_conn_time`, `idx_rollout_prov_time`). FK cascades: RESTRICT from `provisioning_records → k8s_clusters`, SET NULL from `portforward_audit → k8s_clusters`, CASCADE from `rollout_events → provisioning_records`.
+
+### Dependency
+
+`io.kubernetes:client-java:20.0.1` (decision §7.7: first-party tracks upstream faster; exec-plugin / OIDC support built in; typed models + informer framework ready for Q2.8.1-B onward). `slf4j-simple` excluded so logging stays on logback.
+
+### Event bus
+
+Added `onKubeCluster` / `publishKubeCluster` with sealed `ClusterEvent` (`Added` / `Removed` / `Probed` / `AuthRefreshFailed`). Matches the milestone §3.2 contract.
+
+### Tests
+
+17 new unit tests: `KubeConfigLoaderTest` (token / exec-plugin / OIDC / client-cert / unknown / multi-context / missing file), `KubeClusterDaoTest` (CRUD + unique constraint + touch + live-provision count), `KubeClusterServiceTest` (events on add / remove / probe, last_used_at bump semantics).
+
+### Deferred
+
+- **Discovery + secret pickup** (Q2.8.1-B) — operator-aware discovery of `MongoDBCommunity`, `PerconaServerMongoDB`, plain-Mongo StatefulSets; TLS-material-in-memory hygiene.
+- **Port-forward service** (Q2.8.1-C) — ephemeral-port session bound to a Mongo Explorer connection; health probe + reconnect; `portforward_audit` writes.
+- **Provisioning wizard** (Q2.8.1-D onwards) — profile model, MCO + PSMDB adapters, pre-flight engine, rollout viewer, tear-down, clone / export.
+- **Kind-cluster IT coverage** (Q2.8.1-L RC gate) — exec-plugin / OIDC auth matrix, `DiscoveryIT`, `McoProvisionIT`, `PsmdbProvisionIT`, etc. Foundation code verified by unit tests only so far.
+
 ## v2.8.0-alpha — Local Sandbox Labs
 
 Pivots the v2.8 series — Labs takes the v2.8.0 slot; the K8s workstreams that were originally scheduled at v2.8.0–v2.8.3 have shifted to v2.8.1–v2.8.4. Market-study driven: no desktop MongoDB GUI offers a credible one-click sandbox today.

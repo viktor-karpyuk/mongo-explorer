@@ -59,6 +59,10 @@ public class EventBus {
     // v2.8.4 — Labs lifecycle feed. One listener per wizard / pane.
     private final ConcurrentMap<Object, Consumer<com.kubrik.mex.labs.events.LabLifecycleEvent>> labListeners =
             new ConcurrentHashMap<>();
+    // v2.8.1 — Kubernetes cluster lifecycle + health feed. Consumers:
+    // ClustersPane chip updates + (later) AddClusterDialog probe preview.
+    private final ConcurrentMap<Object, Consumer<com.kubrik.mex.k8s.events.ClusterEvent>> kubeClusterListeners =
+            new ConcurrentHashMap<>();
 
     /** Latest topology snapshot per connection — delivered to late subscribers so newly-mounted
      *  UI can render without waiting for the next sampler tick (v2.4 TOPO-17). */
@@ -309,6 +313,20 @@ public class EventBus {
     public void publishCertExpiry(CertExpiryEvent e) {
         if (e == null) return;
         for (Consumer<CertExpiryEvent> l : certExpiryListeners.values()) {
+            try { l.accept(e); } catch (Exception ignored) {}
+        }
+    }
+
+    /** v2.8.1 — Kubernetes cluster add/remove/probe feed (milestone §3.2). */
+    public Subscription onKubeCluster(Consumer<com.kubrik.mex.k8s.events.ClusterEvent> l) {
+        Object key = new Object();
+        kubeClusterListeners.put(key, l);
+        return () -> kubeClusterListeners.remove(key);
+    }
+
+    public void publishKubeCluster(com.kubrik.mex.k8s.events.ClusterEvent e) {
+        if (e == null) return;
+        for (Consumer<com.kubrik.mex.k8s.events.ClusterEvent> l : kubeClusterListeners.values()) {
             try { l.accept(e); } catch (Exception ignored) {}
         }
     }
