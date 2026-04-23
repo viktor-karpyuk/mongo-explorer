@@ -76,17 +76,23 @@ public final class ReconfigSerializer {
         Document cfg = configReply.get("config", Document.class);
         if (cfg == null) return Optional.empty();
         String setName = cfg.getString("_id");
-        Integer version = cfg.getInteger("version");
-        if (setName == null || version == null) return Optional.empty();
+        Object versionRaw = cfg.get("version");
+        if (setName == null || !(versionRaw instanceof Number)) return Optional.empty();
+        int version = ((Number) versionRaw).intValue();
         List<Document> rawMembers = (List<Document>) cfg.get("members", List.class);
         if (rawMembers == null) return Optional.empty();
         List<Member> members = new ArrayList<>(rawMembers.size());
         for (Document m : rawMembers) {
+            // Live replSetGetConfig returns numeric fields as a mix of
+            // Int32 / Int64 / Double depending on how the member was
+            // created — getInteger() ClassCasts on anything but Int32.
+            // Coerce via Number.intValue() so the parser survives every
+            // supported server version.
             members.add(new Member(
-                    m.getInteger("_id", 0),
+                    intOf(m.get("_id"), 0),
                     m.getString("host"),
-                    m.getInteger("priority", 1),
-                    m.getInteger("votes", 1),
+                    intOf(m.get("priority"), 1),
+                    intOf(m.get("votes"), 1),
                     m.getBoolean("hidden", false),
                     m.getBoolean("arbiterOnly", false),
                     m.getBoolean("buildIndexes", true),
@@ -99,5 +105,10 @@ public final class ReconfigSerializer {
         if (v == null) return 0.0;
         if (v instanceof Number n) return n.doubleValue();
         return 0.0;
+    }
+
+    private static int intOf(Object v, int fallback) {
+        if (v instanceof Number n) return n.intValue();
+        return fallback;
     }
 }

@@ -55,25 +55,27 @@ public final class ValidatorPreviewService {
         // Stage 1: cap the work at sampleSize — $sample is uniform
         // random, cheap enough on a 1 M-doc collection.
         // Stage 2: find docs that DO NOT match the proposed schema.
-        // Stage 3: project only _id + a compact summary.
+        // Stage 3: return up to MAX_FIRST_FEW whole offenders. We used
+        // to emit a server-side $toString summary but $toString refuses
+        // object inputs (ConversionFailure error 241); rendering the
+        // summary client-side is the reliable path.
         List<Document> pipeline = List.of(
                 new Document("$sample", new Document("size", sampleSize)),
                 new Document("$match", new Document("$nor",
                         List.of(new Document("$jsonSchema", schema)))),
-                new Document("$limit", MAX_FIRST_FEW),
-                new Document("$project", new Document("_id", 1)
-                        .append("summary", new Document("$substr",
-                                List.of(new Document("$toString",
-                                        "$$ROOT"), 0, 200))))
+                new Document("$limit", MAX_FIRST_FEW)
         );
 
         List<ValidatorSpec.FailedDoc> first = new ArrayList<>();
         for (Document d : coll.aggregate(pipeline)) {
             Object id = d.get("_id");
-            String summary = d.getString("summary");
+            String summary = d.toJson();
+            if (summary.length() > 200) {
+                summary = summary.substring(0, 200) + "…";
+            }
             first.add(new ValidatorSpec.FailedDoc(
                     id == null ? "<null>" : id.toString(),
-                    summary == null ? "" : summary));
+                    summary));
         }
 
         // Second pass to get the full count of failing sampled docs —
