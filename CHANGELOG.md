@@ -1,5 +1,31 @@
 # Changelog
 
+## v2.8.0-alpha — Provisioning model + profile enforcement (Q2.8.1-D)
+
+Wizard state + rule engine — the scaffolding every subsequent chunk (MCO adapter, PSMDB adapter, pre-flight, apply) plugs into.
+
+### Highlights
+
+- **`ProvisionModel`.** Deeply-immutable record holding every wizard choice: profile, cluster target, namespace, operator, topology, Mongo version, auth, TLS, storage, resources, scheduling, monitoring, backup, and an escape-hatch `advancedYaml`. Wither helpers per field so the wizard UI can wire bindings without rebuilding the full tuple by hand.
+- **Seven nested spec records.** `AuthSpec` (root user + password mode), `TlsSpec` (OFF / operator-generated / cert-manager / BYO-Secret), `StorageSpec` (storage class + per-member PVC sizes), `ResourceSpec` (CPU+memory requests/limits per member kind), `SchedulingSpec` (PDB + topology spread), `MonitoringSpec` (ServiceMonitor), `BackupSpec` (NONE / PSMDB-PBM / managed PBM CronJob / BYO-declared). Each ships `devDefaults()` / `prodDefaults()` seeds that match the milestone §7 contract.
+- **`ProfileEnforcer`.** Pure-function rule engine consulted on every wizard field edit. `verdict(model, fieldId) → FieldVerdict` answers required / locked-to / default / rationale — the wizard renders each control from the verdict. Prod locks PDB, TopologySpread, ServiceMonitor, and deletion-protection; requires TLS, explicit storage size, explicit data-pod requests, and a backup strategy (operator-specific default).
+- **`ProfileEnforcer.switchProfile`** routes a profile change through every Prod default and returns a change log so the UI can acknowledge them in a single dialog (spec §5). Dev → Prod bumps standalone topology to RS3 (Prod doesn't offer STANDALONE); Prod → Dev relaxes locks without wiping the user's prod-chosen values.
+- **`ProfileEnforcer.validate(model)`** returns blocking issues the Apply button must respect — empty name/namespace, unavailable topology for the chosen profile+operator, Prod profile without TLS/backup/requests/PDB/storage.
+- **`TopologyPicker`.** The operator × profile availability matrix (milestone §7.8): Dev allows STANDALONE + RS3 on both operators; Prod MCO gets RS3 + RS5; Prod PSMDB adds SHARDED.
+
+### Rules source
+
+For Alpha the rules live in `ProfileEnforcer` Java switch blocks — reviewable in code review without a side file. When the blessed matrix widens (milestone §9.2) we'll externalise to the `profile-rules.yaml` the tech-spec mentions. The change is additive: the `FieldVerdict` shape is stable and test-covered.
+
+### Tests
+
+19 new unit tests: `TopologyPickerTest` (6 — profile/operator matrix, default-for fallbacks), `ProfileEnforcerTest` (13 — every Prod lock + requirement, switchProfile log, validate() failures, clean-Prod validation). Pure-function tests, no cluster needed.
+
+### Deferred
+
+- **YAML-backed rule table** (milestone §9.2) — ships with v2.8.1 Beta once the Alpha rule set has shaken out.
+- **Custom / Advanced profile tier** — decided (§7 open-9.2) to defer past Alpha.
+
 ## v2.8.0-alpha — Kubernetes port-forward (Q2.8.1-C)
 
 Closes the "awaiting Q2.8.1-C" loop from the discovery chunk: spin a port-forward against a discovered Mongo workload, bind a loopback listener, and pump bytes through the Kubernetes API's SPDY upgrade to the backing pod.
