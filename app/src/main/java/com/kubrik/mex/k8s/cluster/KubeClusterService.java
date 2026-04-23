@@ -65,7 +65,18 @@ public final class KubeClusterService {
         return ref;
     }
 
-    /** Forget a cluster. Refuses when any live provisioning points to it. */
+    /**
+     * Forget a cluster. Refuses when any live provisioning points to it.
+     *
+     * <p>The check-and-delete runs against the DAO directly. A narrow
+     * race is possible: between {@link KubeClusterDao#countLiveProvisions}
+     * returning 0 and {@link KubeClusterDao#delete} running, a
+     * concurrent Apply could insert a provisioning_records row pointing
+     * at this cluster. SQLite's {@code ON DELETE RESTRICT} FK rule then
+     * blocks the DELETE with a {@link SQLException}; we catch that and
+     * re-surface the friendly {@link IllegalStateException} so the UI
+     * still renders a usable message.</p>
+     */
     public void remove(long clusterId) throws SQLException {
         Optional<K8sClusterRef> existing = dao.findById(clusterId);
         if (existing.isEmpty()) return;
@@ -75,8 +86,22 @@ public final class KubeClusterService {
                     + live + " live provisioning record" + (live == 1 ? "" : "s")
                     + " still point here. Tear them down first.");
         }
+        try {
+            dao.delete(clusterId);
+        } catch (SQLException sqle) {
+            String msg = sqle.getMessage() == null ? "" : sqle.getMessage().toLowerCase();
+            if (msg.contains("foreign key") || msg.contains("constraint")) {
+                // Lost the check-and-delete race — a new provisioning row
+                // landed between the count and the delete. Translate the
+                // raw SQLite error into the same friendly message the
+                // deliberate check produces.
+                throw new IllegalStateException(
+                        "refuse to forget cluster: a provisioning record "
+                        + "was inserted concurrently. Retry after tearing it down.");
+            }
+            throw sqle;
+        }
         clientFactory.invalidate(existing.get());
-        dao.delete(clusterId);
         events.publishKubeCluster(new ClusterEvent.Removed(
                 clusterId, existing.get().displayName(), System.currentTimeMillis()));
     }

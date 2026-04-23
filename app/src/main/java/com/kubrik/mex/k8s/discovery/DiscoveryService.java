@@ -69,26 +69,43 @@ public final class DiscoveryService {
         }
 
         List<DiscoveredMongo> merged = new ArrayList<>();
-        try {
-            merged.addAll(mco.discover(client, ref.id()));
-        } catch (ApiException ae) {
-            log.debug("MCO discover on {}: HTTP {}", ref.coordinates(), ae.getCode());
-        } catch (Exception e) {
-            log.debug("MCO discover on {}: {}", ref.coordinates(), e.toString());
+        int hardFailures = 0;
+        String lastHardReason = null;
+        Object[][] probes = {
+                {"MCO",     (DiscovererCall) () -> mco.discover(client, ref.id())},
+                {"PSMDB",   (DiscovererCall) () -> psmdb.discover(client, ref.id())},
+                {"plain-STS", (DiscovererCall) () -> plain.discover(client, ref.id())},
+        };
+        for (Object[] probe : probes) {
+            String label = (String) probe[0];
+            DiscovererCall call = (DiscovererCall) probe[1];
+            try {
+                merged.addAll(call.run());
+            } catch (ApiException ae) {
+                log.debug("{} discover on {}: HTTP {}", label, ref.coordinates(), ae.getCode());
+                // 401 / 403 / 5xx are hard failures: the caller can't
+                // reach the API at all. A 404 from the CustomObjectsApi
+                // is swallowed by the discoverer itself as "operator not
+                // installed" and never reaches this catch.
+                if (ae.getCode() == 401 || ae.getCode() == 403 || ae.getCode() >= 500) {
+                    hardFailures++;
+                    lastHardReason = label + ": HTTP " + ae.getCode()
+                            + (ae.getMessage() == null ? "" : " " + ae.getMessage());
+                }
+            } catch (Exception e) {
+                log.debug("{} discover on {}: {}", label, ref.coordinates(), e.toString());
+                hardFailures++;
+                lastHardReason = label + ": " + e.getMessage();
+            }
         }
-        try {
-            merged.addAll(psmdb.discover(client, ref.id()));
-        } catch (ApiException ae) {
-            log.debug("PSMDB discover on {}: HTTP {}", ref.coordinates(), ae.getCode());
-        } catch (Exception e) {
-            log.debug("PSMDB discover on {}: {}", ref.coordinates(), e.toString());
-        }
-        try {
-            merged.addAll(plain.discover(client, ref.id()));
-        } catch (ApiException ae) {
-            log.debug("plain-STS discover on {}: HTTP {}", ref.coordinates(), ae.getCode());
-        } catch (Exception e) {
-            log.debug("plain-STS discover on {}: {}", ref.coordinates(), e.toString());
+
+        // If EVERY probe hard-failed and we found nothing, the user's
+        // cluster is probably unreachable / auth-expired rather than
+        // "empty of Mongo workloads." Tell the UI so it doesn't render
+        // a misleading "Found 0" result.
+        if (hardFailures == probes.length && merged.isEmpty()) {
+            publishFailed(ref.id(), "all discoverers failed; last reason: " + lastHardReason);
+            return List.of();
         }
 
         merged.sort(Comparator.comparing(DiscoveredMongo::namespace)
@@ -97,6 +114,11 @@ public final class DiscoveryService {
         events.publishDiscovery(new DiscoveryEvent.Refreshed(
                 ref.id(), out, System.currentTimeMillis()));
         return out;
+    }
+
+    @FunctionalInterface
+    private interface DiscovererCall {
+        List<DiscoveredMongo> run() throws ApiException, Exception;
     }
 
     private void publishFailed(long clusterId, String reason) {
