@@ -69,7 +69,11 @@ public final class RollbackPlanWriter {
                 return rs.next();
             }
         } catch (SQLException e) {
-            return false;
+            // Don't mask DB failures as "bad audit id" — the caller
+            // needs to distinguish a missing row from a locked DB so
+            // operator sees the real cause in the status label.
+            throw new RuntimeException(
+                    "ops_audit lookup failed for id=" + auditId, e);
         }
     }
 }

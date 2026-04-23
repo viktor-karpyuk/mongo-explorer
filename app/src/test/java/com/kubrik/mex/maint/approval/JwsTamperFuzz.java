@@ -45,21 +45,28 @@ class JwsTamperFuzz {
                 "ph", "deadbeef", "exp", 123L);
         String token = jws.sign(claims);
         int rejected = 0;
+        int verified = 0;
+        int skipped = 0;
         for (int i = 0; i < token.length(); i++) {
             char original = token.charAt(i);
             // Flip to another base64url character of the same class
             // so the result is still structurally parseable.
             char flipped = original == '.' ? '.'
                     : (original == 'A' ? 'B' : 'A');
-            if (flipped == original) continue;
+            if (flipped == original) { skipped++; continue; }
             String mutated = token.substring(0, i) + flipped
                     + token.substring(i + 1);
             if (jws.verify(mutated).isEmpty()) rejected++;
+            else verified++;
         }
-        // Some positions (e.g. padding differences) may parse the same
-        // claim object but fail the signature check; the meaningful
-        // assertion is that every mutation eventually fails verify.
-        assertTrue(rejected > 0);
+        // Review round 7 (#33) — earlier assertion was just
+        // `rejected > 0` which was trivially true. The real
+        // invariant: NO single-byte flip should ever produce a
+        // token that verifies under this install's key.
+        assertEquals(0, verified,
+                "no single-byte flip should produce a verifying token "
+                        + "(rejected=" + rejected + ", skipped=" + skipped + ")");
+        assertTrue(rejected > 0, "at least some flips should have been tried");
     }
 
     @Test
