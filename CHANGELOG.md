@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.8.0-alpha — TearDownService + deletion protection (Q2.8.1-I)
+
+Safe delete with two explicit gates + user-picked cascade.
+
+### Highlights
+
+- **Two-gate flow.** `TearDownService.clearDeletionProtection(id)` flips the `deletion_protection` column off as a separate step before `tearDown()` will even run. Attempting to tear down a protected row throws `IllegalStateException`. A misclick on "Delete" can't nuke a Prod deployment.
+- **`CascadePlan`.** Three explicit knobs: `deleteCr` / `deleteSecrets` / `deletePvcs`. No silent defaults — the wizard's confirm dialog displays the plan's `summary()` string so the user sees what's about to happen. `prodDefaults()` keeps Secrets + PVCs; `devDefaults()` wipes everything.
+- **Partial-teardown tolerance.** Opener failures during the cascade are recorded in `TearDownResult.failures()` but don't abort — the row still flips to `DELETED` so the UI doesn't block on a stuck teardown. An operator can follow up with `kubectl` when needed.
+- **Idempotence.** Calling `tearDown` on an already-DELETED row returns a `"already deleted"` summary with `deletedCount=0` — safe for UI retries.
+- **Adapter-aware cascade.** `buildDeleteList` picks the right CR apiVersion/kind per operator (`MongoDBCommunity` vs `PerconaServerMongoDB`) + the right convention Secret names (`<name>-admin-user` for MCO, `<name>-secrets` for PSMDB).
+
+### Tests
+
+9 new unit tests: `CascadePlanTest` (4 — Prod defaults, Dev defaults, summary string, no-op), `TearDownServiceTest` (5 — protection gate, unprotected first-call, Prod cascade skips PVCs, opener-failure partial, double-teardown no-op). All SQLite-backed, no live cluster.
+
 ## v2.8.0-alpha — ApplyOrchestrator + RolloutEventDao + DiagnosisEngine (Q2.8.1-H)
 
 Bridges every prior chunk: takes a `ProvisionModel`, runs the chosen adapter's renderer, writes a `provisioning_records` row in APPLYING, dispatches every rendered document to the API server via a pluggable `ApplyOpener` seam, and records the catalogue so cleanup can reverse-iterate on failure.
