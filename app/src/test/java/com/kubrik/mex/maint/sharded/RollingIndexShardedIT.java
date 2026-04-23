@@ -23,36 +23,16 @@ import static org.junit.jupiter.api.Assertions.*;
  * v2.7 IDX-BLD-* — 3-node rolling index build against the sharded rig
  * ({@code testing/db-sharded} with {@code MEX_SHARDED_RIG=up}).
  *
- * <p><b>Known issue (found by this IT, 2026-04-22):</b> the v2.7.0-alpha
- * {@link RollingIndexRunner} sends {@code createIndexes} with
- * {@code commitQuorum: 0} directly to each secondary. On MongoDB 6.0+
- * secondaries reject index DDL writes with {@code NotWritablePrimary}
- * (code 10107) regardless of commitQuorum — the legacy "stop mongod /
- * run standalone / createIndex / restart as member" rolling pattern
- * the runner encodes is not supported by the driver path anymore.</p>
- *
- * <p>Modern rolling-index for 6.0+ clusters requires one of:</p>
- * <ul>
- *   <li>Send {@code createIndexes} once via the primary with
- *       {@code commitQuorum: "votingMembers"} — lets Mongo's own
- *       2-phase commit drive the rolling behaviour. Progress is
- *       monitored via {@code $currentOp} on each member.</li>
- *   <li>Process-level rolling restart into standalone mode — needs
- *       orchestrator support + operator tolerance for the member
- *       being offline.</li>
- * </ul>
- *
- * <p>The IT is disabled pending Q2.7-C1 follow-up (rework runner to
- * use 2-phase commit). The planner + per-member result types still
- * unit-test correctly; only the dispatch path is stale.</p>
+ * <p>Uses the modern post-Q2.7-C1 runner: one {@code createIndexes}
+ * with {@code commitQuorum: "votingMembers"} via the primary lets the
+ * server orchestrate the rolling build; the runner then verifies each
+ * member has the index by listing indexes directly.</p>
  */
 @Tag("shardedRig")
-@org.junit.jupiter.api.Disabled("Known issue: RollingIndexRunner uses " +
-        "pre-4.4 commitQuorum=0 secondary-write pattern which 6.0+ " +
-        "rejects with NotWritablePrimary. See Q2.7-C1 follow-up.")
 @EnabledIfEnvironmentVariable(named = "MEX_SHARDED_RIG", matches = "up")
 class RollingIndexShardedIT {
 
+    private static MongoClient mongos;
     private static MongoClient seed;
     private static final String DB = "app";
     private static final String COLL = "items";
@@ -60,9 +40,12 @@ class RollingIndexShardedIT {
 
     @BeforeAll
     static void setUp() {
+        // mongos for writes — always routes to the current primary,
+        // avoids the "seed got demoted" flake if the last election
+        // didn't pick shard1a.
+        mongos = ShardedRigSupport.openMongos();
         seed = ShardedRigSupport.openMember(ShardedRigSupport.SHARD1A_PORT);
-        // Pre-seed a few docs so the index build has something to scan.
-        com.mongodb.client.MongoDatabase db = seed.getDatabase(DB);
+        com.mongodb.client.MongoDatabase db = mongos.getDatabase(DB);
         db.getCollection(COLL).drop();
         List<Document> docs = new java.util.ArrayList<>();
         for (int i = 0; i < 100; i++) {
@@ -73,12 +56,13 @@ class RollingIndexShardedIT {
 
     @AfterAll
     static void tearDown() {
-        if (seed != null) {
+        if (mongos != null) {
             try {
-                seed.getDatabase(DB).getCollection(COLL).dropIndex(IDX_NAME);
+                mongos.getDatabase(DB).getCollection(COLL).dropIndex(IDX_NAME);
             } catch (Exception ignored) {}
-            seed.close();
+            mongos.close();
         }
+        if (seed != null) seed.close();
     }
 
     @Test
@@ -90,13 +74,16 @@ class RollingIndexShardedIT {
         int primaryId = findPrimaryId(seed);
         assertTrue(primaryId >= 0);
 
-        // 2. Plan — secondaries first, primary last.
+        // 2. Plan — secondaries first, primary last (for UI display).
         List<RollingIndexPlanner.Step> plan = new RollingIndexPlanner()
                 .plan(members, primaryId);
         assertEquals(3, plan.size());
         assertTrue(plan.get(plan.size() - 1).isPrimary());
 
-        // 3. Dispatch per step against host-published ports.
+        String primaryHost = plan.get(plan.size() - 1).member().host();
+        List<String> memberHosts = plan.stream()
+                .map(s -> s.member().host()).toList();
+
         IndexBuildSpec spec = new IndexBuildSpec(DB, COLL,
                 new Document("n", 1), IDX_NAME, false, false,
                 Optional.empty(), Optional.empty(), Optional.empty(),
@@ -111,13 +98,18 @@ class RollingIndexShardedIT {
             return ShardedRigSupport.openMember(port);
         };
 
+        // 3. Modern runner: single createIndexes via the primary
+        //    with commitQuorum=votingMembers + per-member verify.
         RollingIndexRunner runner = new RollingIndexRunner();
-        RollingIndexRunner.Result result = runner.run(ctx, spec, plan);
+        RollingIndexRunner.Result result = runner.run(
+                ctx, spec, primaryHost, memberHosts);
         assertTrue(result.overallSuccess(),
                 "per-member outcomes: " + result.perMember());
         assertEquals(3, result.perMember().size());
 
-        // 4. Verify the index exists on every member.
+        // 4. Independent verification — listIndexes directly via each
+        //    member's host-published port (doesn't go through the
+        //    DispatchContext used by the runner).
         for (RollingIndexPlanner.Step step : plan) {
             int port = ctxPort(step.member().host());
             try (MongoClient member = ShardedRigSupport.openMember(port)) {

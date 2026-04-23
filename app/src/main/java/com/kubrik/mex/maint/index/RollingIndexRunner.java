@@ -11,19 +11,29 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * v2.7 IDX-BLD-4/5/6 — Dispatches {@code createIndexes} against
- * each member in the plan produced by {@link RollingIndexPlanner}.
+ * v2.7 IDX-BLD-4/5/6 — Dispatches {@code createIndexes} across a
+ * replica set using MongoDB's built-in 2-phase commit protocol.
  *
- * <p>Key detail: {@code commitQuorum: 0} turns the 2-phase commit
- * OFF so the build is node-local, which is what "rolling" means.
- * Builds on members in the planner order; per-member outcome lands
- * in {@link Result} so the audit row shows exactly which node failed
- * (if any).</p>
+ * <p><b>Modern pattern (6.0+):</b> fire {@code createIndexes} once
+ * via the primary with {@code commitQuorum: "votingMembers"}. The
+ * server drives the rolling build itself — each secondary clones
+ * the in-progress build, the command returns only after the majority
+ * has committed. This replaces the pre-4.4 "stop each member and
+ * build as standalone" pattern that the first draft encoded; that
+ * pattern tried to send {@code createIndexes} with
+ * {@code commitQuorum: 0} directly to each secondary, which 6.0+
+ * rejects with {@code NotWritablePrimary}.</p>
  *
- * <p>The step-down for the primary is handled as a separate
- * {@code replSetStepDown} command before the per-member dispatch —
- * keeps the dispatch uniform and makes the step-down inspectable in
- * an audit row.</p>
+ * <p>Per-member visibility is preserved by post-build verification:
+ * after the primary command returns, {@link #run} opens a direct
+ * connection to every member (via {@link DispatchContext}) and asks
+ * {@code listIndexes} whether the named index is present. The UI
+ * uses the returned {@link MemberOutcome} list for the per-member
+ * progress strip.</p>
+ *
+ * <p>Abort is a single {@code dropIndexes} via the primary; the
+ * server's same 2-phase machinery cleans up the in-progress build
+ * across every member.</p>
  */
 public final class RollingIndexRunner {
 
@@ -38,111 +48,133 @@ public final class RollingIndexRunner {
             boolean overallSuccess,
             long totalElapsedMs) {}
 
-    /** Dispatch the full rolling build. Caller supplies a
-     *  {@link DispatchContext} wrapping per-member MongoClient access;
-     *  keeps this class decoupled from how the UI opens peer clients. */
+    /** Fire the build once via the primary with
+     *  {@code commitQuorum: "votingMembers"}; the server drives the
+     *  rolling protocol internally. After the command returns (which
+     *  is once a majority has committed), verify per-member via
+     *  {@code listIndexes}.
+     *
+     *  @param ctx           supplies member-level clients for the
+     *                       per-member verification pass
+     *  @param spec          what to build
+     *  @param primaryHost   {@code host:port} of the current primary
+     *  @param memberHosts   every data-bearing member (including the
+     *                       primary) in the replset; the verifier
+     *                       checks each one
+     */
     public Result run(DispatchContext ctx, IndexBuildSpec spec,
-                      List<RollingIndexPlanner.Step> steps) {
+                      String primaryHost, List<String> memberHosts) {
         long t0 = System.currentTimeMillis();
-        List<MemberOutcome> outcomes = new ArrayList<>(steps.size());
-        for (RollingIndexPlanner.Step step : steps) {
-            MemberOutcome outcome = runOne(ctx, spec, step);
-            outcomes.add(outcome);
-            if (!outcome.success()) {
-                log.warn("rolling index build failed on {} — bailing. {} members completed.",
-                        outcome.host(), outcomes.size() - 1);
-                break;
+        // 1. Dispatch via the primary. commitQuorum="votingMembers"
+        //    asks the server to wait until every voting member has
+        //    committed before returning — gives us majority durability
+        //    without tying up the UI on each secondary individually.
+        MongoClient primary = null;
+        try {
+            primary = ctx.openMember(primaryHost);
+            MongoDatabase db = primary.getDatabase(spec.db());
+            Document cmd = new Document("createIndexes", spec.coll())
+                    .append("indexes", spec.asCreateIndexesArgs())
+                    .append("commitQuorum", "votingMembers");
+            db.runCommand(cmd);
+        } catch (com.mongodb.MongoCommandException mce) {
+            if (primary != null) primary.close();
+            // Fire-time failure — nothing committed on any member.
+            return new Result(
+                    List.of(new MemberOutcome(-1, primaryHost, false,
+                            mce.getErrorCodeName(), mce.getErrorMessage(),
+                            System.currentTimeMillis() - t0)),
+                    false, System.currentTimeMillis() - t0);
+        } catch (Exception e) {
+            if (primary != null) primary.close();
+            return new Result(
+                    List.of(new MemberOutcome(-1, primaryHost, false,
+                            e.getClass().getSimpleName(), e.getMessage(),
+                            System.currentTimeMillis() - t0)),
+                    false, System.currentTimeMillis() - t0);
+        } finally {
+            if (primary != null) {
+                try { primary.close(); } catch (Exception ignored) {}
             }
+        }
+
+        // 2. Per-member verification — listIndexes on every node and
+        //    check the named index is present. A lagging secondary
+        //    that hasn't replicated the commit shows up as failure;
+        //    the UI surfaces it distinctly from a hard build failure.
+        List<MemberOutcome> outcomes = new ArrayList<>(memberHosts.size());
+        for (String host : memberHosts) {
+            outcomes.add(verifyIndexOn(ctx, spec, host));
         }
         boolean overall = outcomes.stream().allMatch(MemberOutcome::success);
         return new Result(List.copyOf(outcomes), overall,
                 System.currentTimeMillis() - t0);
     }
 
-    private MemberOutcome runOne(DispatchContext ctx, IndexBuildSpec spec,
-                                  RollingIndexPlanner.Step step) {
+    private MemberOutcome verifyIndexOn(DispatchContext ctx,
+                                        IndexBuildSpec spec, String host) {
         long t0 = System.currentTimeMillis();
-        try (MongoClient member = ctx.openMember(step.member().host())) {
-            if (step.isPrimary()) {
-                // Step down first so the build runs on a secondary,
-                // then we return to this member for the build.
-                MongoDatabase admin = member.getDatabase("admin");
-                admin.runCommand(new Document("replSetStepDown", 60)
-                        .append("force", false));
-            }
+        try (MongoClient member = ctx.openMember(host)) {
             MongoDatabase db = member.getDatabase(spec.db());
-            Document cmd = new Document("createIndexes", spec.coll())
-                    .append("indexes", spec.asCreateIndexesArgs())
-                    // 0 = build on this member only; no 2-phase commit.
-                    .append("commitQuorum", 0);
-            db.runCommand(cmd);
-            return new MemberOutcome(step.member().id(), step.member().host(),
-                    true, null, null, System.currentTimeMillis() - t0);
-        } catch (com.mongodb.MongoCommandException mce) {
-            // Preserve the real Mongo error code name (e.g.
-            // "IndexOptionsConflict", "DuplicateKey") instead of
-            // discarding it as "MongoCommandException" — the audit
-            // row needs to be actionable.
-            return new MemberOutcome(step.member().id(), step.member().host(),
-                    false, mce.getErrorCodeName(), mce.getErrorMessage(),
+            for (Document ix : db.getCollection(spec.coll()).listIndexes()) {
+                if (spec.name().equals(ix.getString("name"))) {
+                    return new MemberOutcome(-1, host, true, null,
+                            "index present",
+                            System.currentTimeMillis() - t0);
+                }
+            }
+            return new MemberOutcome(-1, host, false, "IndexNotFound",
+                    "index " + spec.name() + " not yet on " + host
+                            + " — likely lagging",
                     System.currentTimeMillis() - t0);
         } catch (Exception e) {
-            return new MemberOutcome(step.member().id(), step.member().host(),
-                    false, e.getClass().getSimpleName(), e.getMessage(),
+            return new MemberOutcome(-1, host, false,
+                    e.getClass().getSimpleName(), e.getMessage(),
                     System.currentTimeMillis() - t0);
         }
     }
 
-    /** IDX-BLD-6 — abort path. Drops the index on members that
-     *  completed, and {@code killOp}s the currently-building op if
-     *  supplied. Best-effort; every individual step is captured in
-     *  the outcome list so the audit row documents the state. */
+    /** IDX-BLD-6 — abort / rollback. Modern pattern: a single
+     *  {@code dropIndexes} via the primary propagates across every
+     *  member through the same 2-phase machinery that ran the build.
+     *  No per-member killOp dance. */
     public Result abort(DispatchContext ctx, IndexBuildSpec spec,
-                        List<MemberOutcome> completed, Long activeOpId,
-                        String activeHost) {
+                        String primaryHost) {
         long t0 = System.currentTimeMillis();
-        List<MemberOutcome> drops = new ArrayList<>();
-        for (MemberOutcome m : completed) {
-            if (!m.success()) continue;
-            long ts = System.currentTimeMillis();
-            try (MongoClient member = ctx.openMember(m.host())) {
-                MongoDatabase db = member.getDatabase(spec.db());
-                db.runCommand(new Document("dropIndexes", spec.coll())
-                        .append("index", spec.name()));
-                drops.add(new MemberOutcome(m.memberId(), m.host(),
-                        true, null, null, System.currentTimeMillis() - ts));
-            } catch (Exception e) {
-                drops.add(new MemberOutcome(m.memberId(), m.host(),
-                        false, e.getClass().getSimpleName(), e.getMessage(),
-                        System.currentTimeMillis() - ts));
+        try (MongoClient primary = ctx.openMember(primaryHost)) {
+            MongoDatabase db = primary.getDatabase(spec.db());
+            db.runCommand(new Document("dropIndexes", spec.coll())
+                    .append("index", spec.name()));
+            return new Result(
+                    List.of(new MemberOutcome(-1, primaryHost, true, null,
+                            "dropIndexes " + spec.name()
+                                    + " dispatched — replicating",
+                            System.currentTimeMillis() - t0)),
+                    true, System.currentTimeMillis() - t0);
+        } catch (com.mongodb.MongoCommandException mce) {
+            // IndexNotFound here means either the build failed before
+            // landing anywhere (benign) or a second abort is running
+            // over the same index. Either way the cluster state is
+            // "no such index" which is the intent; treat as success.
+            if ("IndexNotFound".equals(mce.getErrorCodeName())) {
+                return new Result(
+                        List.of(new MemberOutcome(-1, primaryHost, true,
+                                null, "index already absent",
+                                System.currentTimeMillis() - t0)),
+                        true, System.currentTimeMillis() - t0);
             }
+            return new Result(
+                    List.of(new MemberOutcome(-1, primaryHost, false,
+                            mce.getErrorCodeName(), mce.getErrorMessage(),
+                            System.currentTimeMillis() - t0)),
+                    false, System.currentTimeMillis() - t0);
+        } catch (Exception e) {
+            return new Result(
+                    List.of(new MemberOutcome(-1, primaryHost, false,
+                            e.getClass().getSimpleName(), e.getMessage(),
+                            System.currentTimeMillis() - t0)),
+                    false, System.currentTimeMillis() - t0);
         }
-        if (activeOpId != null && activeHost != null) {
-            long ts = System.currentTimeMillis();
-            try (MongoClient active = ctx.openMember(activeHost)) {
-                MongoDatabase admin = active.getDatabase("admin");
-                admin.runCommand(new Document("killOp", 1)
-                        .append("op", activeOpId));
-                drops.add(new MemberOutcome(-1, activeHost, true,
-                        null, "killOp " + activeOpId + " sent",
-                        System.currentTimeMillis() - ts));
-            } catch (com.mongodb.MongoSocketException expected) {
-                // Server tore down the connection on killOp — expected
-                // when the operation was actively running.
-                drops.add(new MemberOutcome(-1, activeHost, true,
-                        null, "killOp " + activeOpId
-                                + " (connection closed)",
-                        System.currentTimeMillis() - ts));
-            } catch (Exception e) {
-                log.warn("killOp failed on {}: {}", activeHost, e.getMessage());
-                drops.add(new MemberOutcome(-1, activeHost, false,
-                        e.getClass().getSimpleName(), e.getMessage(),
-                        System.currentTimeMillis() - ts));
-            }
-        }
-        boolean overall = drops.stream().allMatch(MemberOutcome::success);
-        return new Result(List.copyOf(drops), overall,
-                System.currentTimeMillis() - t0);
     }
 
     /** Indirection so the caller controls how member-level clients are

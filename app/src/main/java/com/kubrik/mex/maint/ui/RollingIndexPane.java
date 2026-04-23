@@ -168,41 +168,83 @@ public final class RollingIndexPane extends BorderPane {
                     new Document("replSetGetStatus", 1));
             List<Member> members = parseMembers(cfgReply);
             int primaryId = findPrimaryId(status);
+            String primaryHost = findPrimaryHost(status);
+            if (primaryHost == null) {
+                fail("No primary found — can't dispatch createIndexes.");
+                return;
+            }
             List<RollingIndexPlanner.Step> plan = planner.plan(members, primaryId);
 
-            statusLabel.setText("Running rolling build…");
-            Thread.startVirtualThread(() -> runPlanWithUi(spec, plan));
+            statusLabel.setText("Dispatching createIndexes on primary "
+                    + primaryHost + "… (commitQuorum=votingMembers)");
+            FxOffThread.run(() -> runWithUi(spec, plan, primaryHost),
+                    msg -> fail("Build failed: " + msg));
         } catch (Exception ex) {
             fail("Run failed: " + ex.getMessage());
         }
     }
 
-    private void runPlanWithUi(IndexBuildSpec spec, List<RollingIndexPlanner.Step> plan) {
-        // Per-step: update the strip label before + after. memberOpener
-        // pulls credentials + TLS from the active MongoService so the
-        // direct connection authenticates properly on secured clusters.
-        RollingIndexRunner.DispatchContext ctx = memberOpener::apply;
-        // Walk the plan one step at a time so we can update the UI
-        // between members.
+    private void runWithUi(IndexBuildSpec spec,
+                           List<RollingIndexPlanner.Step> plan,
+                           String primaryHost) {
+        // Flip every member's strip to "building" — the server-side
+        // 2-phase commit means they all build concurrently under the
+        // hood; there's no per-member "first secondary then primary"
+        // sequencing the UI can honestly reflect.
         for (RollingIndexPlanner.Step step : plan) {
-            Platform.runLater(() -> mark(step.member().id(), "⚙️", "building"));
-            RollingIndexRunner.Result partial = runner.run(ctx, spec, List.of(step));
-            RollingIndexRunner.MemberOutcome outcome = partial.perMember().get(0);
+            Platform.runLater(() -> mark(step.member().id(),
+                    "⚙️", "building (server-orchestrated)"));
+        }
+        RollingIndexRunner.DispatchContext ctx = memberOpener::apply;
+        List<String> memberHosts = plan.stream()
+                .map(s -> s.member().host()).toList();
+        RollingIndexRunner.Result result = runner.run(
+                ctx, spec, primaryHost, memberHosts);
+
+        // The runner returns one outcome per member; the host field
+        // tells us which strip label to update. memberId in the
+        // returned outcomes is -1 (the runner doesn't have the id);
+        // match on host.
+        for (RollingIndexPlanner.Step step : plan) {
+            RollingIndexRunner.MemberOutcome outcome = result.perMember().stream()
+                    .filter(o -> o.host().equals(step.member().host()))
+                    .findFirst().orElse(null);
             Platform.runLater(() -> {
-                if (outcome.success()) {
-                    mark(step.member().id(), "✅", "done in " + outcome.elapsedMs() + "ms");
+                if (outcome == null) {
+                    mark(step.member().id(), "⏳", "no outcome row");
+                } else if (outcome.success()) {
+                    mark(step.member().id(), "✅",
+                            "done in " + outcome.elapsedMs() + "ms");
                 } else {
-                    mark(step.member().id(), "❌", outcome.errorCode() + ": " + outcome.errorMessage());
+                    mark(step.member().id(), "❌",
+                            outcome.errorCode() + ": " + outcome.errorMessage());
                 }
             });
-            if (!outcome.success()) {
-                Platform.runLater(() -> fail(
-                        "Stopped at " + outcome.host() + " — " + outcome.errorMessage()));
-                return;
+        }
+
+        Platform.runLater(() -> {
+            if (result.overallSuccess()) {
+                ok("Rolling build complete on " + plan.size() + " member(s).");
+            } else {
+                long failed = result.perMember().stream()
+                        .filter(o -> !o.success()).count();
+                fail(failed + " of " + plan.size()
+                        + " members missing the index after build. See per-member status.");
+            }
+        });
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String findPrimaryHost(Document status) {
+        List<Document> members = (List<Document>) status.get("members",
+                List.class);
+        if (members == null) return null;
+        for (Document m : members) {
+            if ("PRIMARY".equals(m.getString("stateStr"))) {
+                return m.getString("name");
             }
         }
-        Platform.runLater(() -> ok("Rolling build complete on "
-                + plan.size() + " member(s)."));
+        return null;
     }
 
     private void mark(int memberId, String emoji, String detail) {
