@@ -153,7 +153,6 @@ public final class ConfigDriftPane extends BorderPane {
         }
         ConfigSnapshot a = selected.get(0);
         ConfigSnapshot b = selected.get(1);
-        // Sort so older is first.
         ConfigSnapshot older = a.capturedAt() < b.capturedAt() ? a : b;
         ConfigSnapshot newer = older == a ? b : a;
         if (older.sha256().equals(newer.sha256())) {
@@ -161,27 +160,52 @@ public final class ConfigDriftPane extends BorderPane {
             ok("Identical snapshots.");
             return;
         }
-        diffArea.setText(cheapDiff(older.snapshotJson(), newer.snapshotJson()));
+        diffArea.setText(renderStructuralDiff(older, newer));
         ok("Showing diff " + older.id() + " → " + newer.id() + ".");
     }
 
-    /** Line-by-line textual diff. The v2.6 DriftDiffEngine does the
-     *  structural path-based diff — plumbing it in lives on a later
-     *  story (milestone §9.4 open question). */
-    private static String cheapDiff(String left, String right) {
-        String[] la = left.split("(?<=,)|(?<=\\{)|(?<=\\})");
-        String[] ra = right.split("(?<=,)|(?<=\\{)|(?<=\\})");
+    /** Structural path-based diff via v2.6 {@link
+     *  com.kubrik.mex.security.drift.DriftDiffEngine}. Replaces the
+     *  earlier line-by-line fallback which produced a near-useless
+     *  wall of `-`/`+` lines for any realistic getParameter reply. */
+    private static String renderStructuralDiff(ConfigSnapshot older,
+                                               ConfigSnapshot newer) {
+        java.util.Map<String, Object> olderMap = parseAsMap(older.snapshotJson());
+        java.util.Map<String, Object> newerMap = parseAsMap(newer.snapshotJson());
+        java.util.List<com.kubrik.mex.security.drift.DriftFinding> findings =
+                com.kubrik.mex.security.drift.DriftDiffEngine.diff(
+                        olderMap, newerMap);
+        if (findings.isEmpty()) return "// no structural differences";
         StringBuilder sb = new StringBuilder();
-        int n = Math.min(la.length, ra.length);
-        for (int i = 0; i < n; i++) {
-            if (!la[i].equals(ra[i])) {
-                sb.append("- ").append(la[i]).append('\n');
-                sb.append("+ ").append(ra[i]).append('\n');
+        sb.append("# ").append(findings.size())
+                .append(" drift finding").append(findings.size() == 1 ? "" : "s")
+                .append(" (oldest → newest)\n\n");
+        for (var f : findings) {
+            switch (f.kind()) {
+                case ADDED -> sb.append("+ ").append(f.path())
+                        .append(" = ").append(f.after()).append('\n');
+                case REMOVED -> sb.append("- ").append(f.path())
+                        .append(" (was ").append(f.before()).append(")\n");
+                case CHANGED -> sb.append("~ ").append(f.path())
+                        .append(": ").append(f.before())
+                        .append("  →  ").append(f.after()).append('\n');
             }
         }
-        for (int i = n; i < la.length; i++) sb.append("- ").append(la[i]).append('\n');
-        for (int i = n; i < ra.length; i++) sb.append("+ ").append(ra[i]).append('\n');
-        return sb.length() == 0 ? "// no textual differences" : sb.toString();
+        return sb.toString();
+    }
+
+    /** Best-effort JSON → Map parse via the Mongo BSON Document
+     *  (the engine is shape-tolerant so BSON's Map-ish Document is
+     *  fine). We deliberately don't pull in Jackson just for this. */
+    @SuppressWarnings("unchecked")
+    private static java.util.Map<String, Object> parseAsMap(String json) {
+        if (json == null || json.isBlank()) return java.util.Map.of();
+        try {
+            org.bson.Document d = org.bson.Document.parse(json);
+            return (java.util.Map<String, Object>) (java.util.Map<?, ?>) d;
+        } catch (Exception e) {
+            return java.util.Map.of();
+        }
     }
 
     private void ok(String msg) {
