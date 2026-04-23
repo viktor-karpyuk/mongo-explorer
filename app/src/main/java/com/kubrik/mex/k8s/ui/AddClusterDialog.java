@@ -7,7 +7,7 @@ import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
-import javafx.scene.Scene;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
@@ -62,6 +62,12 @@ public final class AddClusterDialog extends Dialog<AddClusterDialog.Choice> {
         setHeaderText("Pick a kubeconfig context to attach");
         getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
 
+        // Gate the OK button on a row being selected — clicking OK with
+        // no selection previously just closed the dialog with no feedback
+        // because setResultConverter returned null.
+        Node okButton = getDialogPane().lookupButton(ButtonType.OK);
+        if (okButton != null) okButton.setDisable(true);
+
         errorLabel.setStyle("-fx-text-fill: -color-danger-emphasis; -fx-font-size: 11px;");
         errorLabel.setWrapText(true);
 
@@ -85,7 +91,10 @@ public final class AddClusterDialog extends Dialog<AddClusterDialog.Choice> {
                 col("Server",    220, r -> r.summary().serverUrl().orElse("—")),
                 col("File",      200, r -> r.sourcePath().toString()));
         contextTable.getSelectionModel().selectedItemProperty().addListener(
-                (o, a, b) -> onRowSelected(b));
+                (o, a, b) -> {
+                    onRowSelected(b);
+                    if (okButton != null) okButton.setDisable(b == null);
+                });
 
         displayNameField.setPromptText("Display name (defaults to context)");
         namespaceField.setPromptText("Default namespace (optional)");

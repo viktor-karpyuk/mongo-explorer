@@ -5,10 +5,7 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
 import com.kubrik.mex.k8s.operator.KubernetesManifests;
 import com.kubrik.mex.k8s.provision.BackupSpec;
-import com.kubrik.mex.k8s.provision.MonitoringSpec;
-import com.kubrik.mex.k8s.provision.Profile;
 import com.kubrik.mex.k8s.provision.ProvisionModel;
-import com.kubrik.mex.k8s.provision.ResourceSpec;
 import com.kubrik.mex.k8s.provision.TlsSpec;
 
 import java.io.IOException;
@@ -366,8 +363,4 @@ public final class McoCRRenderer {
         }
     }
 
-    // SuppressWarnings placeholders to keep the profile fields
-    // read — future review rounds wire per-profile comment lines.
-    @SuppressWarnings("unused")
-    private void noteUnused(Profile p, MonitoringSpec m, ResourceSpec r) {}
 }

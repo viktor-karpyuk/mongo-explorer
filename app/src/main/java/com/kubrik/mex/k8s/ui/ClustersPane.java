@@ -183,6 +183,11 @@ public final class ClustersPane extends BorderPane {
 
     private void onAdd() {
         AddClusterDialog dlg = new AddClusterDialog();
+        // Anchor the dialog to the owning window so it doesn't hide
+        // behind the main stage on macOS multi-display setups.
+        if (getScene() != null && getScene().getWindow() != null) {
+            dlg.initOwner(getScene().getWindow());
+        }
         Optional<AddClusterDialog.Choice> pick = dlg.showAndWait();
         if (pick.isEmpty()) return;
 

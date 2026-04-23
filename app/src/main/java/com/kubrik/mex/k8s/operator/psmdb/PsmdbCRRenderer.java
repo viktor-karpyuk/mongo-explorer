@@ -327,10 +327,12 @@ public final class PsmdbCRRenderer {
         return meta;
     }
 
-    private String psmdbImage(ProvisionModel m) {
+    private String psmdbImage(@SuppressWarnings("unused") ProvisionModel m) {
         // v2.8.1 Alpha: fixed to a single blessed tag (milestone §7.8).
         // When mongo-version widens (v2.8.1 Beta), this looks up
-        // against an operator-version→image-tag table.
+        // against an operator-version→image-tag table keyed off the
+        // model's mongoVersion; for now the parameter is retained so
+        // the call-site stays stable across that future change.
         return DEFAULT_PSMDB_IMAGE;
     }
 
