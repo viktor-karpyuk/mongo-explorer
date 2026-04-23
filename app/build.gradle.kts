@@ -36,6 +36,9 @@ dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
     implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.17.2")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.17.2")
+    // v2.8.1 Q2.8.1-J — Jackson Optional<T> support for exported
+    // DeploymentSpec JSON (the ProvisionModel tree has Optional fields).
+    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jdk8:2.17.2")
     implementation("io.github.resilience4j:resilience4j-retry:2.2.0")
     implementation("com.google.guava:guava:33.2.1-jre")
     implementation("net.logstash.logback:logstash-logback-encoder:7.4")

@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.8.0-alpha — Clone / export spec (Q2.8.1-J)
+
+`DeploymentSpec` portability for clone-as-new and export-to-disk workflows.
+
+### Highlights
+
+- **`DeploymentSpec`.** JSON-serialisable wrapper over a `ProvisionModel` with metadata fields: `schemaVersion` (strict — `mex.k8s/v2.8.1`; a future reader refuses to interpret an unknown schema), `exportedAt`, `sourceDeployment` label, `evidenceSig` (optional v2.6 signature).
+- **`DeploymentSpecExporter`.** `build(model, sourceLabel)` → spec; `toJson(spec, signer)` serialises with the provided evidence signer stamped into the output. **Password stripping is explicit**: `PROVIDE` mode with a real password is rewritten to `GENERATE` mode on export — the spec file is never a credential propagation vector (milestone §2.10).
+- **`DeploymentSpecImporter`.** `parse(bytes)` validates schema version; `toModel(spec)` returns the `ProvisionModel` ready to pre-fill the wizard; `verify(bytes, verifier)` recomputes unsigned bytes + compares the embedded signature.
+- **Stable unsigned bytes.** `unsignedBytes(spec)` serialises without the `evidenceSig` field so a verifier can re-compute the same input every time regardless of which signature was stamped.
+- **Dependency.** `jackson-datatype-jdk8` added so `Optional<T>` round-trips naturally through the spec JSON.
+
+### Tests
+
+6 new unit tests: `DeploymentSpecTest` — full round-trip preserves every model field (Prod PSMDB RS5 + cert-manager + 250Gi storage), password stripping on export, schema-version mismatch rejection, verify fails without a signature, verify passes through a stable signer, unsigned bytes independent of signature value.
+
 ## v2.8.0-alpha — TearDownService + deletion protection (Q2.8.1-I)
 
 Safe delete with two explicit gates + user-picked cascade.
