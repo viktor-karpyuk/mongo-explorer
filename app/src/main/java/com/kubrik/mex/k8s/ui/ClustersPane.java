@@ -118,15 +118,17 @@ public final class ClustersPane extends BorderPane {
     }
 
     private Region buildBody() {
-        table.setPlaceholder(new Label("No clusters attached yet."));
+        Label placeholder = new Label(
+                "No clusters attached yet.\nClick \"Add cluster\" to pick a kubeconfig context.");
+        placeholder.setStyle("-fx-text-fill: -color-fg-muted; -fx-text-alignment: center;");
+        placeholder.setWrapText(true);
+        table.setPlaceholder(placeholder);
+        table.setAccessibleText("Kubernetes clusters table");
         table.getColumns().setAll(
                 col("Name", 180, K8sClusterRef::displayName),
                 col("Context", 180, K8sClusterRef::contextName),
                 col("Default ns", 120, r -> r.defaultNamespace().orElse("—")),
-                col("Status", 120, r -> {
-                    ClusterProbeResult p = probeByCluster.get(r.id());
-                    return p == null ? "(unprobed)" : renderStatus(p);
-                }),
+                colStatus("Status", 130, r -> probeByCluster.get(r.id())),
                 col("Server", 200, r -> {
                     ClusterProbeResult p = probeByCluster.get(r.id());
                     if (p == null) return r.serverUrl().orElse("—");
@@ -145,12 +147,17 @@ public final class ClustersPane extends BorderPane {
 
         Button addBtn = new Button("Add cluster…");
         addBtn.setOnAction(e -> onAdd());
+        addBtn.setAccessibleText("Add a Kubernetes cluster by kubeconfig context");
+        addBtn.getStyleClass().add("accent");
         Button probeBtn = new Button("Probe");
         probeBtn.setOnAction(e -> onProbe());
+        probeBtn.setAccessibleText("Probe the selected cluster for reachability");
         Button probeAllBtn = new Button("Probe all");
         probeAllBtn.setOnAction(e -> onProbeAll());
         Button removeBtn = new Button("Forget…");
         removeBtn.setOnAction(e -> onRemove());
+        removeBtn.setAccessibleText("Forget the selected cluster (doesn't touch the kubeconfig file)");
+        removeBtn.getStyleClass().add("danger");
 
         HBox actions = new HBox(8, addBtn, probeBtn, probeAllBtn, removeBtn);
         actions.setPadding(new Insets(8, 0, 0, 0));
@@ -327,6 +334,39 @@ public final class ClustersPane extends BorderPane {
             case PLUGIN_MISSING -> "plugin missing";
             case TIMED_OUT -> "timed out";
         };
+    }
+
+    /**
+     * Colour-coded status column — renders the text PASS/WARN/FAIL
+     * using the AtlantaFX semantic tokens so the chip reads the
+     * right severity at a glance in both light and dark themes.
+     */
+    private static TableColumn<K8sClusterRef, String> colStatus(
+            String title, int width,
+            Function<K8sClusterRef, ClusterProbeResult> probeFn) {
+        TableColumn<K8sClusterRef, String> c = new TableColumn<>(title);
+        c.setPrefWidth(width);
+        c.setCellValueFactory(cd -> {
+            ClusterProbeResult p = probeFn.apply(cd.getValue());
+            return new SimpleStringProperty(p == null ? "(unprobed)" : renderStatus(p));
+        });
+        c.setCellFactory(col -> new javafx.scene.control.TableCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) { setText(null); setStyle(""); return; }
+                setText(item);
+                setStyle(switch (item) {
+                    case "OK" -> "-fx-text-fill: -color-success-emphasis; -fx-font-weight: 600;";
+                    case "auth failed", "plugin missing" ->
+                            "-fx-text-fill: -color-warning-emphasis; -fx-font-weight: 600;";
+                    case "unreachable", "timed out" ->
+                            "-fx-text-fill: -color-danger-emphasis; -fx-font-weight: 600;";
+                    default -> "-fx-text-fill: -color-fg-muted;";
+                });
+            }
+        });
+        return c;
     }
 
     private static <T> TableColumn<T, String> col(String title, int width,

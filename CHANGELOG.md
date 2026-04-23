@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.8.0-alpha — UI polish + a11y + dark-mode tokens (Q2.8.1-K)
+
+Pass over `ClustersPane` + `DiscoveryPanel` for the UI-quality bar.
+
+### Highlights
+
+- **Colour-coded status cells.** Cluster status: OK → `-color-success-emphasis`; auth-failed / plugin-missing → `-color-warning-emphasis`; unreachable / timed-out → `-color-danger-emphasis`. Uses AtlantaFX semantic tokens so the chip reads the right severity in both light and dark themes with no theme-branch code.
+- **Ready chip on discovered workloads.** `yes` → success-emphasis; `no` → danger-emphasis; `—` → muted.
+- **Accessible text** on every action button — Add cluster, Probe, Probe all, Forget, Refresh, Resolve credentials, Open forward, Create connection all carry screen-reader descriptions matching their keyboard-focus behaviour.
+- **AtlantaFX style classes.** Primary actions use `.accent` (Add cluster, Create connection); destructive uses `.danger` (Forget…). Matches the convention the rest of Mongo Explorer uses.
+- **Rewritten empty states.** `ClustersPane` table placeholder: "No clusters attached yet. Click \"Add cluster\" to pick a kubeconfig context." — prescriptive instead of blank. `DiscoveryPanel` placeholder likewise guides the next action.
+
+### Scope
+
+UI-only pass; no behavioural changes, no new event paths. Pure visual + a11y polish on the surfaces landed in Q2.8.1-A → Q2.8.1-C. The rollout viewer + pre-flight panel + provisioning wizard UI land with their own chunks after Q2.8.1-L wires the live dispatcher.
+
 ## v2.8.0-alpha — Clone / export spec (Q2.8.1-J)
 
 `DeploymentSpec` portability for clone-as-new and export-to-disk workflows.

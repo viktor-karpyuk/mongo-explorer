@@ -81,7 +81,12 @@ public final class DiscoveryPanel extends VBox {
         Label head = new Label("Discovered Mongo workloads");
         head.setStyle("-fx-text-fill: -color-fg-default; -fx-font-size: 11px; -fx-font-weight: 600;");
 
-        table.setPlaceholder(new Label("Pick a cluster above to discover."));
+        Label placeholder = new Label(
+                "Pick a cluster above, then click Refresh to discover Mongo workloads.");
+        placeholder.setStyle("-fx-text-fill: -color-fg-muted;");
+        placeholder.setWrapText(true);
+        table.setPlaceholder(placeholder);
+        table.setAccessibleText("Discovered Mongo workloads");
         table.getColumns().setAll(
                 col("Origin", 90, r -> r.origin().name()),
                 col("Namespace", 140, DiscoveredMongo::namespace),
@@ -89,7 +94,7 @@ public final class DiscoveryPanel extends VBox {
                 col("Topology", 110, r -> r.topology().name()),
                 col("Auth", 90, r -> r.authKind().name()),
                 col("Version", 120, r -> r.mongoVersion().orElse("—")),
-                col("Ready", 70, r -> r.ready().map(b -> b ? "yes" : "no").orElse("—")),
+                colReady(),
                 col("Service", 200, r -> r.serviceName().orElse("—")));
 
         credentialsPreview.setEditable(false);
@@ -101,12 +106,20 @@ public final class DiscoveryPanel extends VBox {
 
         Button refreshBtn = new Button("Refresh");
         refreshBtn.setOnAction(e -> onRefresh());
+        refreshBtn.setAccessibleText("Refresh the list of Mongo workloads on this cluster");
         Button resolveBtn = new Button("Resolve credentials");
         resolveBtn.setOnAction(e -> onResolve());
+        resolveBtn.setAccessibleText(
+                "Resolve credentials from the operator's convention Secrets");
         Button forwardBtn = new Button("Open forward");
         forwardBtn.setOnAction(e -> onOpenForward());
+        forwardBtn.setAccessibleText(
+                "Open a port-forward to the selected workload on an ephemeral local port");
         Button connectBtn = new Button("Create connection");
         connectBtn.setOnAction(e -> onConnect());
+        connectBtn.setAccessibleText(
+                "Record a Mongo Explorer connection row for the selected workload");
+        connectBtn.getStyleClass().add("accent");
 
         HBox actions = new HBox(8, refreshBtn, resolveBtn, forwardBtn, connectBtn);
 
@@ -264,6 +277,26 @@ public final class DiscoveryPanel extends VBox {
     }
 
     /* ============================ helpers ============================ */
+
+    private static TableColumn<DiscoveredMongo, String> colReady() {
+        TableColumn<DiscoveredMongo, String> c = new TableColumn<>("Ready");
+        c.setPrefWidth(70);
+        c.setCellValueFactory(cd -> new javafx.beans.property.SimpleStringProperty(
+                cd.getValue().ready().map(b -> b ? "yes" : "no").orElse("—")));
+        c.setCellFactory(col -> new javafx.scene.control.TableCell<>() {
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) { setText(null); setStyle(""); return; }
+                setText(item);
+                setStyle(switch (item) {
+                    case "yes" -> "-fx-text-fill: -color-success-emphasis; -fx-font-weight: 600;";
+                    case "no"  -> "-fx-text-fill: -color-danger-emphasis; -fx-font-weight: 600;";
+                    default    -> "-fx-text-fill: -color-fg-muted;";
+                });
+            }
+        });
+        return c;
+    }
 
     private static <T> TableColumn<T, String> col(String title, int width,
                                                     Function<T, String> getter) {
