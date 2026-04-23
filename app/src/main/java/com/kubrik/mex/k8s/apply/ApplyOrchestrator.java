@@ -162,6 +162,60 @@ public final class ApplyOrchestrator {
                 rowId, reason, System.currentTimeMillis()));
     }
 
+    /**
+     * v2.8.1 Q2.8.1-L — Apply + watch in one call.
+     *
+     * <p>Runs {@link #apply}, then polls the CR status via a
+     * {@link com.kubrik.mex.k8s.rollout.RolloutWatcher} until it
+     * lands on READY or FAILED. Each poll's status transition + any
+     * poll errors are persisted as {@link
+     * com.kubrik.mex.k8s.rollout.RolloutEvent}s and published on
+     * the bus. The provisioning_records row is flipped to the
+     * terminal status automatically — no more manual
+     * markReady/markFailed from the caller.</p>
+     *
+     * <p>Returns the final {@link ApplyResult}; on a READY outcome
+     * the row's status is READY, on FAILED / timeout it's FAILED.
+     * Partial-apply failure before the watch even starts returns
+     * the same result as {@link #apply}.</p>
+     */
+    public ApplyResult applyAndWatch(com.kubrik.mex.k8s.model.K8sClusterRef clusterRef,
+                                      com.kubrik.mex.k8s.operator.OperatorAdapter adapter,
+                                      com.kubrik.mex.k8s.provision.ProvisionModel model,
+                                      com.kubrik.mex.k8s.rollout.RolloutWatcher watcher) throws java.io.IOException {
+        ApplyResult applyResult = apply(clusterRef, adapter, model);
+        if (!applyResult.ok()) return applyResult;
+
+        long rowId = applyResult.provisioningId();
+        com.kubrik.mex.k8s.rollout.RolloutWatcher.EventSink sink = e -> {
+            try { eventDao.insert(e); }
+            catch (java.sql.SQLException sqle) {
+                log.debug("persist watch event {}: {}", rowId, sqle.toString());
+            }
+            // Re-map WARN/ERROR into ProvisionEvent.Progress so the UI
+            // sees the transition without waiting for the terminal event.
+            events.publishProvision(new ProvisionEvent.Progress(
+                    rowId,
+                    e.reason().orElse("Watch") + ": " + e.message().orElse(""),
+                    e.at()));
+        };
+
+        com.kubrik.mex.k8s.rollout.RolloutWatcher.WatchResult wr =
+                watcher.watch(clusterRef, adapter, model.namespace(),
+                        model.deploymentName(), rowId, sink);
+
+        try {
+            if (wr.ok()) {
+                markReady(rowId, model.deploymentName());
+            } else {
+                markFailed(rowId, wr.summary());
+            }
+        } catch (java.sql.SQLException sqle) {
+            log.warn("mark terminal {} {}: {}", rowId, wr.status(), sqle.toString());
+        }
+        return applyResult;
+    }
+
     public void cleanup(K8sClusterRef ref, ResourceCatalogue catalogue) throws IOException {
         ApiClient client;
         try { client = clientFactory.get(ref); }
