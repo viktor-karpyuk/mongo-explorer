@@ -95,6 +95,51 @@ public class MongoService implements AutoCloseable {
         return MongoClients.create(b.build());
     }
 
+    /**
+     * v2.7 Q2.7-C/E — opens a single-host direct-connection client
+     * reusing this service's credentials + TLS settings. Used by the
+     * rolling index + compact wizards to dispatch commands node-local
+     * to a specific replset member.
+     *
+     * <p>Distinct from {@link #openPeerClient}: that takes a replset
+     * spec and lets the driver pick a primary; this pins a single
+     * {@code host:port} with {@code directConnection=true} so admin
+     * commands like {@code compact} / {@code createIndexes} (with
+     * {@code commitQuorum=0}) actually fire against the named node
+     * rather than being bounced to the primary.</p>
+     *
+     * <p>Caller owns the returned client and must close it.</p>
+     */
+    public MongoClient openMemberClient(String hostPort, int timeoutMs) {
+        if (hostPort == null || hostPort.isBlank()) {
+            throw new IllegalArgumentException("hostPort");
+        }
+        String trimmed = hostPort.trim();
+        int colon = trimmed.lastIndexOf(':');
+        com.mongodb.ServerAddress addr = colon > 0
+                ? new com.mongodb.ServerAddress(trimmed.substring(0, colon),
+                        Integer.parseInt(trimmed.substring(colon + 1)))
+                : new com.mongodb.ServerAddress(trimmed);
+
+        MongoClientSettings.Builder b = MongoClientSettings.builder()
+                .applyToClusterSettings(c -> {
+                    c.hosts(java.util.List.of(addr));
+                    c.mode(com.mongodb.connection.ClusterConnectionMode.SINGLE);
+                    c.serverSelectionTimeout(timeoutMs,
+                            java.util.concurrent.TimeUnit.MILLISECONDS);
+                })
+                .applyToSocketSettings(c -> {
+                    c.connectTimeout(timeoutMs,
+                            java.util.concurrent.TimeUnit.MILLISECONDS);
+                    c.readTimeout(timeoutMs,
+                            java.util.concurrent.TimeUnit.MILLISECONDS);
+                })
+                .applyToSslSettings(c -> c.enabled(Boolean.TRUE.equals(cs.getSslEnabled())))
+                .applyToConnectionPoolSettings(c -> c.maxSize(2));
+        if (cs.getCredential() != null) b.credential(cs.getCredential());
+        return MongoClients.create(b.build());
+    }
+
     public String serverVersion() { return serverVersion; }
 
     public List<String> listDatabaseNames() {

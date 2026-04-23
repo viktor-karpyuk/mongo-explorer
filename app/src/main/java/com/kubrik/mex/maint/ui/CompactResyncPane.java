@@ -4,7 +4,6 @@ import com.kubrik.mex.maint.compact.CompactRunner;
 import com.kubrik.mex.maint.compact.ResyncRunner;
 import com.kubrik.mex.maint.model.CompactSpec;
 import com.mongodb.client.MongoClient;
-import com.mongodb.client.MongoClients;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.control.Alert;
@@ -38,6 +37,11 @@ public final class CompactResyncPane extends BorderPane {
     private final ResyncRunner resyncRunner = new ResyncRunner();
 
     private final java.util.function.Supplier<MongoClient> clientSupplier;
+    /** Opens an auth-aware direct-connection client for the target
+     *  host, reusing credentials + TLS from the active service. The
+     *  earlier draft used raw {@code mongodb://host} URIs which
+     *  skipped auth and silently failed on secured clusters. */
+    private final java.util.function.Function<String, MongoClient> memberOpener;
 
     private final ChoiceBox<String> modePicker = new ChoiceBox<>();
     private final ChoiceBox<String> targetPicker = new ChoiceBox<>();
@@ -48,8 +52,10 @@ public final class CompactResyncPane extends BorderPane {
 
     private String primaryHost;  // learned from replSetGetStatus
 
-    public CompactResyncPane(java.util.function.Supplier<MongoClient> clientSupplier) {
+    public CompactResyncPane(java.util.function.Supplier<MongoClient> clientSupplier,
+                             java.util.function.Function<String, MongoClient> memberOpener) {
         this.clientSupplier = clientSupplier;
+        this.memberOpener = memberOpener;
         setStyle("-fx-background-color: white;");
         setPadding(new Insets(14, 16, 14, 16));
         setAccessibleText("Compact and resync wizard");
@@ -174,8 +180,7 @@ public final class CompactResyncPane extends BorderPane {
 
         statusLabel.setText("Running compact on " + host + "…");
         Thread.startVirtualThread(() -> {
-            try (MongoClient target = MongoClients.create(
-                    "mongodb://" + host + "/?directConnection=true")) {
+            try (MongoClient target = memberOpener.apply(host)) {
                 CompactRunner.Result result = compactRunner.run(target, spec);
                 Platform.runLater(() -> {
                     if (result.primaryRefused()) {
@@ -211,8 +216,7 @@ public final class CompactResyncPane extends BorderPane {
             if (b != javafx.scene.control.ButtonType.OK) return;
             statusLabel.setText("Triggering resync on " + host + "…");
             Thread.startVirtualThread(() -> {
-                try (MongoClient target = MongoClients.create(
-                        "mongodb://" + host + "/?directConnection=true")) {
+                try (MongoClient target = memberOpener.apply(host)) {
                     ResyncRunner.Outcome outcome = resyncRunner.run(target, spec);
                     Platform.runLater(() -> {
                         if (outcome instanceof ResyncRunner.Outcome.Ok) {

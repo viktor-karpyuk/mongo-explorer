@@ -5,7 +5,6 @@ import com.kubrik.mex.maint.index.RollingIndexRunner;
 import com.kubrik.mex.maint.model.IndexBuildSpec;
 import com.kubrik.mex.maint.model.ReconfigSpec.Member;
 import com.mongodb.client.MongoClient;
-import com.mongodb.client.MongoClients;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
@@ -38,6 +37,11 @@ public final class RollingIndexPane extends BorderPane {
     private final RollingIndexRunner runner = new RollingIndexRunner();
 
     private final java.util.function.Supplier<MongoClient> clientSupplier;
+    /** Opens an auth-aware direct-connection client to a named
+     *  member (reusing credentials + TLS from the active service).
+     *  The earlier draft used raw {@code mongodb://host} URIs which
+     *  skipped auth entirely and silently failed on secured clusters. */
+    private final java.util.function.Function<String, MongoClient> memberOpener;
 
     private final TextField dbField = new TextField();
     private final TextField collField = new TextField();
@@ -50,8 +54,10 @@ public final class RollingIndexPane extends BorderPane {
 
     private final Map<Integer, Label> memberLabels = new LinkedHashMap<>();
 
-    public RollingIndexPane(java.util.function.Supplier<MongoClient> clientSupplier) {
+    public RollingIndexPane(java.util.function.Supplier<MongoClient> clientSupplier,
+                            java.util.function.Function<String, MongoClient> memberOpener) {
         this.clientSupplier = clientSupplier;
+        this.memberOpener = memberOpener;
         setStyle("-fx-background-color: white;");
         setPadding(new Insets(14, 16, 14, 16));
         setAccessibleText("Rolling index build pane");
@@ -172,12 +178,10 @@ public final class RollingIndexPane extends BorderPane {
     }
 
     private void runPlanWithUi(IndexBuildSpec spec, List<RollingIndexPlanner.Step> plan) {
-        // Per-step: update the strip label before + after.
-        RollingIndexRunner.DispatchContext ctx = hostPort -> {
-            // Direct connection to the member for node-local build.
-            return MongoClients.create("mongodb://" + hostPort
-                    + "/?directConnection=true");
-        };
+        // Per-step: update the strip label before + after. memberOpener
+        // pulls credentials + TLS from the active MongoService so the
+        // direct connection authenticates properly on secured clusters.
+        RollingIndexRunner.DispatchContext ctx = memberOpener::apply;
         // Walk the plan one step at a time so we can update the UI
         // between members.
         for (RollingIndexPlanner.Step step : plan) {
