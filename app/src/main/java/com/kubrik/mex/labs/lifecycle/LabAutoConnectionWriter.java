@@ -28,6 +28,14 @@ public final class LabAutoConnectionWriter {
         return connectionStore.insertLabOrigin(display, uri, lab.id());
     }
 
+    /** Destroy-path cleanup — delete the lab-origin connection so
+     *  the tree doesn't render a dead cluster. Delegates to the
+     *  store's existing {@code delete(id)} which handles v2.4
+     *  cascade (ops_audit / topology / role_cache cleanup). */
+    public void deleteLabOriginConnection(String connectionId) {
+        connectionStore.delete(connectionId);
+    }
+
     static String composeUri(LabDeployment lab, LabTemplate template) {
         String entry = LabHealthWatcher.chooseReadyContainer(template);
         int port = lab.portMap().portFor(entry);

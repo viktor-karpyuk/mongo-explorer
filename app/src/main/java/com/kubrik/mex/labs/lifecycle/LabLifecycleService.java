@@ -253,4 +253,115 @@ public final class LabLifecycleService {
             return new ApplyOptions(null, null, false, false);
         }
     }
+
+    /* ========================= Stop / Start / Destroy ========================= */
+
+    public sealed interface TransitionResult {
+        record Ok(LabDeployment lab) implements TransitionResult {}
+        record Rejected(String reason) implements TransitionResult {}
+        record Failed(String reason) implements TransitionResult {}
+    }
+
+    /** Pauses containers but keeps volumes. Guards on status=RUNNING. */
+    public TransitionResult stop(long labId) {
+        LabDeployment lab = deploymentDao.byId(labId).orElse(null);
+        if (lab == null) return new TransitionResult.Rejected("unknown lab " + labId);
+        if (lab.status() != LabStatus.RUNNING) {
+            return new TransitionResult.Rejected(
+                    "expected RUNNING, was " + lab.status());
+        }
+        Path logDir = Path.of(lab.composeFilePath()).getParent();
+        try {
+            ExecResult r = docker.composeStop(lab.composeProject(),
+                    logDir.resolve("compose-stop.stdout.log"),
+                    logDir.resolve("compose-stop.stderr.log"));
+            if (!r.ok()) {
+                emit(lab.id(), LabStatus.RUNNING, LabEvent.Kind.FAILED,
+                        "stop failed: " + r.combinedTail());
+                return new TransitionResult.Failed(
+                        "compose stop failed: " + r.combinedTail());
+            }
+        } catch (IOException ioe) {
+            emit(lab.id(), LabStatus.RUNNING, LabEvent.Kind.FAILED,
+                    ioe.getMessage());
+            return new TransitionResult.Failed(ioe.getMessage());
+        }
+        long now = System.currentTimeMillis();
+        deploymentDao.updateStatus(lab.id(), LabStatus.STOPPED, now,
+                "last_stopped_at");
+        emit(lab.id(), LabStatus.STOPPED, LabEvent.Kind.STOP, null);
+        return new TransitionResult.Ok(deploymentDao.byId(lab.id()).orElseThrow());
+    }
+
+    /** Resumes a stopped Lab. Guards on status=STOPPED. */
+    public TransitionResult start(long labId) {
+        LabDeployment lab = deploymentDao.byId(labId).orElse(null);
+        if (lab == null) return new TransitionResult.Rejected("unknown lab " + labId);
+        if (lab.status() != LabStatus.STOPPED) {
+            return new TransitionResult.Rejected(
+                    "expected STOPPED, was " + lab.status());
+        }
+        Path logDir = Path.of(lab.composeFilePath()).getParent();
+        try {
+            ExecResult r = docker.composeStart(lab.composeProject(),
+                    logDir.resolve("compose-start.stdout.log"),
+                    logDir.resolve("compose-start.stderr.log"));
+            if (!r.ok()) {
+                return new TransitionResult.Failed(
+                        "compose start failed: " + r.combinedTail());
+            }
+        } catch (IOException ioe) {
+            return new TransitionResult.Failed(ioe.getMessage());
+        }
+        long now = System.currentTimeMillis();
+        deploymentDao.updateStatus(lab.id(), LabStatus.RUNNING, now,
+                "last_started_at");
+        emit(lab.id(), LabStatus.RUNNING, LabEvent.Kind.START, null);
+        return new TransitionResult.Ok(deploymentDao.byId(lab.id()).orElseThrow());
+    }
+
+    /** Removes containers + networks + volumes. Flips the row to
+     *  DESTROYED (tombstone) and deletes the auto-created connection.
+     *  Permitted from any non-DESTROYED state so a stuck CREATING or
+     *  FAILED row can still be cleaned up. */
+    public TransitionResult destroy(long labId) {
+        LabDeployment lab = deploymentDao.byId(labId).orElse(null);
+        if (lab == null) return new TransitionResult.Rejected("unknown lab " + labId);
+        if (lab.status() == LabStatus.DESTROYED) {
+            return new TransitionResult.Rejected("already destroyed");
+        }
+        Path logDir = Path.of(lab.composeFilePath()).getParent();
+        try {
+            ExecResult r = docker.composeDown(lab.composeProject(),
+                    /*removeVolumes=*/true,
+                    logDir.resolve("compose-destroy.stdout.log"),
+                    logDir.resolve("compose-destroy.stderr.log"));
+            if (!r.ok()) {
+                // `compose down` on an already-down project returns 0
+                // normally. Non-zero here means the daemon is down or
+                // the project is half-gone; we still flip the row to
+                // DESTROYED because the intent is clear.
+                log.warn("destroy: compose down returned {} — flipping DESTROYED anyway ({})",
+                        r.exitCode(), r.combinedTail());
+            }
+        } catch (IOException ioe) {
+            log.warn("destroy: compose down threw {} — flipping DESTROYED anyway",
+                    ioe.getMessage());
+        }
+        // Delete the auto-created connection so it doesn't linger in
+        // the user's tree pointing at a vanished Lab.
+        lab.connectionId().ifPresent(cxId -> {
+            try { connectionWriter.deleteLabOriginConnection(cxId); }
+            catch (Exception cleanupErr) {
+                log.warn("failed to delete lab-origin connection {}: {}",
+                        cxId, cleanupErr.getMessage());
+            }
+        });
+
+        long now = System.currentTimeMillis();
+        deploymentDao.updateStatus(lab.id(), LabStatus.DESTROYED, now,
+                "destroyed_at");
+        emit(lab.id(), LabStatus.DESTROYED, LabEvent.Kind.DESTROY, null);
+        return new TransitionResult.Ok(deploymentDao.byId(lab.id()).orElseThrow());
+    }
 }
