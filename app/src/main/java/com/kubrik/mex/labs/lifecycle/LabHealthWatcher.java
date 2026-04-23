@@ -78,8 +78,9 @@ public final class LabHealthWatcher {
 
     /** Pick the container whose "ready" answers healthy for the Lab:
      *  for sharded → mongos (the entry point), for replsets → the
-     *  first member seed, for standalone → the lone mongod. */
-    static String chooseReadyContainer(LabTemplate template) {
+     *  first member seed, for standalone → the lone mongod. Public
+     *  because SeedRunner + LabAutoConnectionWriter both call it. */
+    public static String chooseReadyContainer(LabTemplate template) {
         var containers = template.containerNames();
         if (containers.contains("mongos")) return "mongos";
         if (containers.contains("rs1a")) return "rs1a";
