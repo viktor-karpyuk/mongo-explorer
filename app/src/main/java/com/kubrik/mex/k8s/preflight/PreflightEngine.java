@@ -19,7 +19,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
@@ -77,37 +77,47 @@ public final class PreflightEngine {
                     "Re-probe the cluster; kubeconfig may be missing.")));
         }
 
-        Executor exec = Executors.newVirtualThreadPerTaskExecutor();
-        List<CompletableFuture<PreflightResult>> futures = new ArrayList<>();
-        long deadline = System.currentTimeMillis() + budgetMs;
-        for (PreflightCheck check : checks) {
-            PreflightCheck.PreflightScope scope = check.scope(model);
-            if (scope == PreflightCheck.PreflightScope.SKIP) {
-                futures.add(CompletableFuture.completedFuture(
-                        PreflightResult.skipped(check.id(), "not applicable")));
-                continue;
-            }
-            futures.add(CompletableFuture.supplyAsync(() -> {
-                try { return check.run(client, model); }
-                catch (Throwable t) {
-                    log.debug("check {} errored: {}", check.id(), t.toString());
-                    return PreflightResult.warn(check.id(),
-                            "errored: " + t.getMessage(),
-                            "Pre-flight degraded to a warning — Apply may still work.");
+        // try-with-resources so the per-run executor is shut down even
+        // if a future's get() throws unexpectedly. Without this every
+        // pre-flight run left behind a small amount of ExecutorService
+        // bookkeeping state.
+        try (ExecutorService exec = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<CompletableFuture<PreflightResult>> futures = new ArrayList<>();
+            long deadline = System.currentTimeMillis() + budgetMs;
+            for (PreflightCheck check : checks) {
+                PreflightCheck.PreflightScope scope = check.scope(model);
+                if (scope == PreflightCheck.PreflightScope.SKIP) {
+                    futures.add(CompletableFuture.completedFuture(
+                            PreflightResult.skipped(check.id(), "not applicable")));
+                    continue;
                 }
-            }, exec));
-        }
-
-        List<PreflightResult> results = new ArrayList<>(checks.size());
-        for (int i = 0; i < futures.size(); i++) {
-            long remaining = Math.max(0, deadline - System.currentTimeMillis());
-            try {
-                results.add(futures.get(i).get(remaining, java.util.concurrent.TimeUnit.MILLISECONDS));
-            } catch (Exception e) {
-                results.add(PreflightResult.skipped(checks.get(i).id(),
-                        "timed out within the " + budgetMs + "ms budget"));
+                futures.add(CompletableFuture.supplyAsync(() -> {
+                    try { return check.run(client, model); }
+                    catch (Throwable t) {
+                        log.debug("check {} errored: {}", check.id(), t.toString());
+                        return PreflightResult.warn(check.id(),
+                                "errored: " + t.getMessage(),
+                                "Pre-flight degraded to a warning — Apply may still work.");
+                    }
+                }, exec));
             }
+
+            List<PreflightResult> results = new ArrayList<>(checks.size());
+            for (int i = 0; i < futures.size(); i++) {
+                long remaining = Math.max(0, deadline - System.currentTimeMillis());
+                try {
+                    results.add(futures.get(i).get(remaining,
+                            java.util.concurrent.TimeUnit.MILLISECONDS));
+                } catch (Exception e) {
+                    // Cancel the still-running check so the try-with-
+                    // resources' close() doesn't block for the full
+                    // budget waiting on orphaned virtual threads.
+                    futures.get(i).cancel(true);
+                    results.add(PreflightResult.skipped(checks.get(i).id(),
+                            "timed out within the " + budgetMs + "ms budget"));
+                }
+            }
+            return new PreflightSummary(results);
         }
-        return new PreflightSummary(results);
     }
 }
