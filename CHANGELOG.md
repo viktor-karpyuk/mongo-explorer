@@ -1,5 +1,31 @@
 # Changelog
 
+## v2.8.0-alpha — PSMDB adapter + CR renderer (Q2.8.1-F)
+
+Second operator shipped: Percona Server for MongoDB. Parallel in structure to the MCO adapter, richer in CR surface — sharded clusters, native PBM backup, PMM monitoring all hang off the same `OperatorAdapter` interface Q2.8.1-E landed.
+
+### Highlights
+
+- **`PsmdbCRRenderer`.** Pure function from `ProvisionModel` to `PerconaServerMongoDB v1` YAML. Shares the determinism contract with `McoCRRenderer`; same model in → same bytes out so `PreviewHashChecker` can sign the preview hash into the typed-confirm step.
+- **Sharded starter preset.** When `topology = SHARDED` emits `spec.sharding.enabled=true` with three shard replsets (`rs0`, `rs1`, `rs2`) + a config replset (3-member) + a mongos Deployment (2 replicas). Milestone §9.7 opinionated default — raw shard-count / mongos-size tuning lives in the Advanced tier.
+- **Native PBM backup.** `backup.mode = PSMDB_PBM` emits `spec.backup.enabled=true` with an S3 storages skeleton the user fills in, PITR on by default. No managed CronJob; the operator schedules via PBM internally. For MCO this mode would be invalid — the pre-flight pairs each mode with its operator correctly.
+- **PMM monitoring.** `monitoring.serviceMonitor = true` adds `spec.pmm.enabled=true` + the blessed PMM client image tag — native integration via Percona Monitoring & Management. For MCO the same toggle emits a separate `ServiceMonitor` manifest (no native CR field).
+- **TLS via cert-manager.** `CERT_MANAGER` mode writes `spec.tls.mode = requireTLS` + `issuerConf` pointing at the user-named cert-manager Issuer. `BYO_SECRET` ships a placeholder `kubernetes.io/tls` Secret alongside the CR.
+- **Users Secret is mandatory.** Unlike MCO (where credentials live in per-user Secrets referenced from `spec.users`), PSMDB reads every system user out of one Secret. The renderer emits `<cr-name>-secrets` with slots for clusterAdmin / userAdmin / clusterMonitor / backup users, pre-populated with `<generated>` placeholders for all but userAdmin (which the user fills in when `auth.passwordMode = PROVIDE`).
+- **PodDisruptionBudget.** Standalone topology skips the PDB emission — a PDB with a single-replica target blocks every node drain.
+- **`PsmdbStatusParser`.** CR state `ready` + every `status.replsets[*].status = ready` + (if sharded) `status.mongos.status = ready` → READY. `error` → FAILED. CrashLoopBackOff with restartCount ≥ 3 overrides to FAILED. Case-insensitive on state strings (operator versions vary).
+- **`PsmdbAdapter`.** Declares SHARDED + NATIVE_BACKUP + NATIVE_SERVICE_MONITOR capabilities so the wizard's Topology step unlocks the SHARDED radio and the Backup step offers the native path.
+
+### Tests
+
+18 new unit tests: `PsmdbCRRendererTest` (10 — dev RS3, prod sharded, prod PBM backup, dev backup-off, cert-manager TLS, BYO TLS placeholder, PMM toggle, users Secret layout, determinism, standalone no-affinity), `PsmdbStatusParserTest` (8 — ready / mixed-replset / sharded + mongos / error / initializing / empty / crashloop override / case-insensitive state).
+
+### Deferred
+
+- **Non-starter sharded shapes** (custom shard count, variable shard replset sizes) — out-of-scope per milestone §9.7; unlock via the Advanced tier in a later minor.
+- **PBM storage backend permutations** (GCS, Azure) — current skeleton is S3-only; GCS/Azure storages stanzas land with Q2.8.1-L hardening.
+- **Non-voting / arbiter members** — the CR supports them but the wizard doesn't expose them in Alpha. Capability flag is declared so later UI work can wire them in.
+
 ## v2.8.0-alpha — MCO adapter + CR renderer (Q2.8.1-E)
 
 First operator shipped: the MongoDB Community Operator. A `ProvisionModel` in → a full set of Kubernetes YAML documents out, ready for the Q2.8.1-H Apply orchestrator to stream into the API server.
