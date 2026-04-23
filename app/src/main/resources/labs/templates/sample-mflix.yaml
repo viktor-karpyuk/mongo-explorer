@@ -1,0 +1,31 @@
+schema_version: 1
+id: sample-mflix
+display_name: "Sample — sample_mflix pre-loaded"
+description: "Standalone with the classic sample_mflix dataset pre-seeded on first launch."
+est_memory_mib: 550
+est_startup_seconds: 60
+default_mongo_tag: "mongo:latest"
+containers:
+  - mongo
+seed_spec:
+  kind: FETCH_ON_DEMAND
+  locator: "https://atlas-education.s3.amazonaws.com/sampledata.archive"
+  target_db: "sample_mflix"
+  sha256: ""
+compose_template: |
+  name: {{projectName}}
+  services:
+    mongo:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-mongo
+      command: mongod --bind_ip_all --port 27017
+      ports: ["127.0.0.1:{{ports.mongo}}:27017"]
+      volumes: [data:/data/db]
+      labels: {com.kubrik.mex.lab: sample-mflix}
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 20
+  volumes:
+    data:

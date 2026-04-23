@@ -1,0 +1,136 @@
+schema_version: 1
+id: sharded-1
+display_name: "Sharded cluster"
+description: "mongos + 3-node config replset + 3-node shard1 replset. Mirrors testing/db-sharded."
+est_memory_mib: 1500
+est_startup_seconds: 90
+default_mongo_tag: "mongo:latest"
+containers:
+  - cfg1
+  - cfg2
+  - cfg3
+  - shard1a
+  - shard1b
+  - shard1c
+  - mongos
+  - init
+compose_template: |
+  name: {{projectName}}
+  services:
+    cfg1:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-cfg1
+      command: mongod --configsvr --replSet cfgrs --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.cfg1}}:27017"]
+      volumes: [cfg1data:/data/db]
+      labels: {com.kubrik.mex.lab: sharded-1}
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 40
+    cfg2:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-cfg2
+      command: mongod --configsvr --replSet cfgrs --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.cfg2}}:27017"]
+      volumes: [cfg2data:/data/db]
+      labels: {com.kubrik.mex.lab: sharded-1}
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 40
+    cfg3:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-cfg3
+      command: mongod --configsvr --replSet cfgrs --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.cfg3}}:27017"]
+      volumes: [cfg3data:/data/db]
+      labels: {com.kubrik.mex.lab: sharded-1}
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 40
+    shard1a:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-shard1a
+      command: mongod --shardsvr --replSet shard1rs --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.shard1a}}:27017"]
+      volumes: [shard1adata:/data/db]
+      labels: {com.kubrik.mex.lab: sharded-1}
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 40
+    shard1b:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-shard1b
+      command: mongod --shardsvr --replSet shard1rs --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.shard1b}}:27017"]
+      volumes: [shard1bdata:/data/db]
+      labels: {com.kubrik.mex.lab: sharded-1}
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 40
+    shard1c:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-shard1c
+      command: mongod --shardsvr --replSet shard1rs --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.shard1c}}:27017"]
+      volumes: [shard1cdata:/data/db]
+      labels: {com.kubrik.mex.lab: sharded-1}
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 40
+    mongos:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-mongos
+      command: mongos --configdb cfgrs/cfg1:27017,cfg2:27017,cfg3:27017 --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.mongos}}:27017"]
+      depends_on:
+        cfg1: {condition: service_healthy}
+        cfg2: {condition: service_healthy}
+        cfg3: {condition: service_healthy}
+      labels: {com.kubrik.mex.lab: sharded-1}
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 60
+    init:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-init
+      depends_on:
+        cfg1: {condition: service_healthy}
+        cfg2: {condition: service_healthy}
+        cfg3: {condition: service_healthy}
+        shard1a: {condition: service_healthy}
+        shard1b: {condition: service_healthy}
+        shard1c: {condition: service_healthy}
+      restart: "no"
+      labels: {com.kubrik.mex.lab: sharded-1}
+      entrypoint: ["bash", "-c"]
+      command:
+        - |
+          set -e
+          init_rs() { mongosh --quiet --host $$1 --eval "try { if (rs.status().ok === 1) { print('initiated'); quit(0); } } catch (_) {} rs.initiate($$2)"; }
+          for i in $$(seq 1 120); do mongosh --quiet --host cfg1 --eval 'db.adminCommand("ping").ok' >/dev/null 2>&1 && break; sleep 1; done
+          init_rs cfg1 '{_id:"cfgrs",configsvr:true,members:[{_id:0,host:"cfg1:27017"},{_id:1,host:"cfg2:27017"},{_id:2,host:"cfg3:27017"}]}'
+          for i in $$(seq 1 120); do mongosh --quiet --host shard1a --eval 'db.adminCommand("ping").ok' >/dev/null 2>&1 && break; sleep 1; done
+          init_rs shard1a '{_id:"shard1rs",members:[{_id:0,host:"shard1a:27017"},{_id:1,host:"shard1b:27017"},{_id:2,host:"shard1c:27017"}]}'
+          for i in $$(seq 1 120); do mongosh --quiet --host mongos --eval 'db.adminCommand({listShards:1}).ok' 2>/dev/null | grep -q '^1$$' && break; sleep 1; done
+          mongosh --quiet --host mongos --eval 'sh.addShard("shard1rs/shard1a:27017,shard1b:27017,shard1c:27017")'
+  volumes:
+    cfg1data:
+    cfg2data:
+    cfg3data:
+    shard1adata:
+    shard1bdata:
+    shard1cdata:
