@@ -48,6 +48,11 @@ public final class UpgradePlannerPane extends BorderPane {
     public UpgradePlannerPane() {
         setStyle("-fx-background-color: white;");
         setPadding(new Insets(14, 16, 14, 16));
+        setAccessibleText("Upgrade planner pane");
+        setAccessibleHelp(
+                "Scan an upgrade path for blockers + emit a rolling-"
+                + "restart runbook. Export to Markdown or HTML for "
+                + "offline use during the upgrade window.");
         setTop(buildHeader());
         setCenter(buildCenter());
         setBottom(buildActions());

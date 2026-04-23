@@ -60,6 +60,11 @@ public final class SchemaValidatorPane extends BorderPane {
         this.clientSupplier = clientSupplier;
         setStyle("-fx-background-color: white;");
         setPadding(new Insets(14, 16, 14, 16));
+        setAccessibleText("Schema validator editor");
+        setAccessibleHelp(
+                "Edit a collection's $jsonSchema validator. Preview runs "
+                + "the proposed schema against a $sample; Apply dispatches "
+                + "collMod through the approval workflow.");
 
         setTop(buildHeader());
         setCenter(buildCenter());

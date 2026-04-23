@@ -90,13 +90,30 @@ All v2.7 code lives under `com.kubrik.mex.maint.*`:
 - **`RollingRestartOrchestrator`** — walks `UpgradePlan` steps: `BINARY_SWAP` sends `shutdown` + blocks on the operator-gate callback (UI's "binary swap complete?" dialog); `ROLLING_RESTART` sends `replSetStepDown`; informational kinds emit info events. `MongoSocketException` on shutdown is the success signal, not an error.
 - **Fuzz suite (Q2.7-J)** — `JwsTamperFuzz` (single-byte flip at every token position, 2 000 random payloads, truncation at every prefix, segment permutations; verified count = 0), `RunbookMarkdownFuzz` (200 random-ASCII titles + 100 step bodies; HTML shell stays well-formed, `<` always escaped, step order preserved), `ChaosReconfigFuzz` (2 000 random `ReconfigSpec.Request`s; preflight must be deterministic, never throw, classify 100 curated scenarios cleanly).
 
+### Live-cluster ITs (new)
+
+Four {@code @Testcontainers(disabledWithoutDocker=true)} classes verify the dispatch paths against a live {@code mongo:7.0} replset:
+
+- `ValidatorPreviewIT` — seeds 20 conforming + 12 non-conforming docs; preview must report failed-count within sample.
+- `ParamRunnerIT` — get/set round-trip on `ttlMonitorSleepSecs`; unknown-param returns empty without throwing.
+- `ConfigSnapshotIT` — unchanged config → matching SHA-256 across captures; mutating a parameter diverges the hash.
+- `ReconfigPreflightIT` — `fromConfigReply` round-trips live `rs.conf`; priority bump on a single-node rs is non-blocking.
+
+Two real bugs the live ITs caught and fixed this pass:
+- **`ReconfigSerializer.fromConfigReply` ClassCast** — live `replSetGetConfig` returns numeric fields as a mix of `Int32` / `Int64` / `Double`. `getInteger()` ClassCasted on `Long`/`Double` values; now coerces via `Number.intValue()` / `Number.doubleValue()` so the parser survives every supported server version.
+- **`ValidatorPreviewService` ConversionFailure 241** — the server-side `$substr($toString($$ROOT))` projection failed because `$toString` refuses object inputs. Now renders the offender summary client-side (`Document.toJson()` truncated to 200 chars).
+
+### A11y pass
+
+Every maintenance pane sets `accessibleText` (tab-name-equivalent label) + `accessibleHelp` (descriptive paragraph mirroring the header hint). Tables set `accessibleText` so VoiceOver / screen readers announce their semantic role. The existing tooltip dwell / wrap pattern from the v2.6 SecurityPane helpers carries forward; wiring those helpers here is a later polish pass.
+
 ### Still deferred
 
-- **Live-cluster integration tests** (technical-spec §13.2) — `ReconfigWizardIT`, `RollingIndexIT`, `CompactWizardIT`, `ValidatorPreviewIT`, `UpgradeScanIT`, `ConfigDriftIT`, `CrossInstallTokenIT`. Need a testcontainers 3-node replica-set rig.
-- **72 h soak** with daily parameter proposals + scheduled drift monitor + weekly rolling index build — can't land until the IT rig does.
-- **A11y + dark-mode polish** on each pane (Q2.7-I). The panes follow the existing v2.6 typography + tooltip dwell pattern; accessible-help / accessible-text strings still to add.
+- **3-node replica-set ITs** — the `@Testcontainers` rig uses the default single-node replset. Full add / remove / vote round-trips + election behaviour live with the 72 h soak rig.
+- **72 h soak** with daily parameter proposals + scheduled drift monitor + weekly rolling index build.
+- **Dark-mode** — panes consume hex colour values for status text; swapping to atlantafx semantic tokens (matching the v2.6 SecurityPane convention) is a later polish.
 - **`ConfigDriftPane` plugs into `DriftDiffEngine`** (milestone §9.4) — current pane ships a line-by-line diff; the structural path-based diff lives on a follow-up.
-- **`MaintenanceTab` wiring into `MainView`** — the pane + 4-arg ctor are ready; flipping `maintenance.enabled = true` + instantiating it from `MainView` is the last FX-integration step.
+- **`MaintenanceTab` wiring into `MainView`** — the pane + 4-arg ctor are ready; flipping `maintenance.enabled = true` + instantiating it from `MainView` is the last FX-integration step, blocked on the in-progress `MainView` work for `openClusterEmptyTab`.
 
 ## v2.6.1-alpha — Cloud sinks complete
 

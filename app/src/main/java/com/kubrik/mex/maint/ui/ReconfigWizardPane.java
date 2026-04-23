@@ -85,6 +85,11 @@ public final class ReconfigWizardPane extends BorderPane {
         this.clientSupplier = clientSupplier;
         setStyle("-fx-background-color: white;");
         setPadding(new Insets(14, 16, 14, 16));
+        setAccessibleText("Replica-set reconfig wizard");
+        setAccessibleHelp(
+                "Guided rs.reconfig. Pick a change kind, Load the current "
+                + "members, Preview preflight findings, then Apply through "
+                + "the approval workflow.");
 
         kindPicker.getItems().addAll(ChangeKind.values());
         kindPicker.setValue(ChangeKind.PRIORITY);
@@ -135,6 +140,7 @@ public final class ReconfigWizardPane extends BorderPane {
                 col("hidden", 70, m -> m.hidden() ? "yes" : ""),
                 col("arbiter", 70, m -> m.arbiterOnly() ? "yes" : ""));
         currentMembers.setPrefHeight(170);
+        currentMembers.setAccessibleText("Current replica-set members");
 
         findingsTable.setPlaceholder(new Label("Preview to populate."));
         findingsTable.getColumns().setAll(
@@ -155,6 +161,7 @@ public final class ReconfigWizardPane extends BorderPane {
             }
         });
         findingsTable.setPrefHeight(150);
+        findingsTable.setAccessibleText("Preflight findings — BLOCKING rows refuse Apply");
 
         Label paramsLabel = new Label("Change parameters");
         paramsLabel.setStyle("-fx-text-fill: #4b5563; -fx-font-size: 11px; -fx-font-weight: 600;");

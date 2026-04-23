@@ -52,6 +52,11 @@ public final class CompactResyncPane extends BorderPane {
         this.clientSupplier = clientSupplier;
         setStyle("-fx-background-color: white;");
         setPadding(new Insets(14, 16, 14, 16));
+        setAccessibleText("Compact and resync wizard");
+        setAccessibleHelp(
+                "Run compact or trigger resync on a chosen secondary. "
+                + "Primary-host refusal enforced both client and "
+                + "server side; typed-confirm on the target host:port.");
         modePicker.getItems().addAll("Compact", "Resync");
         modePicker.setValue("Compact");
 

@@ -54,6 +54,11 @@ public final class RollingIndexPane extends BorderPane {
         this.clientSupplier = clientSupplier;
         setStyle("-fx-background-color: white;");
         setPadding(new Insets(14, 16, 14, 16));
+        setAccessibleText("Rolling index build pane");
+        setAccessibleHelp(
+                "Build an index across replica-set members one node at a "
+                + "time. Plan shows the member order; Build walks the plan "
+                + "with progress updates per member.");
         setTop(buildHeader());
         setCenter(buildCenter());
         setBottom(buildActions());

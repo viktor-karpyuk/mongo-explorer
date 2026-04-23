@@ -51,6 +51,11 @@ public final class ConfigDriftPane extends BorderPane {
         this.connectionIdSupplier = connectionIdSupplier;
         setStyle("-fx-background-color: white;");
         setPadding(new Insets(14, 16, 14, 16));
+        setAccessibleText("Config drift pane");
+        setAccessibleHelp(
+                "Snapshots of cluster configuration over time (parameters, "
+                + "cmdline, FCV, sharding). Capture now to take a fresh "
+                + "snapshot; select two rows and Diff to see what changed.");
         setTop(buildHeader());
         setCenter(buildCenter());
         setBottom(buildActions());

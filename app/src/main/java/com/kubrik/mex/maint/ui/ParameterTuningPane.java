@@ -57,6 +57,11 @@ public final class ParameterTuningPane extends BorderPane {
         this.clientSupplier = clientSupplier;
         setStyle("-fx-background-color: white;");
         setPadding(new Insets(14, 16, 14, 16));
+        setAccessibleText("Parameter tuning pane");
+        setAccessibleHelp(
+                "Curated setParameter catalogue. Enter cluster-shape "
+                + "inputs, Refresh to compute proposals with rationale, "
+                + "Apply selected to dispatch a single change.");
         enginePicker.getItems().addAll("wiredTiger", "inMemory");
         enginePicker.setValue("wiredTiger");
         workloadPicker.getItems().addAll(ClusterShape.Workload.values());
@@ -94,6 +99,7 @@ public final class ParameterTuningPane extends BorderPane {
 
     private Region buildCenter() {
         table.setPlaceholder(new Label("Click Refresh to compute proposals."));
+        table.setAccessibleText("Parameter proposals — severity coloured");
         table.getColumns().setAll(
                 col("Parameter", 260, ParamProposal::param),
                 col("Current", 90, ParamProposal::currentValue),

@@ -52,6 +52,11 @@ public final class ApprovalsPane extends BorderPane {
         this.connectionIdSupplier = connectionIdSupplier;
         setStyle("-fx-background-color: white;");
         setPadding(new Insets(14, 16, 14, 16));
+        setAccessibleText("Maintenance approvals queue");
+        setAccessibleHelp(
+                "List of pending two-person approvals for destructive "
+                + "maintenance actions. Select a row and choose Approve, "
+                + "Reject, or Export token.");
 
         setTop(buildHeader());
         setCenter(buildCenter());
@@ -117,9 +122,11 @@ public final class ApprovalsPane extends BorderPane {
             }
         });
 
+        table.setAccessibleText("Pending approvals table");
         detailArea.setEditable(false);
         detailArea.setWrapText(true);
         detailArea.setPrefRowCount(6);
+        detailArea.setAccessibleText("Action detail for the selected approval");
         Label detailLabel = new Label("Action detail");
         detailLabel.setStyle("-fx-text-fill: #4b5563; -fx-font-size: 11px; -fx-font-weight: 600;");
         VBox v = new VBox(6, table, detailLabel, detailArea);
