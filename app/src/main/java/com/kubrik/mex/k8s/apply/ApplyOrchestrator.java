@@ -66,7 +66,8 @@ public final class ApplyOrchestrator {
         this(clientFactory, recordDao, eventDao, events, new DefaultApplyOpener());
     }
 
-    ApplyOrchestrator(KubeClientFactory clientFactory,
+    /** 5-arg constructor — exposed for tests + Q2.8.1-L adversarial suites. */
+    public ApplyOrchestrator(KubeClientFactory clientFactory,
                        ProvisioningRecordDao recordDao,
                        RolloutEventDao eventDao,
                        EventBus events,

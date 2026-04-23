@@ -1,5 +1,33 @@
 # Changelog
 
+## v2.8.0-alpha — Adversarial hardening + kind-cluster IT skeleton (Q2.8.1-L)
+
+Closes out the v2.8.1 Alpha scope with an adversarial test suite + a kind-cluster IT harness gated behind the `k8sKind` tag + `MEX_K8S_IT=kind` env var.
+
+### Adversarial suite
+
+- **`MalformedKubeconfigTest`** (4 tests) — broken YAML surfaces `IOException` with a parse hint; missing context in a valid kubeconfig throws with the context name in the message; nonexistent path throws with the path in the message; empty file yields an empty context list instead of crashing.
+- **`PartialApplyRollbackTest`** (1 test) — fires the Prod MCO renderer (which emits 3+ documents), fails on the third apply call, verifies the cleanup path receives exactly the two earlier objects **in reverse order**. Row flips to FAILED.
+- **`WebhookRejectionTest`** (3 tests) — admission-webhook denial messages from the API server produce a readable diagnosis via `DiagnosisEngine`; noise before/after the denial string doesn't block the match; success messages containing "admission webhook" don't false-fire the rejection hint.
+- **`ForgetClusterWhileLiveTest`** (2 tests) — forgetting a cluster while an APPLYING provisioning row points at it is refused with a descriptive `IllegalStateException` (not the raw SQLite FK error); no-provision case succeeds cleanly.
+- **`KubeConfigLoader` hardening** — empty / whitespace-only kubeconfig files short-circuit to an empty list instead of throwing a parse exception.
+
+### kind-cluster IT
+
+- **`KubeClientKindIT`** — live smoke against a real kind cluster. Two tests: discovery finds the kind context in `~/.kube/config`; factory builds an `ApiClient` and the probe lands `REACHABLE` with a non-empty server version. Tagged `@Tag("k8sKind")` + `@EnabledIfEnvironmentVariable("MEX_K8S_IT=kind")` so it stays dormant by default.
+- **Run it**: `kind create cluster --name mex-k8s-it && MEX_K8S_IT=kind ./gradlew :app:k8sKindTest`.
+- **Gradle wiring** — `k8sKindTest` task added; `k8sKind` excluded from the default `test` task's tag filter alongside the existing `perf` / `shardedRig` / `labDocker` exclusions.
+
+### Deferred to follow-up commits
+
+- **Live YAML-to-apply-call dispatcher.** The production `DefaultApplyOpener` still throws `UnsupportedOperationException` — the kind IT currently validates foundation + discovery + probe paths. Wiring the real `serverSideApply` call is a narrow follow-up once the IT fixture has MCO + PSMDB operators pre-installed.
+- **72 h soak.** Provisioning-delete loop against kind per milestone §8 Q2.8-L3 — requires the live dispatcher first.
+- **Blessed matrix smoke** (milestone §7.8 — 1.29 / 1.30 / 1.31) — one test file per version alongside the live dispatcher, parameterised.
+
+### v2.8.1 test total
+
+171 k8s unit tests across foundation → discovery → port-forward → provision → MCO → PSMDB → pre-flight → apply → teardown → clone-export → adversarial. All run on the JVM without a live cluster. Live coverage is tagged and opt-in.
+
 ## v2.8.0-alpha — UI polish + a11y + dark-mode tokens (Q2.8.1-K)
 
 Pass over `ClustersPane` + `DiscoveryPanel` for the UI-quality bar.

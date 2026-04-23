@@ -103,9 +103,18 @@ public final class KubeConfigLoader {
      * can sort/filter without re-parsing.
      */
     public static List<K8sContextSummary> listContexts(Path kubeconfig) throws IOException {
+        byte[] bytes = Files.readAllBytes(kubeconfig);
+        // An empty / whitespace-only file yields Jackson a null document;
+        // short-circuit so the caller gets the "no contexts" semantics
+        // rather than a parse exception.
+        boolean empty = true;
+        for (byte b : bytes) {
+            if (b != ' ' && b != '\t' && b != '\n' && b != '\r') { empty = false; break; }
+        }
+        if (empty) return List.of();
         Map<?, ?> root;
         try {
-            root = YAML.readValue(Files.readAllBytes(kubeconfig), Map.class);
+            root = YAML.readValue(bytes, Map.class);
         } catch (IOException ioe) {
             throw new IOException("parse " + kubeconfig + ": " + ioe.getMessage(), ioe);
         }

@@ -116,7 +116,11 @@ tasks.test {
         // v2.8.0 — `labDocker` tests need `docker compose` on PATH and
         // pull the mongo:latest image. Skipped by default; run with
         // `./gradlew :app:labDockerTest`.
-        excludeTags("perf", "shardedRig", "labDocker")
+        //
+        // v2.8.1 — `k8sKind` tests need a kind cluster reachable via
+        // the caller's kubeconfig + MEX_K8S_IT=kind. Skipped by default;
+        // run with `./gradlew :app:k8sKindTest`.
+        excludeTags("perf", "shardedRig", "labDocker", "k8sKind")
     }
 }
 
@@ -155,6 +159,19 @@ tasks.register<Test>("shardedRigTest") {
     }
     classpath = sourceSets["test"].runtimeClasspath
     testClassesDirs = sourceSets["test"].output.classesDirs
+}
+
+tasks.register<Test>("k8sKindTest") {
+    description = "Runs the v2.8.1 Kubernetes kind-cluster ITs. Requires a " +
+            "reachable kind cluster via ~/.kube/config AND MEX_K8S_IT=kind in " +
+            "the environment. Seed a cluster with `kind create cluster`."
+    group = "verification"
+    useJUnitPlatform {
+        includeTags("k8sKind")
+    }
+    classpath = sourceSets["test"].runtimeClasspath
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    systemProperty("junit.jupiter.execution.timeout.default", "2m")
 }
 
 runtime {
