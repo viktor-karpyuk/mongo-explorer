@@ -1,5 +1,28 @@
 # Changelog
 
+## v2.8.0-alpha — MCO adapter + CR renderer (Q2.8.1-E)
+
+First operator shipped: the MongoDB Community Operator. A `ProvisionModel` in → a full set of Kubernetes YAML documents out, ready for the Q2.8.1-H Apply orchestrator to stream into the API server.
+
+### Highlights
+
+- **Shared adapter surface.** `OperatorAdapter` interface, `Capability` enum (SHARDED / NATIVE_BACKUP / OPERATOR_GENERATED_TLS / CERT_MANAGER_TLS / IN_PLACE_UPGRADE / NATIVE_SERVICE_MONITOR / ARBITER_MEMBERS), `KubernetesManifests` record (CR + ordered aux documents), `DeploymentStatus` enum (APPLYING / READY / FAILED / UNKNOWN). The PSMDB adapter (Q2.8.1-F) plugs into the same surface.
+- **`McoCRRenderer`.** Pure function from `ProvisionModel` to `MongoDBCommunity v1` YAML. Emits, in apply order: password `Secret` (only when mode=PROVIDE), BYO-CA `Secret` placeholder (only when tls=BYO_SECRET), the CR itself, `PodDisruptionBudget` (when scheduling.pdbEnabled), `ServiceMonitor` (when monitoring.serviceMonitor), and a managed PBM bundle — `ConfigMap` + storage-creds `Secret` + daily `CronJob` — when backup.mode=MANAGED_PBM_CRONJOB.
+- **Determinism.** Same `ProvisionModel` → byte-for-byte same YAML, every time. Jackson's `WRITE_DOC_START_MARKER` + `SPLIT_LINES` disabled so the preview stays hash-stable — `PreviewHashChecker` (v2.4) can sign the hash into the typed-confirm step per milestone §4.1 / §7.1.
+- **TLS plumbing.** All four modes render correctly: OFF → `tls.enabled=false`; OPERATOR_GENERATED → `enabled=true`, operator self-signs; CERT_MANAGER → `certificateKeySecretRef` + `caCertificateSecretRef` pointing at `<cr-name>-cert` and `<cr-name>-ca` (cert-manager writes these); BYO_SECRET → points at the user-named Secret and emits a placeholder manifest the user fills in.
+- **StatefulSet overrides.** When resources / TopologySpread are set, the CR emits `spec.statefulSet.spec.template` overrides (mongod container resources; per-zone spread constraints). PVC size + storage class flow into `volumeClaimTemplates`.
+- **`McoStatusParser`.** CR status phase `Running` + every member in {PRIMARY, SECONDARY, ARBITER} → READY. `Failed` → FAILED. Any pod in CrashLoopBackOff with restartCount ≥ 3 overrides phase → FAILED. Empty / Pending → APPLYING. Tolerant of operator-version drift — parses generic Maps rather than typed CRD stubs.
+- **`McoAdapter`.** Thin façade implementing `OperatorAdapter`; declares MCO's blessed-capability set (no SHARDED, no NATIVE_BACKUP, no NATIVE_SERVICE_MONITOR — those are PSMDB wins).
+
+### Tests
+
+17 new unit tests: `McoCRRendererTest` (9 — dev baseline, prod RS5 + cert-manager secret refs, PDB / SM / PBM bundle emission, BYO TLS placeholder, provided-password Secret, user + authDB layout, deterministic byte-for-byte render, `mex.provisioning/renderer` label, dev-profile backup-off), `McoStatusParserTest` (8 — every phase + crashloop combination).
+
+### Deferred
+
+- **Managed PBM bundle** is skeletal — emits ConfigMap + Secret + CronJob with `<fill-in>` storage credentials. Full S3 / GCS / Azure permutations land with Q2.8.1-F/L alongside PSMDB backup wiring.
+- **Typed CRD stubs** (milestone §4.2) — generated via openapi-generator once the adapter surface has shaken out. Current generic-Map parser doesn't need them.
+
 ## v2.8.0-alpha — Provisioning model + profile enforcement (Q2.8.1-D)
 
 Wizard state + rule engine — the scaffolding every subsequent chunk (MCO adapter, PSMDB adapter, pre-flight, apply) plugs into.
