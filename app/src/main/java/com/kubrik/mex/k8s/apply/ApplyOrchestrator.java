@@ -72,11 +72,12 @@ public final class ApplyOrchestrator {
     }
 
     /**
-     * Adapter that builds a {@link LiveApplyOpener} per call using
-     * the {@link ApiClient} the orchestrator resolves from the
-     * factory for the current cluster ref.
+     * Adapter that builds a {@link LiveApplyOpener} per call using the
+     * {@link ApiClient} the caller passes in. Public so
+     * {@link com.kubrik.mex.k8s.teardown.TearDownService} can reuse the
+     * same dispatch surface without owning an ApplyOrchestrator.
      */
-    private static final class LiveDispatcher implements ApplyOpener {
+    public static final class LiveDispatcher implements ApplyOpener {
         @Override
         public void apply(ApiClient client,
                           com.kubrik.mex.k8s.rollout.ResourceCatalogue.Ref ref,

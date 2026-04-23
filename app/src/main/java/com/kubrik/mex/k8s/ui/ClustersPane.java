@@ -61,6 +61,7 @@ public final class ClustersPane extends BorderPane {
     private final EventBus events;
     private final DiscoveryPanel discoveryPanel;
     private final ProvisioningService provisioningService;
+    private final ProvisionsPanel provisionsPanel;
 
     private final ObservableList<K8sClusterRef> rows = FXCollections.observableArrayList();
     private final TableView<K8sClusterRef> table = new TableView<>(rows);
@@ -74,13 +75,24 @@ public final class ClustersPane extends BorderPane {
                          SecretPickupService secretService,
                          PortForwardService portForwardService,
                          ConnectionStore connectionStore,
-                         ProvisioningService provisioningService) {
+                         ProvisioningService provisioningService,
+                         com.kubrik.mex.k8s.apply.ProvisioningRecordDao provisioningDao,
+                         com.kubrik.mex.k8s.teardown.TearDownService tearDownService) {
         this.service = service;
         this.events = events;
         this.provisioningService = provisioningService;
         this.discoveryPanel = new DiscoveryPanel(
                 discoveryService, secretService, portForwardService,
                 connectionStore, events);
+        // ProvisionsPanel resolves a row's cluster_id back to a ref
+        // by scanning the pane's current rows — avoids coupling the
+        // panel to KubeClusterDao.
+        this.provisionsPanel = new ProvisionsPanel(
+                provisioningDao, tearDownService, events,
+                clusterId -> rows.stream()
+                        .filter(r -> r.id() == clusterId)
+                        .findFirst()
+                        .orElse(null));
 
         setStyle("-fx-background-color: -color-bg-default;");
         setPadding(new Insets(14, 16, 14, 16));
@@ -104,6 +116,7 @@ public final class ClustersPane extends BorderPane {
     public void close() {
         if (busSubscription != null) busSubscription.close();
         if (discoveryPanel != null) discoveryPanel.close();
+        if (provisionsPanel != null) provisionsPanel.close();
     }
 
     private Region buildHeader() {
@@ -175,8 +188,19 @@ public final class ClustersPane extends BorderPane {
         split.setOrientation(javafx.geometry.Orientation.VERTICAL);
         VBox top = new VBox(6, table, new Label("Detail"), detailArea, actions);
         VBox.setVgrow(table, Priority.ALWAYS);
-        split.getItems().addAll(top, discoveryPanel);
-        split.setDividerPositions(0.55);
+
+        // Bottom half is a tab pane: Discovery (connect to existing)
+        // on one tab, Provisions (history + teardown) on the other.
+        javafx.scene.control.TabPane bottomTabs = new javafx.scene.control.TabPane();
+        bottomTabs.setTabClosingPolicy(javafx.scene.control.TabPane.TabClosingPolicy.UNAVAILABLE);
+        javafx.scene.control.Tab discoveryTab =
+                new javafx.scene.control.Tab("Discovery", discoveryPanel);
+        javafx.scene.control.Tab provisionsTab =
+                new javafx.scene.control.Tab("Provisions", provisionsPanel);
+        bottomTabs.getTabs().setAll(discoveryTab, provisionsTab);
+
+        split.getItems().addAll(top, bottomTabs);
+        split.setDividerPositions(0.5);
         return split;
     }
 

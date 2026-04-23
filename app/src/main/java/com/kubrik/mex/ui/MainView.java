@@ -568,6 +568,7 @@ public class MainView extends BorderPane {
     private com.kubrik.mex.k8s.apply.ProvisioningRecordDao kubeProvisioningDao;
     private com.kubrik.mex.k8s.rollout.RolloutEventDao kubeRolloutEventDao;
     private com.kubrik.mex.k8s.provision.ProvisioningService kubeProvisioningService;
+    private com.kubrik.mex.k8s.teardown.TearDownService kubeTearDownService;
     private com.kubrik.mex.security.baseline.SecurityBaselineDao securityBaselineDao;
     private com.kubrik.mex.security.drift.DriftAckDao driftAckDao;
     private com.kubrik.mex.security.cis.CisSuppressionsDao cisSuppressionsDao;
@@ -890,7 +891,8 @@ public class MainView extends BorderPane {
                 kubeClusterService, events,
                 kubeDiscoveryService, kubeSecretService,
                 kubePortForwardService, connectionStore,
-                kubeProvisioningService);
+                kubeProvisioningService,
+                kubeProvisioningDao, kubeTearDownService);
         clustersTab = new Tab("Clusters", clustersPane);
         clustersTab.setOnClosed(e -> {
             if (clustersPane != null) clustersPane.close();
@@ -919,6 +921,13 @@ public class MainView extends BorderPane {
         kubeProvisioningService = com.kubrik.mex.k8s.provision.ProvisioningService.wire(
                 kubeClientFactory, kubeProvisioningDao, kubeRolloutEventDao, events,
                 kubePortForwardService, connectionStore);
+        // TearDownService sits parallel to the ProvisioningService — it
+        // doesn't own an adapter, just reuses the LiveApplyOpener's
+        // delete path. Constructing it here keeps the wiring explicit.
+        kubeTearDownService = new com.kubrik.mex.k8s.teardown.TearDownService(
+                kubeProvisioningDao, kubeClientFactory,
+                new com.kubrik.mex.k8s.apply.ApplyOrchestrator.LiveDispatcher(),
+                events);
         // Tear every live forward down on JVM exit so SQLite rows
         // get their closed_at stamp and no dangling listeners leak
         // past app shutdown.
