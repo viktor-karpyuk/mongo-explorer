@@ -10,7 +10,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -108,6 +110,25 @@ public final class LabK8sClusterDao {
                 + "ORDER BY created_at DESC")) {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) out.add(mapRow(rs));
+            }
+        }
+        return out;
+    }
+
+    /** Q2.8-N6 — map of mongo connection id → Lab K8s cluster, for any
+     *  live (non-destroyed) Lab whose production provisioning record
+     *  has a materialised mongo connection. Powers the ConnectionTree
+     *  "Lab•K8s" chip. */
+    public Map<String, LabK8sCluster> connectionIdToCluster() throws SQLException {
+        Map<String, LabK8sCluster> out = new HashMap<>();
+        try (PreparedStatement ps = database.connection().prepareStatement(
+                "SELECT p.connection_id, l.* FROM provisioning_records p "
+              + "JOIN lab_k8s_clusters l ON p.lab_k8s_cluster_id = l.id "
+              + "WHERE p.connection_id IS NOT NULL AND l.status != 'DESTROYED'")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.put(rs.getString("connection_id"), mapRow(rs));
+                }
             }
         }
         return out;

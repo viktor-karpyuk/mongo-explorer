@@ -145,6 +145,7 @@ public class MainView extends BorderPane {
         this.callerHost = callerHost;
 
         this.connTree = new ConnectionTree(manager, connectionStore, events);
+        this.connTree.setLabBadgeProvider(this::resolveLabBadge);
         this.connTree.setOpenHandler(new ConnectionTree.OpenHandler() {
             @Override public void openCollection(String connectionId, String db, String coll) {
                 openCollectionTab(connectionId, db, coll);
@@ -874,6 +875,8 @@ public class MainView extends BorderPane {
                 labLifecycle, labDeploymentDao,
                 com.kubrik.mex.labs.lifecycle.LabAppExitHook.parsePolicy(
                         System.getProperty("labs.on_exit"))).register();
+
+        invalidateLabBadges();
     }
 
     /**
@@ -1030,7 +1033,62 @@ public class MainView extends BorderPane {
                 org.slf4j.LoggerFactory.getLogger(MainView.class)
                         .warn("K8s Labs reconciler errored: {}", t.toString());
             }
+            Platform.runLater(this::invalidateLabBadges);
         });
+    }
+
+    // Q2.8-N6 — ConnectionTree "Lab" / "Lab•K8s" chip provenance.
+    // Both DAOs are lazy-wired; the resolver just returns null until
+    // the matching pane is opened. Cached with a 5 s TTL so rendering
+    // the tree doesn't hammer SQLite on every scroll event.
+    private volatile long labBadgeCacheAt = 0L;
+    private volatile java.util.Map<String, ConnectionTree.LabBadge> labBadgeCache =
+            java.util.Map.of();
+    private static final long LAB_BADGE_TTL_MS = 5_000L;
+
+    private ConnectionTree.LabBadge resolveLabBadge(String connectionId) {
+        if (connectionId == null) return null;
+        long now = System.currentTimeMillis();
+        if (now - labBadgeCacheAt > LAB_BADGE_TTL_MS) {
+            rebuildLabBadgeCache();
+            labBadgeCacheAt = now;
+        }
+        return labBadgeCache.get(connectionId);
+    }
+
+    private synchronized void rebuildLabBadgeCache() {
+        java.util.Map<String, ConnectionTree.LabBadge> m = new java.util.HashMap<>();
+        if (labDeploymentDao != null) {
+            try {
+                for (com.kubrik.mex.labs.model.LabDeployment d : labDeploymentDao.listLive()) {
+                    d.connectionId().ifPresent(cid ->
+                            m.put(cid, new ConnectionTree.LabBadge(
+                                    ConnectionTree.LabBadge.Kind.DOCKER_LAB,
+                                    "Docker Lab: " + d.displayName())));
+                }
+            } catch (Throwable ignored) { /* DAO unavailable — fine */ }
+        }
+        if (labK8sClusterDao != null) {
+            try {
+                for (var e : labK8sClusterDao.connectionIdToCluster().entrySet()) {
+                    var lk = e.getValue();
+                    // K8s wins over Docker if somehow both match.
+                    m.put(e.getKey(), new ConnectionTree.LabBadge(
+                            ConnectionTree.LabBadge.Kind.K8S_LAB,
+                            "Lab K8s: " + lk.distro().cliName() + " / "
+                                    + lk.identifier()));
+                }
+            } catch (Throwable ignored) { /* DAO unavailable — fine */ }
+        }
+        this.labBadgeCache = java.util.Map.copyOf(m);
+    }
+
+    /** Invalidate the Lab-badge cache and repaint the tree. Called
+     *  after a Lab is created / destroyed so the chip appears or
+     *  disappears immediately instead of waiting out the TTL. */
+    public void invalidateLabBadges() {
+        labBadgeCacheAt = 0L;
+        connTree.refreshLabBadges();
     }
 
     private static String mexVersion() {

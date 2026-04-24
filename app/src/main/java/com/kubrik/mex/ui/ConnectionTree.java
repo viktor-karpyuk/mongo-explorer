@@ -68,6 +68,23 @@ public class ConnectionTree extends VBox {
         @Override public String toString() { return label; }
     }
 
+    /** v2.8.1 Q2.8-N6 — Composite Lab/K8s provenance chip shown next
+     *  to a connection node. {@link Kind#DOCKER_LAB} means the
+     *  connection was created by a v2.8.0 Docker Lab; {@link Kind#K8S_LAB}
+     *  means a v2.8.1 Local K8s Lab provisioned a Mongo deployment
+     *  that this connection points to. */
+    public record LabBadge(Kind kind, String tooltip) {
+        public enum Kind { DOCKER_LAB, K8S_LAB }
+    }
+
+    /** Resolves a {@link LabBadge} for a given connection id, or
+     *  returns {@code null} if the connection has no Lab provenance.
+     *  Called on the FX thread during cell rendering — implementations
+     *  must be fast (cache in front of any DB lookups). */
+    public interface LabBadgeProvider {
+        LabBadge forConnection(String connectionId);
+    }
+
     public enum SortOrder {
         AZ("A → Z", String.CASE_INSENSITIVE_ORDER),
         ZA("Z → A", String.CASE_INSENSITIVE_ORDER.reversed());
@@ -86,6 +103,7 @@ public class ConnectionTree extends VBox {
     private final EventBus events;
     private final TreeView<Node> tree = new TreeView<>();
     private OpenHandler openHandler;
+    private volatile LabBadgeProvider labBadgeProvider;
     private final Map<String, TreeItem<Node>> connectionItems = new HashMap<>();
     private SortOrder sortOrder = SortOrder.AZ;
 
@@ -265,6 +283,20 @@ public class ConnectionTree extends VBox {
     }
 
     public void setOpenHandler(OpenHandler h) { this.openHandler = h; }
+
+    /** Inject a Lab provenance resolver; repaints the tree so the new
+     *  chips appear immediately. Passing {@code null} hides all chips. */
+    public void setLabBadgeProvider(LabBadgeProvider p) {
+        this.labBadgeProvider = p;
+        refreshLabBadges();
+    }
+
+    /** Force-repaint connection rows after the badge provider's backing
+     *  state has mutated (e.g. a Lab was created / destroyed). Safe to
+     *  call from any thread. */
+    public void refreshLabBadges() {
+        Platform.runLater(tree::refresh);
+    }
 
     /** Returns the connection id currently selected in the tree (either a
      *  connection row or any of its descendants), or {@code null} if no
@@ -675,6 +707,13 @@ public class ConnectionTree extends VBox {
             row.setAlignment(Pos.CENTER_LEFT);
             row.setMinWidth(Region.USE_PREF_SIZE);
 
+            // Q2.8-N6 — Lab provenance chip for connection rows.
+            if ("conn".equals(item.type)) {
+                LabBadgeProvider p = labBadgeProvider;
+                LabBadge lb = p == null ? null : p.forConnection(item.connectionId);
+                if (lb != null) row.getChildren().add(buildLabBadge(lb));
+            }
+
             // OBS-4 — migration-progress badge for target-side collection nodes.
             if ("coll".equals(item.type)) {
                 BadgeState bs = liveBadges.get(new BadgeKey(item.connectionId, item.db, item.coll));
@@ -710,6 +749,30 @@ public class ConnectionTree extends VBox {
                   + ": " + bs.docsCopied()
                   + (bs.docsTotal() > 0 ? " / " + bs.docsTotal() : "")
                   + " documents"));
+            return badge;
+        }
+
+        private Label buildLabBadge(LabBadge lb) {
+            String text = lb.kind() == LabBadge.Kind.K8S_LAB ? "Lab•K8s" : "Lab";
+            String bg, fg;
+            if (lb.kind() == LabBadge.Kind.K8S_LAB) {
+                // violet — matches the K8s pane's accent
+                bg = "#ede9fe"; fg = "#6d28d9";
+            } else {
+                // amber — matches the Docker Labs pane's accent
+                bg = "#fef3c7"; fg = "#92400e";
+            }
+            Label badge = new Label(text);
+            badge.setStyle(
+                    "-fx-background-color: " + bg + ";"
+                  + "-fx-text-fill: " + fg + ";"
+                  + "-fx-font-size: 10px;"
+                  + "-fx-font-weight: bold;"
+                  + "-fx-background-radius: 8;"
+                  + "-fx-padding: 0 6 0 6;");
+            if (lb.tooltip() != null && !lb.tooltip().isBlank()) {
+                badge.setTooltip(new Tooltip(lb.tooltip()));
+            }
             return badge;
         }
 
