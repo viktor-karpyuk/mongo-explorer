@@ -141,12 +141,68 @@ public final class LabK8sPane extends BorderPane {
         applyBtn.setAccessibleText("Apply the selected template onto the chosen distro");
 
         Button refreshBtn = new Button("Refresh CLI");
-        refreshBtn.setOnAction(e -> { detector.refresh(); distroBox.setValue(firstAvailable()); });
+        refreshBtn.setOnAction(e -> {
+            detector.refresh();
+            distroBox.setValue(firstAvailable());
+            templateList.refresh();
+            noDistroCard.setVisible(!anyDistroAvailable());
+            noDistroCard.setManaged(!anyDistroAvailable());
+        });
 
         HBox actions = new HBox(8, applyBtn, refreshBtn);
-        VBox top = new VBox(6, distroRow, catHead, templateList, actions);
+        VBox top = new VBox(6, distroRow, noDistroCard, catHead, templateList, actions);
         VBox.setVgrow(templateList, Priority.ALWAYS);
+        boolean anyAvailable = anyDistroAvailable();
+        noDistroCard.setVisible(!anyAvailable);
+        noDistroCard.setManaged(!anyAvailable);
         return top;
+    }
+
+    /** UI-LAB-K8S-6 — "No distro available" empty-state card, shown
+     *  when neither minikube nor k3d is on PATH. Lists the standard
+     *  install links per-OS flavour so the user can fix it without
+     *  leaving Mongo Explorer. Mongo Explorer itself does not
+     *  download or install the distros per LAB-K8S-DISTRO-3. */
+    private final VBox noDistroCard = buildNoDistroCard();
+
+    private VBox buildNoDistroCard() {
+        Label head = new Label("No supported distro installed");
+        head.setStyle("-fx-font-weight: 700; -fx-font-size: 12px;");
+        Label body = new Label(
+                "Mongo Explorer needs either minikube or k3d on PATH to "
+              + "create a local Kubernetes cluster. Install one via your "
+              + "OS package manager and click Refresh CLI:");
+        body.setWrapText(true);
+        body.setStyle("-fx-font-size: 11px;");
+
+        Label minikube = new Label(
+                "  • minikube — brew install minikube  |  choco install minikube  |"
+              + "  curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64");
+        minikube.setWrapText(true);
+        minikube.setStyle("-fx-font-family: 'Menlo','Monaco',monospace; -fx-font-size: 11px;");
+
+        Label k3d = new Label(
+                "  • k3d — brew install k3d  |  choco install k3d  |"
+              + "  curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash");
+        k3d.setWrapText(true);
+        k3d.setStyle("-fx-font-family: 'Menlo','Monaco',monospace; -fx-font-size: 11px;");
+
+        VBox card = new VBox(4, head, body, minikube, k3d);
+        card.setPadding(new Insets(10, 12, 10, 12));
+        card.setStyle(
+                "-fx-background-color: -color-bg-subtle;"
+              + "-fx-border-color: -color-border-default;"
+              + "-fx-border-width: 1;"
+              + "-fx-border-radius: 4;"
+              + "-fx-background-radius: 4;");
+        return card;
+    }
+
+    private boolean anyDistroAvailable() {
+        for (LabK8sDistro d : LabK8sDistro.values()) {
+            if (detector.isAvailable(d)) return true;
+        }
+        return false;
     }
 
     private Region buildRunningPanel() {
@@ -175,11 +231,15 @@ public final class LabK8sPane extends BorderPane {
         Button exportBtn = new Button("Export kubeconfig…");
         exportBtn.setOnAction(e -> onExportKubeconfig());
         exportBtn.setAccessibleText("Export the selected cluster's kubeconfig context as a standalone file");
+        Button kubectlBtn = new Button("Open in kubectl");
+        kubectlBtn.setOnAction(e -> onCopyKubectlPrelude());
+        kubectlBtn.setAccessibleText(
+                "Copy a KUBECONFIG=<path> kubectl shell prelude for the selected cluster to the clipboard");
         Button destroyBtn = new Button("Destroy…");
         destroyBtn.setOnAction(e -> onDestroy());
         destroyBtn.getStyleClass().add("danger");
 
-        HBox actions = new HBox(8, refreshRows, exportBtn, destroyBtn);
+        HBox actions = new HBox(8, refreshRows, exportBtn, kubectlBtn, destroyBtn);
 
         VBox v = new VBox(6, head, runningTable, new Label("Detail"), detailArea, actions);
         VBox.setVgrow(runningTable, Priority.ALWAYS);
@@ -340,6 +400,22 @@ public final class LabK8sPane extends BorderPane {
         return o instanceof java.util.List<?> l ? (java.util.List<Object>) l : java.util.List.of();
     }
 
+    /** UI-LAB-K8S-4 — copy a shell prelude that points {@code kubectl}
+     *  at the Lab cluster's kubeconfig + context, so the user can drop
+     *  into any `kubectl` invocation without editing their global
+     *  config. */
+    private void onCopyKubectlPrelude() {
+        LabK8sCluster sel = runningTable.getSelectionModel().getSelectedItem();
+        if (sel == null) { statusLabel.setText("Pick a cluster first."); return; }
+        String prelude = "KUBECONFIG=" + sel.kubeconfigPath()
+                + " kubectl --context " + sel.contextName() + " ";
+        javafx.scene.input.ClipboardContent cc = new javafx.scene.input.ClipboardContent();
+        cc.putString(prelude);
+        javafx.scene.input.Clipboard.getSystemClipboard().setContent(cc);
+        statusLabel.setText("Copied kubectl prelude for " + sel.coordinates()
+                + " to the clipboard.");
+    }
+
     private void onDestroy() {
         LabK8sCluster sel = runningTable.getSelectionModel().getSelectedItem();
         if (sel == null) { statusLabel.setText("Pick a cluster first."); return; }
@@ -430,17 +506,46 @@ public final class LabK8sPane extends BorderPane {
                 if (empty || t == null) { setText(null); setGraphic(null); return; }
                 Label name = new Label(t.displayName());
                 name.setStyle("-fx-font-weight: 600;");
+
+                // UI-LAB-K8S-2 — compact distro availability pills +
+                // distro-hint caption. Greyed chip when the distro CLI
+                // isn't on PATH so the user sees at a glance which
+                // templates they can actually apply.
+                HBox distroPills = new HBox(6);
+                distroPills.setPadding(new Insets(0, 0, 2, 0));
+                for (LabK8sDistro d : t.supportedDistros()) {
+                    boolean available = detector.isAvailable(d);
+                    distroPills.getChildren().add(distroPill(d, available));
+                }
+
                 Label desc = new Label(t.description());
                 desc.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
                 desc.setWrapText(true);
                 Label tags = new Label(String.join(" · ", t.tags()));
                 tags.setStyle("-fx-text-fill: -color-fg-subtle; -fx-font-size: 10px;");
-                VBox box = new VBox(2, name, desc, tags);
+                VBox box = new VBox(2, name, distroPills, desc, tags);
                 box.setPadding(new Insets(4, 4, 8, 4));
                 setGraphic(box);
                 setText(null);
             }
         };
+    }
+
+    private static Label distroPill(LabK8sDistro d, boolean available) {
+        Label chip = new Label(d.cliName());
+        String bg = available ? "#dcfce7" : "#f3f4f6";
+        String fg = available ? "#166534" : "#6b7280";
+        chip.setStyle(
+                "-fx-background-color: " + bg + ";"
+              + "-fx-text-fill: " + fg + ";"
+              + "-fx-font-size: 10px;"
+              + "-fx-font-weight: bold;"
+              + "-fx-background-radius: 8;"
+              + "-fx-padding: 0 6 0 6;");
+        chip.setTooltip(new javafx.scene.control.Tooltip(available
+                ? d.cliName() + " on PATH — this template can be applied"
+                : d.cliName() + " not on PATH — install it or pick a different distro"));
+        return chip;
     }
 
     private static <T> TableColumn<T, String> col(String title, int width,
