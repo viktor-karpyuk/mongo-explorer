@@ -8,6 +8,7 @@ import com.kubrik.mex.k8s.model.PortForwardSession;
 import com.kubrik.mex.k8s.model.PortForwardTarget;
 import io.kubernetes.client.PortForward;
 import io.kubernetes.client.openapi.ApiClient;
+import io.kubernetes.client.openapi.apis.VersionApi;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,6 +18,7 @@ import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -56,27 +58,72 @@ public final class PortForwardService implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(PortForwardService.class);
 
+    /** Close reason — user hit the Close button in the panel. */
+    public static final String REASON_MANUAL       = "MANUAL";
+    /** Close reason — JVM shutdown / app teardown. */
+    public static final String REASON_APP_EXIT     = "APP_EXIT";
+    /** Close reason — the periodic probe failed with a non-auth error
+     *  (network flap, API server hiccup, DNS blip, etc). */
+    public static final String REASON_HEALTH_FAIL  = "HEALTH_FAIL";
+    /** Close reason — the periodic probe returned 401/403, meaning
+     *  the kubeconfig credential has expired. The UI should surface a
+     *  "re-authenticate" prompt rather than silently retrying. */
+    public static final String REASON_AUTH_EXPIRED = "AUTH_EXPIRED";
+
+    /** System property — seconds between probes. 0 disables probing.
+     *  Default 10 s matches {@code port-forward-app} and Decision 5. */
+    public static final String PROBE_INTERVAL_PROPERTY =
+            "labs.k8s.portforward.health_probe_seconds";
+    private static final long DEFAULT_PROBE_INTERVAL_SECONDS = 10L;
+
     private final KubeClientFactory clientFactory;
     private final PortForwardAuditDao auditDao;
     private final EventBus events;
     private final PortForwardOpener opener;
+    private final HealthProbe probe;
+    private final long probeIntervalSeconds;
 
     private final ConcurrentMap<Long, Handle> handlesByAuditId = new ConcurrentHashMap<>();
 
     public PortForwardService(KubeClientFactory clientFactory,
                                PortForwardAuditDao auditDao,
                                EventBus events) {
-        this(clientFactory, auditDao, events, new DefaultPortForwardOpener());
+        this(clientFactory, auditDao, events,
+                new DefaultPortForwardOpener(),
+                new VersionApiHealthProbe(),
+                resolveProbeIntervalSeconds());
     }
 
     PortForwardService(KubeClientFactory clientFactory,
                         PortForwardAuditDao auditDao,
                         EventBus events,
                         PortForwardOpener opener) {
+        this(clientFactory, auditDao, events, opener,
+                new VersionApiHealthProbe(),
+                0L /* disabled in existing unit tests */);
+    }
+
+    /** Full-control constructor — used by Q2.8-N probe tests and any
+     *  future alternate backends (e.g. kubectl fallback). */
+    PortForwardService(KubeClientFactory clientFactory,
+                        PortForwardAuditDao auditDao,
+                        EventBus events,
+                        PortForwardOpener opener,
+                        HealthProbe probe,
+                        long probeIntervalSeconds) {
         this.clientFactory = Objects.requireNonNull(clientFactory, "clientFactory");
         this.auditDao = Objects.requireNonNull(auditDao, "auditDao");
         this.events = Objects.requireNonNull(events, "events");
         this.opener = Objects.requireNonNull(opener, "opener");
+        this.probe = Objects.requireNonNull(probe, "probe");
+        this.probeIntervalSeconds = Math.max(0L, probeIntervalSeconds);
+    }
+
+    private static long resolveProbeIntervalSeconds() {
+        String raw = System.getProperty(PROBE_INTERVAL_PROPERTY);
+        if (raw == null || raw.isBlank()) return DEFAULT_PROBE_INTERVAL_SECONDS;
+        try { return Math.max(0L, Long.parseLong(raw.trim())); }
+        catch (NumberFormatException nfe) { return DEFAULT_PROBE_INTERVAL_SECONDS; }
     }
 
     /**
@@ -132,6 +179,13 @@ public final class PortForwardService implements AutoCloseable {
                 .start(() -> runAcceptLoop(handle, client, target, podName));
         handle.acceptLoop = acceptLoop;
 
+        if (probeIntervalSeconds > 0) {
+            Thread probeLoop = Thread.ofVirtual()
+                    .name("k8s-pfwd-probe-" + auditRowId)
+                    .start(() -> runProbeLoop(handle, client));
+            handle.probeLoop = probeLoop;
+        }
+
         events.publishPortForward(new PortForwardEvent.Opened(connectionId,
                 auditRowId, listener.getLocalPort(), openedAt));
         log.info("port-forward open id={} {} {}/{}:{} → 127.0.0.1:{}",
@@ -141,7 +195,7 @@ public final class PortForwardService implements AutoCloseable {
     }
 
     public void close(long auditRowId) {
-        close(auditRowId, "MANUAL");
+        close(auditRowId, REASON_MANUAL);
     }
 
     public void close(long auditRowId, String reason) {
@@ -161,7 +215,7 @@ public final class PortForwardService implements AutoCloseable {
 
     public void closeAll() {
         List<Long> ids = List.copyOf(handlesByAuditId.keySet());
-        for (Long id : ids) close(id, "APP_EXIT");
+        for (Long id : ids) close(id, REASON_APP_EXIT);
     }
 
     @Override
@@ -170,6 +224,38 @@ public final class PortForwardService implements AutoCloseable {
     /** Exposed for tests — snapshot of the open audit ids. */
     public java.util.Set<Long> openSessionIds() {
         return java.util.Set.copyOf(handlesByAuditId.keySet());
+    }
+
+    /* ======================== health probe ======================== */
+
+    /** Runs until the handle is closing. Sleeps between probes; a
+     *  single probe failure closes the tunnel with the probe's verdict
+     *  as the close reason — HEALTH_FAIL for transient faults,
+     *  AUTH_EXPIRED for 401/403 (so the UI can prompt to re-auth
+     *  instead of silently retrying a dead credential). */
+    private void runProbeLoop(Handle handle, ApiClient client) {
+        Duration interval = Duration.ofSeconds(probeIntervalSeconds);
+        while (!handle.closing.get()) {
+            try { Thread.sleep(interval); }
+            catch (InterruptedException ie) { return; }
+            if (handle.closing.get()) return;
+            HealthProbe.Outcome o = probe.probe(client);
+            switch (o) {
+                case HEALTHY -> { /* next tick */ }
+                case AUTH_EXPIRED -> {
+                    log.info("port-forward probe {} auth-expired; closing",
+                            handle.session.auditRowId());
+                    close(handle.session.auditRowId(), REASON_AUTH_EXPIRED);
+                    return;
+                }
+                case UNHEALTHY -> {
+                    log.info("port-forward probe {} unhealthy; closing",
+                            handle.session.auditRowId());
+                    close(handle.session.auditRowId(), REASON_HEALTH_FAIL);
+                    return;
+                }
+            }
+        }
     }
 
     /* ======================== accept loop + pumps ======================== */
@@ -254,10 +340,36 @@ public final class PortForwardService implements AutoCloseable {
         final ServerSocket listener;
         final AtomicBoolean closing;
         volatile Thread acceptLoop;
+        volatile Thread probeLoop;
         Handle(PortForwardSession session, ServerSocket listener, AtomicBoolean closing) {
             this.session = session;
             this.listener = listener;
             this.closing = closing;
+        }
+    }
+
+    /** Seam for the periodic health / auth probe. Production wraps
+     *  {@code GET /version} — the cheapest authenticated endpoint. Tests
+     *  swap in deterministic stubs to drive the close reasons without a
+     *  live cluster. */
+    public interface HealthProbe {
+        enum Outcome { HEALTHY, UNHEALTHY, AUTH_EXPIRED }
+        Outcome probe(ApiClient client);
+    }
+
+    static final class VersionApiHealthProbe implements HealthProbe {
+        @Override
+        public Outcome probe(ApiClient client) {
+            try {
+                new VersionApi(client).getCode().execute();
+                return Outcome.HEALTHY;
+            } catch (io.kubernetes.client.openapi.ApiException ae) {
+                int code = ae.getCode();
+                if (code == 401 || code == 403) return Outcome.AUTH_EXPIRED;
+                return Outcome.UNHEALTHY;
+            } catch (Exception e) {
+                return Outcome.UNHEALTHY;
+            }
         }
     }
 
