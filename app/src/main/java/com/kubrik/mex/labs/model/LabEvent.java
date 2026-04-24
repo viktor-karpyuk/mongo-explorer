@@ -23,6 +23,12 @@ public record LabEvent(
         APPLY, START, STOP, DESTROY,
         HEALTHY, FAILED,
         SEED_BEGIN, SEED_DONE, SEED_FAILED,
-        ADOPTED
+        ADOPTED,
+        // v2.8.1 Q2.8-N — Local K8s Labs lifecycle. Emitted by
+        // LocalK8sDistroService / LabK8sLifecycleService so the
+        // Labs rollout viewer sees distro transitions alongside
+        // container-Lab events.
+        K8S_CLUSTER_UP, K8S_CLUSTER_DOWN, K8S_CLUSTER_DESTROYED,
+        K8S_NAMESPACE_CREATE, K8S_NAMESPACE_DELETE
     }
 }

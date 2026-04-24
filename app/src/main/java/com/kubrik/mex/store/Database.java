@@ -895,6 +895,41 @@ public class Database implements AutoCloseable {
                 """);
             st.execute("CREATE INDEX IF NOT EXISTS idx_rollout_prov_time " +
                     "ON rollout_events(provisioning_id, at)");
+
+            // v2.8.1 Q2.8-N1 — Local K8s Labs: distro-managed local
+            // clusters (minikube / k3d) that host the Lab's Mongo
+            // deployment. The provisioning pipeline from Q2.8.1-A..L
+            // is reused verbatim — a LabK8sCluster just surfaces a
+            // K8sClusterRef the existing pipeline picks up. The
+            // identifier is the distro profile/cluster name the CLI
+            // tool uses.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS lab_k8s_clusters (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    distro              TEXT    NOT NULL,
+                    identifier          TEXT    NOT NULL UNIQUE,
+                    context_name        TEXT    NOT NULL,
+                    kubeconfig_path     TEXT    NOT NULL,
+                    status              TEXT    NOT NULL,
+                    created_at          INTEGER NOT NULL,
+                    last_started_at     INTEGER,
+                    last_stopped_at     INTEGER,
+                    destroyed_at        INTEGER,
+                    k8s_cluster_id      INTEGER
+                                        REFERENCES k8s_clusters(id)
+                                        ON DELETE SET NULL
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_lab_k8s_status " +
+                    "ON lab_k8s_clusters(status)");
+
+            // provisioning_records.lab_k8s_cluster_id — nullable back-
+            // pointer. NULL for a production provision, non-NULL for
+            // a provision that ran inside a local K8s Lab. SQLite's
+            // ALTER TABLE doesn't enforce FK for legacy rows, so the
+            // DAO carries an app-level guard.
+            try { st.execute("ALTER TABLE provisioning_records ADD COLUMN lab_k8s_cluster_id INTEGER"); }
+            catch (SQLException ignored) { /* column already present */ }
         }
     }
 
