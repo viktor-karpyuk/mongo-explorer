@@ -1,6 +1,7 @@
 package com.kubrik.mex.labs.k8s.lifecycle;
 
 import com.kubrik.mex.k8s.apply.ApplyOrchestrator;
+import com.kubrik.mex.k8s.cluster.KubeClusterService;
 import com.kubrik.mex.k8s.model.K8sClusterRef;
 import com.kubrik.mex.k8s.provision.ProvisionModel;
 import com.kubrik.mex.k8s.provision.ProvisioningService;
@@ -12,7 +13,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.sql.SQLException;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * v2.8.1 Q2.8-N4 — Top-level orchestrator for a K8s Lab's apply flow.
@@ -41,11 +44,14 @@ public final class LabK8sLifecycleService {
 
     private final LocalK8sDistroService distroService;
     private final ProvisioningService provisioningService;
+    private final KubeClusterService kubeClusterService;
 
     public LabK8sLifecycleService(LocalK8sDistroService distroService,
-                                    ProvisioningService provisioningService) {
+                                    ProvisioningService provisioningService,
+                                    KubeClusterService kubeClusterService) {
         this.distroService = Objects.requireNonNull(distroService, "distroService");
         this.provisioningService = Objects.requireNonNull(provisioningService, "provisioningService");
+        this.kubeClusterService = Objects.requireNonNull(kubeClusterService, "kubeClusterService");
     }
 
     /**
@@ -84,16 +90,29 @@ public final class LabK8sLifecycleService {
         }
 
         // The ref is in k8s_clusters via attachK8sCluster — we need a
-        // K8sClusterRef. The Created variant already handed us one;
-        // for Already / Ok we reload from DAO via distroService.
+        // K8sClusterRef. Created hands it to us directly; Already / Ok
+        // re-read through KubeClusterService.findById so re-apply on
+        // an existing cluster runs the production pipeline identically
+        // to a first-time Apply.
         K8sClusterRef ref;
         if (distroResult instanceof LocalK8sDistroService.Result.Created c && c.ref() != null) {
             ref = c.ref();
         } else {
-            // Re-derive the ref — a follow-up would add a
-            // KubeClusterService.findById; for now we require Created.
-            return LabK8sApplyResult.distroFailed(
-                    "distro cluster already existed; re-apply from the Clusters pane for now");
+            Optional<K8sClusterRef> existingRef = Optional.empty();
+            if (labCluster.k8sClusterId().isPresent()) {
+                try {
+                    existingRef = kubeClusterService.findById(labCluster.k8sClusterId().get());
+                } catch (SQLException sqle) {
+                    return LabK8sApplyResult.distroFailed(
+                            "lookup existing k8s_clusters row: " + sqle.getMessage());
+                }
+            }
+            if (existingRef.isEmpty()) {
+                return LabK8sApplyResult.distroFailed(
+                        "distro cluster reports RUNNING but its k8s_clusters "
+                        + "row is missing — forget the Lab and re-create");
+            }
+            ref = existingRef.get();
         }
 
         // Gate 2: materialise + provision via the v2.8.1 pipeline.

@@ -51,6 +51,13 @@ public final class KubeClusterService {
         return dao.listAll();
     }
 
+    /** Resolve a cluster row by id. Lets consumers that hold a back-
+     *  pointer (lab_k8s_clusters.k8s_cluster_id) reconstruct the
+     *  full ref without duplicating DAO logic. */
+    public Optional<K8sClusterRef> findById(long clusterId) throws SQLException {
+        return dao.findById(clusterId);
+    }
+
     public K8sClusterRef add(String displayName,
                               String kubeconfigPath,
                               String contextName,

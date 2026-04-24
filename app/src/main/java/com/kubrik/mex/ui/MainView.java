@@ -1012,7 +1012,7 @@ public class MainView extends BorderPane {
         labK8sDistroService = new com.kubrik.mex.labs.k8s.distro.LocalK8sDistroService(
                 labK8sDetector, labK8sClusterDao, kubeClusterService);
         labK8sLifecycle = new com.kubrik.mex.labs.k8s.lifecycle.LabK8sLifecycleService(
-                labK8sDistroService, kubeProvisioningService);
+                labK8sDistroService, kubeProvisioningService, kubeClusterService);
         // Orphan reconciliation: any lab_k8s_clusters row that says
         // RUNNING but the CLI can't find the cluster (box rebooted,
         // out-of-band minikube delete) flips to FAILED so the UI
