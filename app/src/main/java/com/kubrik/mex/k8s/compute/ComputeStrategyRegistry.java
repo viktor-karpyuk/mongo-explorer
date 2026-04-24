@@ -53,5 +53,5 @@ public final class ComputeStrategyRegistry {
     /** Copy of the current release's shipped set for callers that
      *  don't want to hard-code a version. Bumped with each release
      *  that unlocks another strategy. */
-    public static ComputeStrategyRegistry current() { return V2_8_3; }
+    public static ComputeStrategyRegistry current() { return V2_8_4; }
 }

@@ -80,7 +80,7 @@ public final class ProvisionDialog extends Dialog<Void> {
     private final RadioButton strategyNoneRadio = new RadioButton("None / Cluster default scheduler");
     private final RadioButton strategyNodePoolRadio = new RadioButton("Use existing node pool");
     private final RadioButton strategyKarpenterRadio = new RadioButton("Karpenter-provisioned on-demand (AWS defaults)");
-    private final RadioButton strategyManagedRadio = new RadioButton("Mongo Explorer creates a managed pool  (Available in v2.8.4)");
+    private final RadioButton strategyManagedRadio = new RadioButton("Mongo Explorer creates a managed pool (AWS EKS stub)");
     private final TextField poolLabelKeyField = new TextField("workload");
     private final TextField poolLabelValueField = new TextField("mongodb");
     private final TextField poolTaintKeyField = new TextField("dedicated");
@@ -387,6 +387,16 @@ public final class ProvisionDialog extends Dialog<Void> {
             return new ComputeStrategy.Karpenter(
                     com.kubrik.mex.k8s.compute.karpenter.KarpenterSpec.sensibleAwsDefaults(
                             deploymentNameField.getText().trim()));
+        }
+        if (picked == StrategyId.MANAGED_POOL) {
+            // Alpha: defaults land on the EKS stub; real credentials
+            // wiring arrives with the Cloud-credentials pane. The
+            // managed-pool preflight fails with a clear message when
+            // no credential row exists.
+            return new ComputeStrategy.ManagedPool(
+                    com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec
+                            .sensibleEksDefaults(1L, "us-east-1",
+                                    deploymentNameField.getText().trim()));
         }
         if (picked != StrategyId.NODE_POOL) return ComputeStrategy.NONE;
         String labelKey = poolLabelKeyField.getText().trim();

@@ -937,6 +937,51 @@ public class Database implements AutoCloseable {
             // are shaped per ComputeStrategyJson.toJson.
             try { st.execute("ALTER TABLE provisioning_records ADD COLUMN compute_strategy_json TEXT"); }
             catch (SQLException ignored) { /* column already present */ }
+
+            // v2.8.4 Q2.8.4-A — Cloud credentials. Secret bodies are
+            // NEVER stored here per milestone §2.1; only a reference
+            // to the OS keychain + metadata the UI needs to enumerate
+            // + pick credentials without touching the secret.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS cloud_credentials (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    display_name    TEXT    NOT NULL,
+                    provider        TEXT    NOT NULL,
+                    auth_mode       TEXT    NOT NULL,
+                    keychain_ref    TEXT    NOT NULL,
+                    aws_account_id  TEXT,
+                    gcp_project     TEXT,
+                    azure_subscription TEXT,
+                    default_region  TEXT,
+                    created_at      INTEGER NOT NULL,
+                    last_probed_at  INTEGER,
+                    probe_status    TEXT,
+                    UNIQUE(display_name, provider)
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_cloud_creds_provider "
+                    + "ON cloud_credentials(provider)");
+
+            // v2.8.4 Q2.8.4-B — Managed pool operations audit. Every
+            // cloud API call rings through here with a cloud-side call
+            // id so CloudTrail / Activity Logs can be correlated.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS managed_pool_operations (
+                    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provisioning_record_id  INTEGER REFERENCES provisioning_records(id)
+                                             ON DELETE SET NULL,
+                    provider                TEXT    NOT NULL,
+                    action                  TEXT    NOT NULL,
+                    region                  TEXT,
+                    account_id              TEXT,
+                    pool_name               TEXT,
+                    cloud_call_id           TEXT,
+                    started_at              INTEGER NOT NULL,
+                    ended_at                INTEGER,
+                    status                  TEXT    NOT NULL,
+                    error_message           TEXT
+                )
+                """);
         }
     }
 

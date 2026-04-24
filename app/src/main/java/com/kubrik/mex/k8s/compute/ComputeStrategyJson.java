@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.kubrik.mex.k8s.compute.karpenter.KarpenterSpec;
+import com.kubrik.mex.k8s.compute.managedpool.CloudProvider;
+import com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -62,7 +64,10 @@ public final class ComputeStrategyJson {
                 root.put("type", "karpenter");
                 k.spec().ifPresent(sp -> writeKarpenterSpec(root, sp));
             }
-            case ComputeStrategy.ManagedPool mp -> root.put("type", "managed_pool");
+            case ComputeStrategy.ManagedPool mp -> {
+                root.put("type", "managed_pool");
+                mp.spec().ifPresent(sp -> writeManagedPoolSpec(root, sp));
+            }
             case ComputeStrategy.None n -> { /* filtered earlier */ }
         }
         try { return M.writeValueAsString(root); }
@@ -80,7 +85,7 @@ public final class ComputeStrategyJson {
         return switch (type) {
             case "node_pool" -> parseNodePool(root);
             case "karpenter" -> new ComputeStrategy.Karpenter(parseKarpenter(root));
-            case "managed_pool" -> new ComputeStrategy.ManagedPool();
+            case "managed_pool" -> new ComputeStrategy.ManagedPool(parseManagedPool(root));
             default -> ComputeStrategy.NONE;
         };
     }
@@ -135,6 +140,57 @@ public final class ComputeStrategyJson {
         return Optional.of(new KarpenterSpec(ref, cap, fam, arch,
                 cpuMin, cpuMax, memMin, memMax,
                 consolidation, expireAfter, limitCpu, limitMem));
+    }
+
+    private static void writeManagedPoolSpec(com.fasterxml.jackson.databind.node.ObjectNode root,
+                                               ManagedPoolSpec sp) {
+        root.put("provider", sp.provider().wireValue());
+        root.put("credential_id", sp.credentialId());
+        root.put("region", sp.region());
+        root.put("pool_name", sp.poolName());
+        root.put("instance_type", sp.instanceType());
+        root.put("capacity_type", sp.capacityType().name());
+        ObjectNode counts = root.putObject("node_count");
+        counts.put("min", sp.minNodes());
+        counts.put("desired", sp.desiredNodes());
+        counts.put("max", sp.maxNodes());
+        root.put("arch", sp.arch());
+        root.set("zones", arrayOf(sp.zones()));
+        root.set("subnet_ids", arrayOf(sp.subnetIds()));
+    }
+
+    private static Optional<ManagedPoolSpec> parseManagedPool(com.fasterxml.jackson.databind.JsonNode root) {
+        com.fasterxml.jackson.databind.JsonNode prov = root.path("provider");
+        if (prov.isMissingNode() || prov.asText("").isBlank()) return Optional.empty();
+        CloudProvider provider;
+        try { provider = CloudProvider.fromWire(prov.asText()); }
+        catch (IllegalArgumentException iae) { return Optional.empty(); }
+        long credId = root.path("credential_id").asLong(0L);
+        String region = root.path("region").asText("");
+        String poolName = root.path("pool_name").asText("");
+        String instanceType = root.path("instance_type").asText("");
+        if (region.isEmpty() || poolName.isEmpty() || instanceType.isEmpty()) {
+            return Optional.empty();
+        }
+        ManagedPoolSpec.CapacityType ct;
+        try {
+            ct = ManagedPoolSpec.CapacityType.valueOf(
+                    root.path("capacity_type").asText("ON_DEMAND"));
+        } catch (IllegalArgumentException iae) {
+            ct = ManagedPoolSpec.CapacityType.ON_DEMAND;
+        }
+        int min = root.path("node_count").path("min").asInt(1);
+        int desired = root.path("node_count").path("desired").asInt(Math.max(1, min));
+        int max = root.path("node_count").path("max").asInt(Math.max(desired, min));
+        String arch = root.path("arch").asText("amd64");
+        List<String> zones = stringArray(root.path("zones"));
+        List<String> subnets = stringArray(root.path("subnet_ids"));
+        try {
+            return Optional.of(new ManagedPoolSpec(provider, credId, region,
+                    poolName, instanceType, ct, min, desired, max, arch, zones, subnets));
+        } catch (IllegalArgumentException iae) {
+            return Optional.empty();
+        }
     }
 
     private static ArrayNode arrayOf(List<String> values) {

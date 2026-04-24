@@ -47,11 +47,32 @@ public final class PreflightEngine {
         this(clientFactory, defaultChecks(), DEFAULT_BUDGET_MS);
     }
 
+    /** v2.8.4 constructor — same as the default but with the managed-
+     *  pool preflight checks injected. Production callers build this
+     *  variant once the {@link CloudCredentialDao} + adapter registry
+     *  are wired; older call-sites continue to use the no-arg ctor
+     *  and simply skip managed-pool validation. */
+    public PreflightEngine(KubeClientFactory clientFactory,
+                            com.kubrik.mex.k8s.compute.managedpool.CloudCredentialDao credDao,
+                            com.kubrik.mex.k8s.compute.managedpool.ManagedPoolAdapterRegistry registry) {
+        this(clientFactory, withManagedPool(defaultChecks(), credDao, registry),
+                DEFAULT_BUDGET_MS);
+    }
+
     PreflightEngine(KubeClientFactory clientFactory,
                      List<PreflightCheck> checks, long budgetMs) {
         this.clientFactory = clientFactory;
         this.checks = List.copyOf(checks);
         this.budgetMs = budgetMs;
+    }
+
+    private static List<PreflightCheck> withManagedPool(List<PreflightCheck> base,
+                                                          com.kubrik.mex.k8s.compute.managedpool.CloudCredentialDao credDao,
+                                                          com.kubrik.mex.k8s.compute.managedpool.ManagedPoolAdapterRegistry registry) {
+        List<PreflightCheck> out = new ArrayList<>(base);
+        out.addAll(new com.kubrik.mex.k8s.compute.managedpool.ManagedPoolPreflightChecks(
+                credDao, registry).all());
+        return List.copyOf(out);
     }
 
     public static List<PreflightCheck> defaultChecks() {

@@ -1,6 +1,7 @@
 package com.kubrik.mex.k8s.compute;
 
 import com.kubrik.mex.k8s.compute.karpenter.KarpenterSpec;
+import com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec;
 
 import java.util.List;
 import java.util.Objects;
@@ -65,8 +66,12 @@ public sealed interface ComputeStrategy {
     }
 
     /** v2.8.4 — Mongo Explorer creates a managed node-pool via the
-     *  cloud API. Body populated when v2.8.4 lands. */
-    record ManagedPool() implements ComputeStrategy {
+     *  cloud API. Spec is optional so registry enumeration can spin
+     *  up bare-type instances for greyed-out UI. */
+    record ManagedPool(Optional<ManagedPoolSpec> spec) implements ComputeStrategy {
+        public ManagedPool { spec = spec == null ? Optional.empty() : spec; }
+        public ManagedPool() { this(Optional.empty()); }
+        public ManagedPool(ManagedPoolSpec spec) { this(Optional.ofNullable(spec)); }
         @Override public StrategyId id() { return StrategyId.MANAGED_POOL; }
     }
 
