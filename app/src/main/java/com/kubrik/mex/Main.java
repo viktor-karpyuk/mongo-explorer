@@ -374,26 +374,36 @@ public class Main extends Application {
     @Override
     public void stop() {
         log.info("shutting down");
-        // Halt immediately — cleanup happens in the background.
-        // MongoClient.close() and driver shutdown hooks can stall for seconds;
-        // halt(0) bypasses all of that so the app exits instantly.
+        // Run cleanup in a helper thread with a bounded wall budget, then
+        // halt. The previous implementation started cleanup as a daemon
+        // and called halt(0) on the same tick — halt kills the daemon
+        // mid-execution, so MongoClient.close() / Database.close() /
+        // every close() in the list never actually ran. WAL was left
+        // un-checkpointed and mongod saw dangling connections until
+        // keep-alive expired.
         Thread cleanup = new Thread(() -> {
-            try { if (migrationScheduler != null) migrationScheduler.close(); } catch (Exception ignored) {}
-            try { if (recordingCapture != null) recordingCapture.close(); } catch (Exception ignored) {}
-            try { if (recordingService != null) recordingService.close(); } catch (Exception ignored) {}
-            try { if (auditJanitor != null) auditJanitor.close(); } catch (Exception ignored) {}
-            try { if (backupScheduler != null) backupScheduler.close(); } catch (Exception ignored) {}
-            try { if (auditTailerService != null) auditTailerService.close(); } catch (Exception ignored) {}
-            try { if (certExpiryScheduler != null) certExpiryScheduler.close(); } catch (Exception ignored) {}
-            try { if (clusterWiring != null) clusterWiring.close(); } catch (Exception ignored) {}
-            try { if (clusterTopologyService != null) clusterTopologyService.close(); } catch (Exception ignored) {}
-            try { if (monitoringWiring != null) monitoringWiring.close(); } catch (Exception ignored) {}
-            try { if (monitoringService != null) monitoringService.close(); } catch (Exception ignored) {}
-            try { if (connectionManager != null) connectionManager.closeAll(); } catch (Exception ignored) {}
-            try { if (db != null) db.close(); } catch (Exception ignored) {}
+            try { if (migrationScheduler != null) migrationScheduler.close(); } catch (Exception e) { log.debug("migrationScheduler.close", e); }
+            try { if (recordingCapture != null) recordingCapture.close(); } catch (Exception e) { log.debug("recordingCapture.close", e); }
+            try { if (recordingService != null) recordingService.close(); } catch (Exception e) { log.debug("recordingService.close", e); }
+            try { if (auditJanitor != null) auditJanitor.close(); } catch (Exception e) { log.debug("auditJanitor.close", e); }
+            try { if (backupScheduler != null) backupScheduler.close(); } catch (Exception e) { log.debug("backupScheduler.close", e); }
+            try { if (auditTailerService != null) auditTailerService.close(); } catch (Exception e) { log.debug("auditTailerService.close", e); }
+            try { if (certExpiryScheduler != null) certExpiryScheduler.close(); } catch (Exception e) { log.debug("certExpiryScheduler.close", e); }
+            try { if (clusterWiring != null) clusterWiring.close(); } catch (Exception e) { log.debug("clusterWiring.close", e); }
+            try { if (clusterTopologyService != null) clusterTopologyService.close(); } catch (Exception e) { log.debug("clusterTopologyService.close", e); }
+            try { if (monitoringWiring != null) monitoringWiring.close(); } catch (Exception e) { log.debug("monitoringWiring.close", e); }
+            try { if (monitoringService != null) monitoringService.close(); } catch (Exception e) { log.debug("monitoringService.close", e); }
+            try { if (connectionManager != null) connectionManager.closeAll(); } catch (Exception e) { log.debug("connectionManager.closeAll", e); }
+            try { if (db != null) db.close(); } catch (Exception e) { log.debug("db.close", e); }
         }, "shutdown-cleanup");
-        cleanup.setDaemon(true);
+        cleanup.setDaemon(false);
         cleanup.start();
+        // Give cleanup a bounded wall budget — long enough for Database
+        // to checkpoint WAL + for MonitoringService to flush a batch,
+        // short enough that a stuck MongoClient.close() can't hold the
+        // app hostage past a few seconds.
+        try { cleanup.join(3_000L); }
+        catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
         Runtime.getRuntime().halt(0);
     }
 

@@ -5,6 +5,7 @@ import com.kubrik.mex.store.AppPaths;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
@@ -45,7 +46,7 @@ public final class Crypto {
             new SecureRandom().nextBytes(iv);
             Cipher c = Cipher.getInstance(ALG);
             c.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, iv));
-            byte[] ct = c.doFinal(plain.getBytes());
+            byte[] ct = c.doFinal(plain.getBytes(StandardCharsets.UTF_8));
             byte[] out = new byte[iv.length + ct.length];
             System.arraycopy(iv, 0, out, 0, iv.length);
             System.arraycopy(ct, 0, out, iv.length, ct.length);
@@ -65,7 +66,7 @@ public final class Crypto {
             System.arraycopy(all, IV_LEN, ct, 0, ct.length);
             Cipher c = Cipher.getInstance(ALG);
             c.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, iv));
-            return new String(c.doFinal(ct));
+            return new String(c.doFinal(ct), StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new RuntimeException("decrypt failed", e);
         }

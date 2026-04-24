@@ -12,12 +12,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -242,11 +240,6 @@ public final class KubeConfigLoader {
         return o instanceof String s ? s : (o == null ? null : o.toString());
     }
 
-    @SuppressWarnings("unused")
-    private static String normalise(String in) {
-        return in == null ? "" : in.trim().toLowerCase(Locale.ROOT);
-    }
-
     /** Intermediate shape passed back from {@link #classifyUser(Map)}. */
     record Classification(K8sAuthKind kind, Optional<String> detail,
                            Optional<String> execBinary) {}
@@ -258,24 +251,4 @@ public final class KubeConfigLoader {
      * the ambiguity rather than silently deduplicating).
      */
     public record DiscoveredContext(Path sourcePath, K8sContextSummary summary) {}
-
-    /**
-     * Collect kubeconfig paths in the same order the Kubernetes CLI
-     * does, then hand the whole set back so callers can show the user
-     * which file each context lives in.
-     */
-    public static List<Path> orderedPaths() {
-        return new ArrayList<>(discoverPaths());
-    }
-
-    // Retained for test dependency ordering; does not mutate state.
-    @SuppressWarnings("unused")
-    private static List<Path> splitEnv(String env) {
-        if (env == null || env.isBlank()) return List.of();
-        String sep = System.getProperty("path.separator", ":");
-        return Arrays.stream(env.split(java.util.regex.Pattern.quote(sep)))
-                .filter(s -> !s.isBlank())
-                .map(Paths::get)
-                .toList();
-    }
 }

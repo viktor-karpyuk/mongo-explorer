@@ -19,6 +19,14 @@ public class Database implements AutoCloseable {
         try (Statement st = connection.createStatement()) {
             st.execute("PRAGMA journal_mode=WAL");
             st.execute("PRAGMA foreign_keys=ON");
+            // Without busy_timeout any SQLITE_BUSY (a writer lock
+            // conflict during a WAL checkpoint, or a read racing a
+            // still-in-flight write) throws immediately. 5s matches the
+            // sqlite CLI default and absorbs the short bursts the app's
+            // samplers + UI writes produce without masking real
+            // deadlocks. Many DAOs in the app write without the
+            // writeLock() contract; this pragma protects them.
+            st.execute("PRAGMA busy_timeout=5000");
         }
         migrate();
     }

@@ -48,7 +48,15 @@ public class ConnectionManager {
         Thread.startVirtualThread(() -> {
             try {
                 MongoService svc = new MongoService(uri);
-                active.put(id, svc);
+                // Atomic replace — if a concurrent second connect()
+                // (user double-click, or a retry racing the previous
+                // attempt) wins and writes first, we close the losing
+                // client here rather than letting it linger to JVM
+                // exit.
+                MongoService prior = active.put(id, svc);
+                if (prior != null && prior != svc) {
+                    try { prior.close(); } catch (Exception ignored) {}
+                }
                 publish(new ConnectionState(id, ConnectionState.Status.CONNECTED, svc.serverVersion(), null));
                 events.publishLog(id, "connected to " + c.name() + " (mongo " + svc.serverVersion() + ")");
             } catch (Exception e) {
