@@ -41,32 +41,34 @@ public final class MigrationJobDao {
                  source_connection_name, target_connection_name, docs_processed, active_millis)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """;
-        try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
-            ps.setString(1, r.id().value());
-            ps.setString(2, r.kind().name());
-            ps.setString(3, r.sourceConnectionId());
-            ps.setString(4, r.targetConnectionId());
-            ps.setString(5, codec.toJson(r.spec()));
-            ps.setString(6, r.specHash());
-            ps.setString(7, r.status().name());
-            ps.setString(8, r.executionMode().name());
-            setInstant(ps, 9, r.startedAt());
-            setInstant(ps, 10, r.endedAt());
-            ps.setLong(11, r.docsCopied());
-            ps.setLong(12, r.bytesCopied());
-            ps.setLong(13, r.errors());
-            ps.setString(14, r.errorMessage());
-            ps.setString(15, r.resumePath() == null ? null : r.resumePath().toString());
-            ps.setString(16, r.artifactDir() == null ? null : r.artifactDir().toString());
-            setInstant(ps, 17, r.createdAt());
-            setInstant(ps, 18, r.updatedAt());
-            ps.setString(19, r.sourceConnectionName());
-            ps.setString(20, r.targetConnectionName());
-            ps.setLong(21, r.docsProcessed());
-            ps.setLong(22, r.activeMillis());
-            ps.executeUpdate();
-        } catch (Exception e) {
-            throw new RuntimeException("insert migration_jobs failed: " + e.getMessage(), e);
+        synchronized (db.writeLock()) {
+            try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+                ps.setString(1, r.id().value());
+                ps.setString(2, r.kind().name());
+                ps.setString(3, r.sourceConnectionId());
+                ps.setString(4, r.targetConnectionId());
+                ps.setString(5, codec.toJson(r.spec()));
+                ps.setString(6, r.specHash());
+                ps.setString(7, r.status().name());
+                ps.setString(8, r.executionMode().name());
+                setInstant(ps, 9, r.startedAt());
+                setInstant(ps, 10, r.endedAt());
+                ps.setLong(11, r.docsCopied());
+                ps.setLong(12, r.bytesCopied());
+                ps.setLong(13, r.errors());
+                ps.setString(14, r.errorMessage());
+                ps.setString(15, r.resumePath() == null ? null : r.resumePath().toString());
+                ps.setString(16, r.artifactDir() == null ? null : r.artifactDir().toString());
+                setInstant(ps, 17, r.createdAt());
+                setInstant(ps, 18, r.updatedAt());
+                ps.setString(19, r.sourceConnectionName());
+                ps.setString(20, r.targetConnectionName());
+                ps.setLong(21, r.docsProcessed());
+                ps.setLong(22, r.activeMillis());
+                ps.executeUpdate();
+            } catch (Exception e) {
+                throw new RuntimeException("insert migration_jobs failed: " + e.getMessage(), e);
+            }
         }
     }
 
@@ -76,14 +78,16 @@ public final class MigrationJobDao {
                SET status = ?, error_message = ?, updated_at = ?
              WHERE id = ?
             """;
-        try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
-            ps.setString(1, status.name());
-            ps.setString(2, error);
-            setInstant(ps, 3, Instant.now());
-            ps.setString(4, id.value());
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("updateStatus failed: " + e.getMessage(), e);
+        synchronized (db.writeLock()) {
+            try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+                ps.setString(1, status.name());
+                ps.setString(2, error);
+                setInstant(ps, 3, Instant.now());
+                ps.setString(4, id.value());
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw new RuntimeException("updateStatus failed: " + e.getMessage(), e);
+            }
         }
     }
 
@@ -96,13 +100,15 @@ public final class MigrationJobDao {
                    updated_at = ?
              WHERE id = ?
             """;
-        try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
-            setInstant(ps, 1, startedAt);
-            setInstant(ps, 2, Instant.now());
-            ps.setString(3, id.value());
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("markStarted failed: " + e.getMessage(), e);
+        synchronized (db.writeLock()) {
+            try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+                setInstant(ps, 1, startedAt);
+                setInstant(ps, 2, Instant.now());
+                ps.setString(3, id.value());
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw new RuntimeException("markStarted failed: " + e.getMessage(), e);
+            }
         }
     }
 
@@ -115,17 +121,19 @@ public final class MigrationJobDao {
                    docs_processed = ?, active_millis = ?, updated_at = ?
              WHERE id = ?
             """;
-        try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
-            ps.setLong(1, docsCopied);
-            ps.setLong(2, bytesCopied);
-            ps.setLong(3, errors);
-            ps.setLong(4, docsProcessed);
-            ps.setLong(5, activeMillis);
-            setInstant(ps, 6, Instant.now());
-            ps.setString(7, id.value());
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("updateProgress failed: " + e.getMessage(), e);
+        synchronized (db.writeLock()) {
+            try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+                ps.setLong(1, docsCopied);
+                ps.setLong(2, bytesCopied);
+                ps.setLong(3, errors);
+                ps.setLong(4, docsProcessed);
+                ps.setLong(5, activeMillis);
+                setInstant(ps, 6, Instant.now());
+                ps.setString(7, id.value());
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw new RuntimeException("updateProgress failed: " + e.getMessage(), e);
+            }
         }
     }
 
@@ -140,20 +148,22 @@ public final class MigrationJobDao {
                    owner_pid = NULL, last_heartbeat_at = NULL
              WHERE id = ?
             """;
-        try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
-            Instant now = Instant.now();
-            ps.setString(1, status.name());
-            ps.setString(2, error);
-            ps.setLong(3, docsCopied);
-            ps.setLong(4, bytesCopied);
-            ps.setLong(5, docsProcessed);
-            ps.setLong(6, activeMillis);
-            setInstant(ps, 7, now);
-            setInstant(ps, 8, now);
-            ps.setString(9, id.value());
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("markEnded failed: " + e.getMessage(), e);
+        synchronized (db.writeLock()) {
+            try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+                Instant now = Instant.now();
+                ps.setString(1, status.name());
+                ps.setString(2, error);
+                ps.setLong(3, docsCopied);
+                ps.setLong(4, bytesCopied);
+                ps.setLong(5, docsProcessed);
+                ps.setLong(6, activeMillis);
+                setInstant(ps, 7, now);
+                setInstant(ps, 8, now);
+                ps.setString(9, id.value());
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw new RuntimeException("markEnded failed: " + e.getMessage(), e);
+            }
         }
     }
 
@@ -174,13 +184,15 @@ public final class MigrationJobDao {
             VALUES (?, ?, ?)
             ON CONFLICT(job_id, source_ns) DO NOTHING
             """;
-        try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
-            ps.setString(1, jobId.value());
-            ps.setString(2, sourceNs);
-            setInstant(ps, 3, Instant.now());
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("recordCollectionStart failed: " + e.getMessage(), e);
+        synchronized (db.writeLock()) {
+            try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+                ps.setString(1, jobId.value());
+                ps.setString(2, sourceNs);
+                setInstant(ps, 3, Instant.now());
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw new RuntimeException("recordCollectionStart failed: " + e.getMessage(), e);
+            }
         }
     }
 
@@ -191,13 +203,15 @@ public final class MigrationJobDao {
                SET ended_at = ?
              WHERE job_id = ? AND source_ns = ?
             """;
-        try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
-            setInstant(ps, 1, Instant.now());
-            ps.setString(2, jobId.value());
-            ps.setString(3, sourceNs);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("recordCollectionEnd failed: " + e.getMessage(), e);
+        synchronized (db.writeLock()) {
+            try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+                setInstant(ps, 1, Instant.now());
+                ps.setString(2, jobId.value());
+                ps.setString(3, sourceNs);
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw new RuntimeException("recordCollectionEnd failed: " + e.getMessage(), e);
+            }
         }
     }
 
@@ -233,14 +247,16 @@ public final class MigrationJobDao {
                SET owner_pid = ?, last_heartbeat_at = ?, updated_at = ?
              WHERE id = ?
             """;
-        try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
-            ps.setLong(1, ownerPid);
-            setInstant(ps, 2, heartbeatAt);
-            setInstant(ps, 3, Instant.now());
-            ps.setString(4, id.value());
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("stampOwnership failed: " + e.getMessage(), e);
+        synchronized (db.writeLock()) {
+            try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+                ps.setLong(1, ownerPid);
+                setInstant(ps, 2, heartbeatAt);
+                setInstant(ps, 3, Instant.now());
+                ps.setString(4, id.value());
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw new RuntimeException("stampOwnership failed: " + e.getMessage(), e);
+            }
         }
     }
 
@@ -248,12 +264,14 @@ public final class MigrationJobDao {
      *  ticker so the row keeps a fresh proof-of-life. */
     public void heartbeat(JobId id, Instant at) {
         String sql = "UPDATE migration_jobs SET last_heartbeat_at = ? WHERE id = ?";
-        try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
-            setInstant(ps, 1, at);
-            ps.setString(2, id.value());
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("heartbeat failed: " + e.getMessage(), e);
+        synchronized (db.writeLock()) {
+            try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+                setInstant(ps, 1, at);
+                ps.setString(2, id.value());
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw new RuntimeException("heartbeat failed: " + e.getMessage(), e);
+            }
         }
     }
 
@@ -287,17 +305,19 @@ public final class MigrationJobDao {
                     OR last_heartbeat_at IS NULL
                     OR last_heartbeat_at < ?)
             """;
-        try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
-            Instant now = Instant.now();
-            long staleCutoffMs = now.toEpochMilli() - STALE_HEARTBEAT_MS;
-            ps.setString(1, defaultError);
-            setInstant(ps, 2, now);
-            setInstant(ps, 3, now);
-            ps.setLong(4, currentPid);
-            ps.setLong(5, staleCutoffMs);
-            return ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("reconcileOrphans failed: " + e.getMessage(), e);
+        synchronized (db.writeLock()) {
+            try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+                Instant now = Instant.now();
+                long staleCutoffMs = now.toEpochMilli() - STALE_HEARTBEAT_MS;
+                ps.setString(1, defaultError);
+                setInstant(ps, 2, now);
+                setInstant(ps, 3, now);
+                ps.setLong(4, currentPid);
+                ps.setLong(5, staleCutoffMs);
+                return ps.executeUpdate();
+            } catch (SQLException e) {
+                throw new RuntimeException("reconcileOrphans failed: " + e.getMessage(), e);
+            }
         }
     }
 
