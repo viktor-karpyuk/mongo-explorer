@@ -907,7 +907,7 @@ public class Database implements AutoCloseable {
                 CREATE TABLE IF NOT EXISTS lab_k8s_clusters (
                     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
                     distro              TEXT    NOT NULL,
-                    identifier          TEXT    NOT NULL UNIQUE,
+                    identifier          TEXT    NOT NULL,
                     context_name        TEXT    NOT NULL,
                     kubeconfig_path     TEXT    NOT NULL,
                     status              TEXT    NOT NULL,
@@ -917,7 +917,8 @@ public class Database implements AutoCloseable {
                     destroyed_at        INTEGER,
                     k8s_cluster_id      INTEGER
                                         REFERENCES k8s_clusters(id)
-                                        ON DELETE SET NULL
+                                        ON DELETE SET NULL,
+                    UNIQUE(distro, identifier)
                 )
                 """);
             st.execute("CREATE INDEX IF NOT EXISTS idx_lab_k8s_status " +
