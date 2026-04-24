@@ -3,6 +3,7 @@ package com.kubrik.mex.k8s.operator.psmdb;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
+import com.kubrik.mex.k8s.compute.nodepool.NodePoolRenderer;
 import com.kubrik.mex.k8s.operator.KubernetesManifests;
 import com.kubrik.mex.k8s.provision.BackupSpec;
 import com.kubrik.mex.k8s.provision.ProvisionModel;
@@ -166,6 +167,7 @@ public final class PsmdbCRRenderer {
         if (m.resources().hasDataRequests()) {
             rs.put("resources", resources(m));
         }
+        NodePoolRenderer.mutate(rs, m.computeStrategy(), m.deploymentName() + "-" + name);
         return rs;
     }
 
@@ -180,6 +182,7 @@ public final class PsmdbCRRenderer {
         if (m.resources().hasDataRequests()) {
             rs.put("resources", resources(m));
         }
+        NodePoolRenderer.mutate(rs, m.computeStrategy(), m.deploymentName() + "-rs0");
         return rs;
     }
 
@@ -192,6 +195,7 @@ public final class PsmdbCRRenderer {
         configsvr.put("volumeSpec", volumeSpec(m.storage().configServerSizeGib(), m));
         configsvr.put("affinity", antiAffinity(m));
         if (m.resources().hasDataRequests()) configsvr.put("resources", resources(m));
+        NodePoolRenderer.mutate(configsvr, m.computeStrategy(), m.deploymentName() + "-cfg");
         sharding.put("configsvrReplSet", configsvr);
 
         Map<String, Object> mongos = new LinkedHashMap<>();
@@ -203,6 +207,7 @@ public final class PsmdbCRRenderer {
                     "memory", m.resources().mongosMemRequest().get())));
         }
         mongos.put("affinity", antiAffinity(m));
+        NodePoolRenderer.mutate(mongos, m.computeStrategy(), m.deploymentName() + "-mongos");
         sharding.put("mongos", mongos);
 
         return sharding;

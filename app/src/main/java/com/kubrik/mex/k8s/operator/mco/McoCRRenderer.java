@@ -3,6 +3,7 @@ package com.kubrik.mex.k8s.operator.mco;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
+import com.kubrik.mex.k8s.compute.nodepool.NodePoolRenderer;
 import com.kubrik.mex.k8s.operator.KubernetesManifests;
 import com.kubrik.mex.k8s.provision.BackupSpec;
 import com.kubrik.mex.k8s.provision.ProvisionModel;
@@ -194,6 +195,9 @@ public final class McoCRRenderer {
                     Map.of("app", m.deploymentName() + "-svc")));
             pod.put("topologySpreadConstraints", List.of(tsc));
         }
+        // v2.8.2 Q2.8.2-B — layer node-pool targeting on top of the
+        // scheduler defaults. No-op when computeStrategy() is None.
+        NodePoolRenderer.mutate(pod, m.computeStrategy(), m.deploymentName());
         template.put("spec", pod);
         spec.put("template", template);
         // Storage class + PVC size as volumeClaimTemplate

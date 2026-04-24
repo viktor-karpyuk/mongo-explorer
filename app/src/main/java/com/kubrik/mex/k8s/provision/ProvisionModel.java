@@ -1,5 +1,7 @@
 package com.kubrik.mex.k8s.provision;
 
+import com.kubrik.mex.k8s.compute.ComputeStrategy;
+
 import java.util.Objects;
 import java.util.Optional;
 
@@ -31,7 +33,8 @@ public record ProvisionModel(
         SchedulingSpec scheduling,
         MonitoringSpec monitoring,
         BackupSpec backup,
-        Optional<String> advancedYaml) {
+        Optional<String> advancedYaml,
+        ComputeStrategy computeStrategy) {
 
     public ProvisionModel {
         Objects.requireNonNull(profile, "profile");
@@ -48,6 +51,7 @@ public record ProvisionModel(
         Objects.requireNonNull(monitoring, "monitoring");
         Objects.requireNonNull(backup, "backup");
         Objects.requireNonNull(advancedYaml, "advancedYaml");
+        if (computeStrategy == null) computeStrategy = ComputeStrategy.NONE;
     }
 
     /**
@@ -72,7 +76,8 @@ public record ProvisionModel(
                 SchedulingSpec.devDefaults(),
                 MonitoringSpec.devDefaults(),
                 BackupSpec.none(),
-                Optional.empty());
+                Optional.empty(),
+                ComputeStrategy.NONE);
     }
 
     /* =========================== wither helpers =========================== */
@@ -80,78 +85,84 @@ public record ProvisionModel(
     public ProvisionModel withProfile(Profile v) {
         return new ProvisionModel(v, clusterId, namespace, createNamespace, deploymentName,
                 operator, topology, mongoVersion, auth, tls, storage, resources,
-                scheduling, monitoring, backup, advancedYaml);
+                scheduling, monitoring, backup, advancedYaml, computeStrategy);
     }
 
     public ProvisionModel withOperator(OperatorId v) {
         return new ProvisionModel(profile, clusterId, namespace, createNamespace, deploymentName,
                 v, topology, mongoVersion, auth, tls, storage, resources,
-                scheduling, monitoring, backup, advancedYaml);
+                scheduling, monitoring, backup, advancedYaml, computeStrategy);
     }
 
     public ProvisionModel withTopology(Topology v) {
         return new ProvisionModel(profile, clusterId, namespace, createNamespace, deploymentName,
                 operator, v, mongoVersion, auth, tls, storage, resources,
-                scheduling, monitoring, backup, advancedYaml);
+                scheduling, monitoring, backup, advancedYaml, computeStrategy);
     }
 
     public ProvisionModel withAuth(AuthSpec v) {
         return new ProvisionModel(profile, clusterId, namespace, createNamespace, deploymentName,
                 operator, topology, mongoVersion, v, tls, storage, resources,
-                scheduling, monitoring, backup, advancedYaml);
+                scheduling, monitoring, backup, advancedYaml, computeStrategy);
     }
 
     public ProvisionModel withTls(TlsSpec v) {
         return new ProvisionModel(profile, clusterId, namespace, createNamespace, deploymentName,
                 operator, topology, mongoVersion, auth, v, storage, resources,
-                scheduling, monitoring, backup, advancedYaml);
+                scheduling, monitoring, backup, advancedYaml, computeStrategy);
     }
 
     public ProvisionModel withStorage(StorageSpec v) {
         return new ProvisionModel(profile, clusterId, namespace, createNamespace, deploymentName,
                 operator, topology, mongoVersion, auth, tls, v, resources,
-                scheduling, monitoring, backup, advancedYaml);
+                scheduling, monitoring, backup, advancedYaml, computeStrategy);
     }
 
     public ProvisionModel withResources(ResourceSpec v) {
         return new ProvisionModel(profile, clusterId, namespace, createNamespace, deploymentName,
                 operator, topology, mongoVersion, auth, tls, storage, v,
-                scheduling, monitoring, backup, advancedYaml);
+                scheduling, monitoring, backup, advancedYaml, computeStrategy);
     }
 
     public ProvisionModel withScheduling(SchedulingSpec v) {
         return new ProvisionModel(profile, clusterId, namespace, createNamespace, deploymentName,
                 operator, topology, mongoVersion, auth, tls, storage, resources,
-                v, monitoring, backup, advancedYaml);
+                v, monitoring, backup, advancedYaml, computeStrategy);
     }
 
     public ProvisionModel withMonitoring(MonitoringSpec v) {
         return new ProvisionModel(profile, clusterId, namespace, createNamespace, deploymentName,
                 operator, topology, mongoVersion, auth, tls, storage, resources,
-                scheduling, v, backup, advancedYaml);
+                scheduling, v, backup, advancedYaml, computeStrategy);
     }
 
     public ProvisionModel withBackup(BackupSpec v) {
         return new ProvisionModel(profile, clusterId, namespace, createNamespace, deploymentName,
                 operator, topology, mongoVersion, auth, tls, storage, resources,
-                scheduling, monitoring, v, advancedYaml);
+                scheduling, monitoring, v, advancedYaml, computeStrategy);
+    }
+
+    public ProvisionModel withComputeStrategy(ComputeStrategy v) {
+        return new ProvisionModel(profile, clusterId, namespace, createNamespace, deploymentName,
+                operator, topology, mongoVersion, auth, tls, storage, resources,
+                scheduling, monitoring, backup, advancedYaml, v);
     }
 
     public ProvisionModel withNamespace(String ns, boolean create) {
         return new ProvisionModel(profile, clusterId, ns, create, deploymentName,
                 operator, topology, mongoVersion, auth, tls, storage, resources,
-                scheduling, monitoring, backup, advancedYaml);
+                scheduling, monitoring, backup, advancedYaml, computeStrategy);
     }
 
     public ProvisionModel withDeploymentName(String name) {
         return new ProvisionModel(profile, clusterId, namespace, createNamespace, name,
                 operator, topology, mongoVersion, auth, tls, storage, resources,
-                scheduling, monitoring, backup, advancedYaml);
+                scheduling, monitoring, backup, advancedYaml, computeStrategy);
     }
 
     public ProvisionModel withMongoVersion(String v) {
         return new ProvisionModel(profile, clusterId, namespace, createNamespace, deploymentName,
                 operator, topology, v, auth, tls, storage, resources,
-                scheduling, monitoring, backup, advancedYaml);
+                scheduling, monitoring, backup, advancedYaml, computeStrategy);
     }
 }
