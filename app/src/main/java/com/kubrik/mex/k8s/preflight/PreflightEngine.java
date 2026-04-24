@@ -68,6 +68,9 @@ public final class PreflightEngine {
         // gated by scope() so a ComputeStrategy.None model skips
         // them quietly.
         all.addAll(com.kubrik.mex.k8s.compute.nodepool.NodePoolPreflightChecks.all());
+        // v2.8.3 Q2.8.3-B — Karpenter-strategy checks. Same scope
+        // gating: only runs when ComputeStrategy.Karpenter picked.
+        all.addAll(com.kubrik.mex.k8s.compute.karpenter.KarpenterPreflightChecks.all());
         return List.copyOf(all);
     }
 

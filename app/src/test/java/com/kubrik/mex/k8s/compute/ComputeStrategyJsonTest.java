@@ -68,11 +68,35 @@ class ComputeStrategyJsonTest {
     }
 
     @Test
-    void karpenter_placeholder_round_trips_even_though_body_is_empty() {
+    void karpenter_placeholder_without_spec_round_trips_as_bare_type_tag() {
         String json = ComputeStrategyJson.toJson(new ComputeStrategy.Karpenter());
         assertNotNull(json);
         assertTrue(json.contains("karpenter"));
-        assertInstanceOf(ComputeStrategy.Karpenter.class, ComputeStrategyJson.fromJson(json));
+        ComputeStrategy.Karpenter back = (ComputeStrategy.Karpenter)
+                ComputeStrategyJson.fromJson(json);
+        assertTrue(back.spec().isEmpty());
+    }
+
+    @Test
+    void karpenter_spec_round_trips_preserving_requirements_and_limits() {
+        ComputeStrategy.Karpenter original = new ComputeStrategy.Karpenter(
+                com.kubrik.mex.k8s.compute.karpenter.KarpenterSpec.sensibleAwsDefaults("rs"));
+        String json = ComputeStrategyJson.toJson(original);
+        assertTrue(json.contains("EC2NodeClass"));
+        assertTrue(json.contains("spot"));
+        assertTrue(json.contains("m6i"));
+
+        ComputeStrategy.Karpenter back = (ComputeStrategy.Karpenter)
+                ComputeStrategyJson.fromJson(json);
+        assertTrue(back.spec().isPresent());
+        var sp = back.spec().get();
+        assertEquals("EC2NodeClass", sp.nodeClassRef().kind());
+        assertEquals("default", sp.nodeClassRef().name());
+        assertTrue(sp.capacityTypes().contains("spot"));
+        assertTrue(sp.instanceFamilies().contains("m6i"));
+        assertEquals("amd64", sp.architectures().get(0));
+        assertTrue(sp.consolidation());
+        assertEquals("720h", sp.expireAfter());
     }
 
     @Test

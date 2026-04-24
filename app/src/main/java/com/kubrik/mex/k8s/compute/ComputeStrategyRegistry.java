@@ -50,7 +50,8 @@ public final class ComputeStrategyRegistry {
                 StrategyId.KARPENTER, StrategyId.MANAGED_POOL);
     }
 
-    /** Copy of {@link #V2_8_2} for callers that want the current
-     *  release's registry without hard-coding the constant name. */
-    public static ComputeStrategyRegistry current() { return V2_8_2; }
+    /** Copy of the current release's shipped set for callers that
+     *  don't want to hard-code a version. Bumped with each release
+     *  that unlocks another strategy. */
+    public static ComputeStrategyRegistry current() { return V2_8_3; }
 }

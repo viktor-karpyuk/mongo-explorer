@@ -79,7 +79,7 @@ public final class ProvisionDialog extends Dialog<Void> {
     private final ToggleGroup strategyGroup = new ToggleGroup();
     private final RadioButton strategyNoneRadio = new RadioButton("None / Cluster default scheduler");
     private final RadioButton strategyNodePoolRadio = new RadioButton("Use existing node pool");
-    private final RadioButton strategyKarpenterRadio = new RadioButton("Karpenter-provisioned  (Available in v2.8.3)");
+    private final RadioButton strategyKarpenterRadio = new RadioButton("Karpenter-provisioned on-demand (AWS defaults)");
     private final RadioButton strategyManagedRadio = new RadioButton("Mongo Explorer creates a managed pool  (Available in v2.8.4)");
     private final TextField poolLabelKeyField = new TextField("workload");
     private final TextField poolLabelValueField = new TextField("mongodb");
@@ -383,6 +383,11 @@ public final class ProvisionDialog extends Dialog<Void> {
         Object picked = strategyGroup.getSelectedToggle() == null
                 ? StrategyId.NONE
                 : strategyGroup.getSelectedToggle().getUserData();
+        if (picked == StrategyId.KARPENTER) {
+            return new ComputeStrategy.Karpenter(
+                    com.kubrik.mex.k8s.compute.karpenter.KarpenterSpec.sensibleAwsDefaults(
+                            deploymentNameField.getText().trim()));
+        }
         if (picked != StrategyId.NODE_POOL) return ComputeStrategy.NONE;
         String labelKey = poolLabelKeyField.getText().trim();
         String labelValue = poolLabelValueField.getText().trim();

@@ -1,7 +1,10 @@
 package com.kubrik.mex.k8s.compute;
 
+import com.kubrik.mex.k8s.compute.karpenter.KarpenterSpec;
+
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * v2.8.2 Q2.8.2-A — Sealed strategy for where Mongo pods get
@@ -51,8 +54,13 @@ public sealed interface ComputeStrategy {
     }
 
     /** v2.8.3 — Karpenter NodePool rendered alongside the Mongo CR.
-     *  Body populated when v2.8.3 lands. */
-    record Karpenter() implements ComputeStrategy {
+     *  The spec is optional so callers that only need the type tag
+     *  (registry enumeration, UI greyed-out rendering) don't have to
+     *  construct a full KarpenterSpec. */
+    record Karpenter(Optional<KarpenterSpec> spec) implements ComputeStrategy {
+        public Karpenter { spec = spec == null ? Optional.empty() : spec; }
+        public Karpenter() { this(Optional.empty()); }
+        public Karpenter(KarpenterSpec spec) { this(Optional.ofNullable(spec)); }
         @Override public StrategyId id() { return StrategyId.KARPENTER; }
     }
 

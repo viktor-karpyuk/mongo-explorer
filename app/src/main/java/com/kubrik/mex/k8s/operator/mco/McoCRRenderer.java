@@ -3,7 +3,7 @@ package com.kubrik.mex.k8s.operator.mco;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
-import com.kubrik.mex.k8s.compute.nodepool.NodePoolRenderer;
+import com.kubrik.mex.k8s.compute.ComputeStrategyApplier;
 import com.kubrik.mex.k8s.operator.KubernetesManifests;
 import com.kubrik.mex.k8s.provision.BackupSpec;
 import com.kubrik.mex.k8s.provision.ProvisionModel;
@@ -50,6 +50,12 @@ public final class McoCRRenderer {
     public static final String MEX_LABEL_VALUE = "mongo-explorer";
 
     private final ObjectMapper yamlMapper;
+    /** Shuttle for the compute-strategy aux manifest (Karpenter
+     *  NodePool) across statefulSetSpec() → render(). Not thread-safe
+     *  — callers serialise on a single renderer instance. */
+    private final java.util.concurrent.atomic.AtomicReference<ComputeStrategyApplier.Result>
+            pendingComputeAux = new java.util.concurrent.atomic.AtomicReference<>(
+                    ComputeStrategyApplier.Result.none());
 
     public McoCRRenderer() {
         // BLOCK_SCALAR + no starting "---" keeps outputs diff-friendly
@@ -63,6 +69,7 @@ public final class McoCRRenderer {
 
     public KubernetesManifests render(ProvisionModel m) {
         Objects.requireNonNull(m, "model");
+        pendingComputeAux.set(ComputeStrategyApplier.Result.none());
         List<KubernetesManifests.Manifest> docs = new ArrayList<>();
 
         docs.addAll(passwordSecret(m));
@@ -71,6 +78,16 @@ public final class McoCRRenderer {
         Map<String, Object> cr = buildCr(m);
         String crYaml = toYaml(cr);
         docs.add(new KubernetesManifests.Manifest(CRD_KIND, m.deploymentName(), crYaml));
+
+        // v2.8.3 Q2.8.3-A — append the Karpenter NodePool manifest if
+        // statefulSetSpec() produced one.
+        ComputeStrategyApplier.Result aux = pendingComputeAux.get();
+        if (aux.extraManifest().isPresent()) {
+            docs.add(new KubernetesManifests.Manifest(
+                    aux.extraManifestKind().orElse("NodePool"),
+                    aux.extraManifestName().orElse("mex-nodepool"),
+                    aux.extraManifest().get()));
+        }
 
         if (m.scheduling().pdbEnabled()) {
             docs.add(renderPdb(m));
@@ -195,9 +212,11 @@ public final class McoCRRenderer {
                     Map.of("app", m.deploymentName() + "-svc")));
             pod.put("topologySpreadConstraints", List.of(tsc));
         }
-        // v2.8.2 Q2.8.2-B — layer node-pool targeting on top of the
-        // scheduler defaults. No-op when computeStrategy() is None.
-        NodePoolRenderer.mutate(pod, m.computeStrategy(), m.deploymentName());
+        // v2.8.2/3 — layer the chosen compute strategy on top of the
+        // scheduler defaults. Returns an Optional NodePool manifest
+        // (v2.8.3 Karpenter) that render() picks up below.
+        pendingComputeAux.set(ComputeStrategyApplier.apply(pod,
+                m.computeStrategy(), m.deploymentName()));
         template.put("spec", pod);
         spec.put("template", template);
         // Storage class + PVC size as volumeClaimTemplate

@@ -3,6 +3,8 @@ package com.kubrik.mex.k8s.operator.psmdb;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
+import com.kubrik.mex.k8s.compute.ComputeStrategy;
+import com.kubrik.mex.k8s.compute.ComputeStrategyApplier;
 import com.kubrik.mex.k8s.compute.nodepool.NodePoolRenderer;
 import com.kubrik.mex.k8s.operator.KubernetesManifests;
 import com.kubrik.mex.k8s.provision.BackupSpec;
@@ -71,6 +73,21 @@ public final class PsmdbCRRenderer {
         Map<String, Object> cr = buildCr(m);
         String crYaml = toYaml(cr);
         docs.add(new KubernetesManifests.Manifest(CRD_KIND, m.deploymentName(), crYaml));
+
+        // v2.8.3 Q2.8.3-A — one global Karpenter NodePool manifest
+        // covering the whole deployment (all replsets, configsvr,
+        // mongos share the same pool).
+        if (m.computeStrategy() instanceof ComputeStrategy.Karpenter k
+                && k.spec().isPresent()) {
+            Map<String, Object> scratchPod = new LinkedHashMap<>();
+            String nodePoolYaml = new com.kubrik.mex.k8s.compute.karpenter.KarpenterRenderer()
+                    .render(k, m.deploymentName(), scratchPod);
+            docs.add(new KubernetesManifests.Manifest(
+                    com.kubrik.mex.k8s.compute.karpenter.KarpenterRenderer.NODEPOOL_KIND,
+                    "mex-" + m.deploymentName().toLowerCase()
+                            .replaceAll("[^a-z0-9-]", "-").replaceAll("-+", "-"),
+                    nodePoolYaml));
+        }
 
         if (m.tls().mode() == TlsSpec.Mode.BYO_SECRET) {
             docs.add(renderByoTlsPlaceholder(m));
@@ -167,7 +184,7 @@ public final class PsmdbCRRenderer {
         if (m.resources().hasDataRequests()) {
             rs.put("resources", resources(m));
         }
-        NodePoolRenderer.mutate(rs, m.computeStrategy(), m.deploymentName() + "-" + name);
+        applyComputeStrategy(rs, m, m.deploymentName() + "-" + name);
         return rs;
     }
 
@@ -182,8 +199,22 @@ public final class PsmdbCRRenderer {
         if (m.resources().hasDataRequests()) {
             rs.put("resources", resources(m));
         }
-        NodePoolRenderer.mutate(rs, m.computeStrategy(), m.deploymentName() + "-rs0");
+        applyComputeStrategy(rs, m, m.deploymentName() + "-rs0");
         return rs;
+    }
+
+    /** Applies either the NodePool or Karpenter pod-scoped mutation.
+     *  The Karpenter NodePool itself is emitted once at render() level;
+     *  here we only need each replset / cfg / mongos pod spec to
+     *  select + tolerate it. */
+    private void applyComputeStrategy(Map<String, Object> podSpec,
+                                       ProvisionModel m, String labelSelectorName) {
+        if (m.computeStrategy() instanceof ComputeStrategy.Karpenter) {
+            com.kubrik.mex.k8s.compute.karpenter.KarpenterRenderer
+                    .mutatePodForKarpenter(podSpec, m.deploymentName(), labelSelectorName);
+        } else {
+            NodePoolRenderer.mutate(podSpec, m.computeStrategy(), labelSelectorName);
+        }
     }
 
     private Map<String, Object> sharding(ProvisionModel m) {
@@ -195,7 +226,7 @@ public final class PsmdbCRRenderer {
         configsvr.put("volumeSpec", volumeSpec(m.storage().configServerSizeGib(), m));
         configsvr.put("affinity", antiAffinity(m));
         if (m.resources().hasDataRequests()) configsvr.put("resources", resources(m));
-        NodePoolRenderer.mutate(configsvr, m.computeStrategy(), m.deploymentName() + "-cfg");
+        applyComputeStrategy(configsvr, m, m.deploymentName() + "-cfg");
         sharding.put("configsvrReplSet", configsvr);
 
         Map<String, Object> mongos = new LinkedHashMap<>();
@@ -207,7 +238,7 @@ public final class PsmdbCRRenderer {
                     "memory", m.resources().mongosMemRequest().get())));
         }
         mongos.put("affinity", antiAffinity(m));
-        NodePoolRenderer.mutate(mongos, m.computeStrategy(), m.deploymentName() + "-mongos");
+        applyComputeStrategy(mongos, m, m.deploymentName() + "-mongos");
         sharding.put("mongos", mongos);
 
         return sharding;
