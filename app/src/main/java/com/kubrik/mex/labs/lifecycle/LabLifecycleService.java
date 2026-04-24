@@ -64,8 +64,11 @@ public final class LabLifecycleService {
     private final EventBus eventBus;
     private final Path dataDir;
     private final String mexVersion;
-    /** Seeding hook — Q2.8.4-E replaces the default no-op. */
-    private SeedStep seedStep = (lab, template) -> { /* no-op */ };
+    /** Seeding hook — Q2.8.4-E replaces the default no-op. Volatile
+     *  because the wiring thread writes via {@link #setSeedStep} and
+     *  apply() reads on virtual threads; without volatile, the reader
+     *  could see a stale value via accidental JVM happens-before. */
+    private volatile SeedStep seedStep = (lab, template) -> { /* no-op */ };
 
     @FunctionalInterface
     public interface SeedStep {

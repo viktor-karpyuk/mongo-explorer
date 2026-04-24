@@ -28,6 +28,11 @@ public class LogsView extends VBox {
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
     /** Tag prepended to ops-audit lines in the buffer. Used by the filter toggle. */
     private static final String AUDIT_TAG = "audit";
+    /** Cap the in-memory tail so a long-running session can't grow
+     *  the LogsView buffer without bound. Each line is ~80 bytes →
+     *  50k lines ≈ 4 MB retained; older lines are FIFO-dropped as
+     *  new ones arrive. */
+    private static final int MAX_BUFFER_LINES = 50_000;
 
     private final TextArea area = new TextArea();
     private final ToggleButton auditOnly = new ToggleButton("Audit only");
@@ -75,7 +80,16 @@ public class LogsView extends VBox {
     private void append(String line) {
         String stamp = FMT.format(LocalTime.now());
         String stamped = stamp + "  " + line;
-        synchronized (buffer) { buffer.add(stamped); }
+        synchronized (buffer) {
+            buffer.add(stamped);
+            // Drop the oldest 10 % once we hit the cap so we amortise
+            // shrink cost instead of paying one-by-one for every new
+            // line past the limit.
+            if (buffer.size() > MAX_BUFFER_LINES) {
+                int drop = MAX_BUFFER_LINES / 10;
+                buffer.subList(0, drop).clear();
+            }
+        }
         Platform.runLater(() -> {
             if (!auditOnly.isSelected() || line.contains("  " + AUDIT_TAG + "  ")) {
                 area.appendText(stamped + "\n");
