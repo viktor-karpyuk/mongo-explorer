@@ -114,6 +114,30 @@ public final class LabK8sLifecycleService {
         return LabK8sApplyResult.ok(labCluster, provisionResult.provisioningId());
     }
 
+    /**
+     * Tear a Lab down at the distro level. Runs the distro CLI's
+     * destroy (removes cluster + all its Mongo state), then the
+     * downstream cascade: LocalK8sDistroService.destroy already
+     * forgets the k8s_clusters row, and SQLite's CASCADE on
+     * rollout_events + the DAO's RESTRICT on live provisioning_records
+     * keep the audit trail coherent.
+     *
+     * <p>Returns a human-friendly summary for the UI status line.</p>
+     */
+    public String destroy(long labClusterRowId) {
+        LocalK8sDistroService.Result r = distroService.destroy(labClusterRowId);
+        return switch (r) {
+            case LocalK8sDistroService.Result.Ok ok ->
+                    "destroyed " + ok.cluster().coordinates();
+            case LocalK8sDistroService.Result.Failed f ->
+                    "destroy failed: " + f.reason();
+            case LocalK8sDistroService.Result.Already a ->
+                    "already destroyed " + a.cluster().coordinates();
+            case LocalK8sDistroService.Result.Created c ->
+                    "destroyed " + c.cluster().coordinates();
+        };
+    }
+
     /* ============================ result types ============================ */
 
     public sealed interface LabK8sApplyResult {

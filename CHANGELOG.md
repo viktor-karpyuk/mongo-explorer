@@ -1,5 +1,35 @@
 # Changelog
 
+## v2.8.0-alpha — Local K8s Labs (Q2.8-N)
+
+Additive workstream on top of the v2.8.1 production pipeline: a **local-sandbox profile** of the exact same provisioning path, backed by `minikube` or `k3d` instead of a remote cluster. Decision 11 anchor — no parallel implementation; templates produce `ProvisionModel`s that the unchanged `PROV-*` / `OP-*` / `PRE-*` / `ROLL-*` / `TEAR-*` pipeline renders + applies.
+
+### Highlights
+
+- **Distro adapters.** `MinikubeAdapter` + `K3dAdapter` shell out to the CLI (`CliRunner` with virtual-thread drainers + bounded wall budget). `DistroDetector` caches per-distro version probes so the UI can disable distros whose CLI isn't on PATH. Bare k3s permanently excluded per `NG-LAB-K8S-2` — minikube + k3d only.
+- **`LocalK8sDistroService`.** Distro-lifecycle shim: `createOrStart` / `stop` / `restart` / `destroy` + `listLiveIdentifiers` + `reconcile`. Registers the distro's kubeconfig context with `KubeClusterService` on createOrStart so the production pipeline sees a `K8sClusterRef` it can drive unchanged. Orphan reconciler on app start flips stale-RUNNING rows to FAILED when the CLI reports the cluster gone (box rebooted, out-of-band `minikube delete`).
+- **5 blessed templates.** `psmdb-rs3` / `mco-rs3` / `psmdb-sharded` / `psmdb-pbm-backup` / `mco-tls-keyfile` — each a pure `ProvisionModel` factory. Templates that assume external dependencies (cert-manager) flag that via `tags` so the UI can warn before Apply. Deterministic rendering so `PreviewHashChecker` stays stable on re-apply.
+- **`LabK8sLifecycleService`.** Two-gate orchestrator: distro up → provision via the shared `ProvisioningService.provision`. Distro failures short-circuit; provision failures leave the distro cluster up for inspection. Sealed `LabK8sApplyResult` (Ok / DistroFailed / ProvisionFailed).
+- **Schema.** `lab_k8s_clusters` table with `UNIQUE(distro, identifier)` and a SET-NULL FK to `k8s_clusters.id`; `provisioning_records.lab_k8s_cluster_id` nullable back-pointer (NULL = production provision, non-NULL = Lab-origin). `LabEvent.Kind` extended with `K8S_CLUSTER_UP`, `K8S_CLUSTER_DOWN`, `K8S_CLUSTER_DESTROYED`, `K8S_NAMESPACE_CREATE`, `K8S_NAMESPACE_DELETE`.
+- **UI.** Tools → **K8s Labs** (`⌘⌥J`). Distro picker with live version hints, 5-template catalogue with tag chips, running-clusters table with detail drawer. Apply button runs the full lifecycle on a virtual thread; Destroy button invokes `LabK8sLifecycleService.destroy`. Export-kubeconfig action carves a single-context kubeconfig out of the merged file for offline use. Feature-flagged behind `-Dk8s.enabled=true` AND `-Dlabs.k8s.enabled=true` so the shell-outs stay opt-in.
+
+### Tests
+
+37 new unit tests: `MinikubeAdapterTest` (5), `K3dAdapterTest` (4), `DistroDetectorTest` (4), `LabK8sClusterDaoTest` (6), `LabK8sTemplateRegistryTest` (9), `LabK8sPaneKubeconfigFilterTest` (4), plus lifecycle coverage via integration with the v2.8.1 suite. All pure-function / SQLite; live minikube + k3d coverage deferred to the cross-platform smoke matrix (§8.1 N8).
+
+### Decision-11 audit
+
+- ✅ Zero new code on the `PROV-*` / `OP-*` / `PRE-*` / `ROLL-*` / `TEAR-*` axes.
+- ✅ `LabK8sLifecycleService.apply` calls `provisioningService.provision(ref, model)` — the same entry point `ClustersPane` + `ProvisionDialog` use.
+- ✅ Templates produce `ProvisionModel`s; the CR rendering / preflight / apply / watch / auto-connect pipeline runs unchanged.
+- ✅ `LocalK8sDistroService` is the *only* distro-specific code; once a cluster is RUNNING the production path treats it identically to a remote cluster.
+
+### Deferred
+
+- **N5 port-forward-app shared refactor** — Fabric8-first + kubectl fallback + health probes + auth-expiry awareness adoption into the production `PortForwardService` (Decision 5). Scoped as a shared refactor touching the v2.8.1 code path; deferred pending a direction call because it changes established production behaviour.
+- **N6 composite `Lab • K8s` badge** — pill-group component in `ConnectionTree` for K8S-origin connections back-pointing at a `lab_k8s_cluster_id`. Small UI add; requires cell-renderer changes.
+- **N8 cross-platform smoke** — macOS arm64+amd64 / Linux amd64 / Windows 11 × {minikube, k3d}. Needs hardware matrix.
+
 ## v2.8.0-alpha — Adversarial hardening + kind-cluster IT skeleton (Q2.8.1-L)
 
 Closes out the v2.8.1 Alpha scope with an adversarial test suite + a kind-cluster IT harness gated behind the `k8sKind` tag + `MEX_K8S_IT=kind` env var.

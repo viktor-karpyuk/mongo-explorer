@@ -166,6 +166,77 @@ public final class LocalK8sDistroService {
         return Result.ok(loadOrThrow(clusterId));
     }
 
+    /**
+     * List identifiers the distro CLI reports as running. Per-row
+     * status probe against every non-DESTROYED {@code lab_k8s_clusters}
+     * entry of the distro. Missing CLI → empty set.
+     */
+    public java.util.Set<String> listLiveIdentifiers(LabK8sDistro distro) {
+        DistroAdapter adapter = detector.adapter(distro);
+        if (detector.detect(distro).isEmpty()) return java.util.Set.of();
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        try {
+            for (LabK8sCluster row : clusterDao.listLive()) {
+                if (row.distro() != distro) continue;
+                try {
+                    CliRunner.CliResult r = adapter.status(
+                            row.identifier(), STATUS_BUDGET_SECONDS);
+                    if (adapter.isRunning(r)) out.add(row.identifier());
+                } catch (IOException ioe) {
+                    log.debug("status probe on {}/{} failed: {}",
+                            distro, row.identifier(), ioe.toString());
+                }
+            }
+        } catch (SQLException sqle) {
+            log.debug("listLiveIdentifiers: {}", sqle.toString());
+        }
+        return out;
+    }
+
+    /**
+     * App-start orphan reconciler. For every RUNNING row, probe the
+     * distro — when the CLI says the cluster is gone (box rebooted,
+     * user ran {@code minikube delete} out-of-band) flip to FAILED
+     * so the UI surfaces a fresh state rather than a stale RUNNING
+     * that can't serve requests. Returns the flipped count.
+     *
+     * <p>Best-effort: a missing CLI means every row of that distro
+     * is left alone.</p>
+     */
+    public int reconcile() {
+        int flipped = 0;
+        java.util.List<LabK8sCluster> live;
+        try {
+            live = clusterDao.listLive();
+        } catch (SQLException sqle) {
+            log.warn("reconcile: listLive failed: {}", sqle.toString());
+            return 0;
+        }
+        for (LabK8sCluster row : live) {
+            if (row.status() != LabK8sClusterStatus.RUNNING) continue;
+            DistroAdapter adapter = detector.adapter(row.distro());
+            if (detector.detect(row.distro()).isEmpty()) continue;
+            boolean running;
+            try {
+                CliRunner.CliResult r = adapter.status(
+                        row.identifier(), STATUS_BUDGET_SECONDS);
+                running = adapter.isRunning(r);
+            } catch (IOException ioe) {
+                log.debug("reconcile: status probe {}/{} failed: {}",
+                        row.distro(), row.identifier(), ioe.toString());
+                continue;
+            }
+            if (!running) {
+                markStatus(row.id(), LabK8sClusterStatus.FAILED,
+                        "destroyed_at", System.currentTimeMillis());
+                flipped++;
+                log.info("reconciler flipped {} to FAILED — CLI reports not running",
+                        row.coordinates());
+            }
+        }
+        return flipped;
+    }
+
     public Result destroy(long clusterId) {
         LabK8sCluster row = loadOrThrow(clusterId);
         DistroAdapter adapter = detector.adapter(row.distro());

@@ -1013,6 +1013,24 @@ public class MainView extends BorderPane {
                 labK8sDetector, labK8sClusterDao, kubeClusterService);
         labK8sLifecycle = new com.kubrik.mex.labs.k8s.lifecycle.LabK8sLifecycleService(
                 labK8sDistroService, kubeProvisioningService);
+        // Orphan reconciliation: any lab_k8s_clusters row that says
+        // RUNNING but the CLI can't find the cluster (box rebooted,
+        // out-of-band minikube delete) flips to FAILED so the UI
+        // stops showing a stale healthy status. Async on a virtual
+        // thread so opening the tab isn't blocked by distro probes.
+        final var reconciler = labK8sDistroService;
+        Thread.ofVirtual().name("k8s-labs-reconcile").start(() -> {
+            try {
+                int flipped = reconciler.reconcile();
+                if (flipped > 0) {
+                    org.slf4j.LoggerFactory.getLogger(MainView.class)
+                            .info("K8s Labs reconciler flipped {} stale row(s) to FAILED", flipped);
+                }
+            } catch (Throwable t) {
+                org.slf4j.LoggerFactory.getLogger(MainView.class)
+                        .warn("K8s Labs reconciler errored: {}", t.toString());
+            }
+        });
     }
 
     private static String mexVersion() {

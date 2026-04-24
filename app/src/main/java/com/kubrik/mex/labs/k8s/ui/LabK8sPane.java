@@ -172,11 +172,14 @@ public final class LabK8sPane extends BorderPane {
 
         Button refreshRows = new Button("Reload");
         refreshRows.setOnAction(e -> reload());
+        Button exportBtn = new Button("Export kubeconfig…");
+        exportBtn.setOnAction(e -> onExportKubeconfig());
+        exportBtn.setAccessibleText("Export the selected cluster's kubeconfig context as a standalone file");
         Button destroyBtn = new Button("Destroy…");
         destroyBtn.setOnAction(e -> onDestroy());
         destroyBtn.getStyleClass().add("danger");
 
-        HBox actions = new HBox(8, refreshRows, destroyBtn);
+        HBox actions = new HBox(8, refreshRows, exportBtn, destroyBtn);
 
         VBox v = new VBox(6, head, runningTable, new Label("Detail"), detailArea, actions);
         VBox.setVgrow(runningTable, Priority.ALWAYS);
@@ -238,6 +241,105 @@ public final class LabK8sPane extends BorderPane {
         });
     }
 
+    private void onExportKubeconfig() {
+        LabK8sCluster sel = runningTable.getSelectionModel().getSelectedItem();
+        if (sel == null) { statusLabel.setText("Pick a cluster first."); return; }
+
+        javafx.stage.FileChooser fc = new javafx.stage.FileChooser();
+        fc.setTitle("Export kubeconfig for " + sel.coordinates());
+        fc.setInitialFileName(sel.distro().cliName() + "-"
+                + sel.identifier() + "-kubeconfig.yaml");
+        fc.getExtensionFilters().add(
+                new javafx.stage.FileChooser.ExtensionFilter("Kubeconfig YAML", "*.yaml", "*.yml"));
+        java.io.File target = fc.showSaveDialog(getScene() == null ? null : getScene().getWindow());
+        if (target == null) return;
+
+        // Read the merged kubeconfig + write only the chosen context
+        // + its cluster + user entries out to a standalone file.
+        // Uses the same YAML parse as KubeConfigLoader so the round-
+        // trip is stable.
+        Thread.startVirtualThread(() -> {
+            try {
+                java.nio.file.Path source = java.nio.file.Path.of(sel.kubeconfigPath());
+                byte[] bytes = java.nio.file.Files.readAllBytes(source);
+                com.fasterxml.jackson.databind.ObjectMapper yaml =
+                        new com.fasterxml.jackson.databind.ObjectMapper(
+                                new com.fasterxml.jackson.dataformat.yaml.YAMLFactory());
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> root = yaml.readValue(bytes, java.util.Map.class);
+
+                // Filter the three arrays to only entries referenced
+                // by the chosen context. The output is a valid
+                // single-context kubeconfig the user can pass with
+                // --kubeconfig=.
+                java.util.Map<String, Object> filtered = filterKubeconfig(root, sel.contextName());
+                byte[] out = yaml.writeValueAsBytes(filtered);
+                java.nio.file.Files.write(target.toPath(), out);
+
+                Platform.runLater(() -> statusLabel.setText(
+                        "Exported kubeconfig for " + sel.coordinates()
+                        + " to " + target.getAbsolutePath() + "."));
+            } catch (Throwable t) {
+                Platform.runLater(() -> statusLabel.setText(
+                        "Export kubeconfig failed: " + t.getMessage()));
+            }
+        });
+    }
+
+    /**
+     * Filter a merged kubeconfig down to the single context plus its
+     * referenced cluster + user entries. Preserves apiVersion + kind;
+     * sets {@code current-context} to the picked context.
+     */
+    @SuppressWarnings("unchecked")
+    static java.util.Map<String, Object> filterKubeconfig(
+            java.util.Map<String, Object> root, String contextName) {
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("apiVersion", root.getOrDefault("apiVersion", "v1"));
+        out.put("kind", root.getOrDefault("kind", "Config"));
+        out.put("current-context", contextName);
+
+        java.util.List<Object> contexts = asList(root.get("contexts"));
+        java.util.List<Object> clusters = asList(root.get("clusters"));
+        java.util.List<Object> users = asList(root.get("users"));
+
+        java.util.Map<String, Object> ctxRow = null;
+        for (Object raw : contexts) {
+            if (raw instanceof java.util.Map<?, ?> r
+                    && contextName.equals(r.get("name"))) {
+                ctxRow = (java.util.Map<String, Object>) raw;
+                break;
+            }
+        }
+        if (ctxRow == null) {
+            throw new IllegalStateException("context " + contextName + " not in kubeconfig");
+        }
+        java.util.Map<String, Object> ctxBody = (java.util.Map<String, Object>)
+                ctxRow.getOrDefault("context", java.util.Map.of());
+        String clusterName = (String) ctxBody.get("cluster");
+        String userName = (String) ctxBody.get("user");
+
+        out.put("contexts", java.util.List.of(ctxRow));
+        out.put("clusters", filterByName(clusters, clusterName));
+        out.put("users", filterByName(users, userName));
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.List<Object> filterByName(java.util.List<Object> rows, String name) {
+        if (name == null) return java.util.List.of();
+        for (Object raw : rows) {
+            if (raw instanceof java.util.Map<?, ?> r && name.equals(r.get("name"))) {
+                return java.util.List.of(raw);
+            }
+        }
+        return java.util.List.of();
+    }
+
+    private static java.util.List<Object> asList(Object o) {
+        return o instanceof java.util.List<?> l ? (java.util.List<Object>) l : java.util.List.of();
+    }
+
     private void onDestroy() {
         LabK8sCluster sel = runningTable.getSelectionModel().getSelectedItem();
         if (sel == null) { statusLabel.setText("Pick a cluster first."); return; }
@@ -256,19 +358,16 @@ public final class LabK8sPane extends BorderPane {
             statusLabel.setText("Destroying " + sel.coordinates() + "…");
             busySpinner.setVisible(true);
             Thread.startVirtualThread(() -> {
-                // Destroy happens via LocalK8sDistroService; the
-                // lifecycle service doesn't currently expose a
-                // destroy — call through to the distro service
-                // indirectly via the DAO's row id.
-                //
-                // We route through LifecycleService.destroyDistro()
-                // once the method lands; for now, the Clusters pane
-                // provides the teardown path for the k8s_cluster
-                // ref. This button just flips the LabK8sCluster row.
+                String summary;
+                try {
+                    summary = lifecycle.destroy(sel.id());
+                } catch (Throwable t) {
+                    summary = "destroy errored: " + t.getMessage();
+                }
+                final String msg = summary;
                 Platform.runLater(() -> {
                     busySpinner.setVisible(false);
-                    statusLabel.setText("Destroy invoked — see the Clusters pane "
-                            + "for cluster-level teardown.");
+                    statusLabel.setText(msg);
                     reload();
                 });
             });
