@@ -2,6 +2,12 @@ package com.kubrik.mex.k8s.ui;
 
 import com.kubrik.mex.events.EventBus;
 import com.kubrik.mex.k8s.apply.ApplyOrchestrator;
+import com.kubrik.mex.k8s.compute.ComputeStrategy;
+import com.kubrik.mex.k8s.compute.ComputeStrategyRegistry;
+import com.kubrik.mex.k8s.compute.LabelPair;
+import com.kubrik.mex.k8s.compute.SpreadScope;
+import com.kubrik.mex.k8s.compute.StrategyId;
+import com.kubrik.mex.k8s.compute.Toleration;
 import com.kubrik.mex.k8s.events.ProvisionEvent;
 import com.kubrik.mex.k8s.model.K8sClusterRef;
 import com.kubrik.mex.k8s.preflight.PreflightResult;
@@ -22,13 +28,18 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.control.ToggleGroup;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import java.time.Instant;
 
@@ -61,6 +72,22 @@ public final class ProvisionDialog extends Dialog<Void> {
     private final TextField deploymentNameField = new TextField("dev-rs");
     private final TextField mongoVersionField = new TextField("7.0");
 
+    // v2.8.2 Q2.8.2-D — Dedicated compute controls. Rendered as a
+    // four-radio group per milestone §1.3 with Karpenter + managed-
+    // pool greyed out via their registry-lock labels; Node-pool opens
+    // a small label + toleration form when selected.
+    private final ToggleGroup strategyGroup = new ToggleGroup();
+    private final RadioButton strategyNoneRadio = new RadioButton("None / Cluster default scheduler");
+    private final RadioButton strategyNodePoolRadio = new RadioButton("Use existing node pool");
+    private final RadioButton strategyKarpenterRadio = new RadioButton("Karpenter-provisioned  (Available in v2.8.3)");
+    private final RadioButton strategyManagedRadio = new RadioButton("Mongo Explorer creates a managed pool  (Available in v2.8.4)");
+    private final TextField poolLabelKeyField = new TextField("workload");
+    private final TextField poolLabelValueField = new TextField("mongodb");
+    private final TextField poolTaintKeyField = new TextField("dedicated");
+    private final TextField poolTaintValueField = new TextField("mongo");
+    private final ComboBox<Toleration.Effect> poolTaintEffectBox = new ComboBox<>();
+    private final VBox nodePoolForm = new VBox(6);
+
     private final TextArea preflightArea = new TextArea();
     private final TextArea logArea = new TextArea();
     private final Label statusLabel = new Label("Fill the form, then click Pre-flight.");
@@ -84,6 +111,8 @@ public final class ProvisionDialog extends Dialog<Void> {
 
         profileBox.getItems().setAll(Profile.values());
         profileBox.getSelectionModel().select(Profile.DEV_TEST);
+
+        wireStrategyGroup();
         operatorBox.getItems().setAll(OperatorId.values());
         operatorBox.getSelectionModel().select(OperatorId.MCO);
         refreshTopologyChoices();
@@ -136,6 +165,32 @@ public final class ProvisionDialog extends Dialog<Void> {
         });
     }
 
+    private void wireStrategyGroup() {
+        ComputeStrategyRegistry reg = ComputeStrategyRegistry.current();
+        strategyNoneRadio.setUserData(StrategyId.NONE);
+        strategyNodePoolRadio.setUserData(StrategyId.NODE_POOL);
+        strategyKarpenterRadio.setUserData(StrategyId.KARPENTER);
+        strategyManagedRadio.setUserData(StrategyId.MANAGED_POOL);
+        for (RadioButton rb : List.of(strategyNoneRadio, strategyNodePoolRadio,
+                strategyKarpenterRadio, strategyManagedRadio)) {
+            rb.setToggleGroup(strategyGroup);
+            if (!reg.isShipped((StrategyId) rb.getUserData())) rb.setDisable(true);
+        }
+        strategyNoneRadio.setSelected(true);
+        strategyGroup.selectedToggleProperty().addListener((o, a, b) -> {
+            boolean showForm = b != null && b.getUserData() == StrategyId.NODE_POOL;
+            nodePoolForm.setVisible(showForm);
+            nodePoolForm.setManaged(showForm);
+            invalidatePreflight();
+        });
+        poolLabelKeyField.textProperty().addListener((o, a, b) -> invalidatePreflight());
+        poolLabelValueField.textProperty().addListener((o, a, b) -> invalidatePreflight());
+        poolTaintKeyField.textProperty().addListener((o, a, b) -> invalidatePreflight());
+        poolTaintValueField.textProperty().addListener((o, a, b) -> invalidatePreflight());
+        poolTaintEffectBox.getItems().setAll(Toleration.Effect.values());
+        poolTaintEffectBox.getSelectionModel().select(Toleration.Effect.NO_SCHEDULE);
+    }
+
     private Region buildContent() {
         GridPane form = new GridPane();
         form.setHgap(10);
@@ -149,6 +204,33 @@ public final class ProvisionDialog extends Dialog<Void> {
         form.add(new Label("Name"), 0, row);        form.add(deploymentNameField, 1, row++);
         form.add(new Label("Mongo version"), 0, row); form.add(mongoVersionField, 1, row++);
 
+        Label strategyHead = new Label("Dedicated compute");
+        strategyHead.setStyle("-fx-font-weight: 600; -fx-font-size: 11px;");
+        Label strategyHint = new Label(
+                "Prod's topology spread already prevents two RS members from sharing a node. "
+              + "Pick \"Use existing node pool\" to additionally pin Mongo to a pre-labelled "
+              + "pool where nothing else schedules.");
+        strategyHint.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 10px;");
+        strategyHint.setWrapText(true);
+
+        GridPane npGrid = new GridPane();
+        npGrid.setHgap(8); npGrid.setVgap(4);
+        npGrid.setPadding(new Insets(4, 0, 0, 24));
+        int npRow = 0;
+        npGrid.add(new Label("Label key"), 0, npRow);   npGrid.add(poolLabelKeyField, 1, npRow);
+        npGrid.add(new Label("Label value"), 2, npRow); npGrid.add(poolLabelValueField, 3, npRow++);
+        npGrid.add(new Label("Taint key"), 0, npRow);   npGrid.add(poolTaintKeyField, 1, npRow);
+        npGrid.add(new Label("Taint value"), 2, npRow); npGrid.add(poolTaintValueField, 3, npRow++);
+        npGrid.add(new Label("Taint effect"), 0, npRow); npGrid.add(poolTaintEffectBox, 1, npRow++);
+        nodePoolForm.getChildren().setAll(npGrid);
+        nodePoolForm.setVisible(false);
+        nodePoolForm.setManaged(false);
+
+        VBox strategyBlock = new VBox(4, strategyHead, strategyHint,
+                strategyNoneRadio, strategyNodePoolRadio, nodePoolForm,
+                strategyKarpenterRadio, strategyManagedRadio);
+        strategyBlock.setPadding(new Insets(0, 0, 10, 0));
+
         Label pfHead = new Label("Pre-flight");
         pfHead.setStyle("-fx-font-weight: 600; -fx-font-size: 11px;");
         Label logHead = new Label("Rollout log");
@@ -157,7 +239,7 @@ public final class ProvisionDialog extends Dialog<Void> {
         HBox actions = new HBox(8, preflightBtn, applyBtn, spinner, statusLabel);
         actions.setPadding(new Insets(8, 0, 0, 0));
 
-        VBox v = new VBox(6, form, pfHead, preflightArea, logHead, logArea, actions);
+        VBox v = new VBox(6, form, strategyBlock, pfHead, preflightArea, logHead, logArea, actions);
         VBox.setVgrow(logArea, Priority.ALWAYS);
         return v;
     }
@@ -290,10 +372,31 @@ public final class ProvisionDialog extends Dialog<Void> {
                 deploymentNameField.getText().trim())
                 .withOperator(operatorBox.getValue())
                 .withTopology(topologyBox.getValue())
-                .withMongoVersion(mongoVersionField.getText().trim());
+                .withMongoVersion(mongoVersionField.getText().trim())
+                .withComputeStrategy(buildComputeStrategy());
         // Run through the enforcer so Prod locks are applied before
         // pre-flight sees the model.
         return new ProfileEnforcer().switchProfile(base, profileBox.getValue()).model();
+    }
+
+    private ComputeStrategy buildComputeStrategy() {
+        Object picked = strategyGroup.getSelectedToggle() == null
+                ? StrategyId.NONE
+                : strategyGroup.getSelectedToggle().getUserData();
+        if (picked != StrategyId.NODE_POOL) return ComputeStrategy.NONE;
+        String labelKey = poolLabelKeyField.getText().trim();
+        String labelValue = poolLabelValueField.getText().trim();
+        if (labelKey.isEmpty() || labelValue.isEmpty()) return ComputeStrategy.NONE;
+        List<LabelPair> selector = List.of(new LabelPair(labelKey, labelValue));
+        List<Toleration> tolerations = new ArrayList<>();
+        String tKey = poolTaintKeyField.getText().trim();
+        if (!tKey.isEmpty()) {
+            String tVal = poolTaintValueField.getText().trim();
+            Toleration.Effect effect = poolTaintEffectBox.getValue() == null
+                    ? Toleration.Effect.NO_SCHEDULE : poolTaintEffectBox.getValue();
+            tolerations.add(new Toleration(tKey, tVal.isEmpty() ? null : tVal, effect));
+        }
+        return new ComputeStrategy.NodePool(selector, tolerations, SpreadScope.WITHIN_POOL);
     }
 
     private static String pad(String s, int width) {

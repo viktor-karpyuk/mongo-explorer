@@ -79,6 +79,23 @@ public final class ProvisioningRecordDao {
         }
     }
 
+    /** v2.8.2 Q2.8.2-A — stamp the {@code compute_strategy_json} column
+     *  on an applying row. Called right after {@link #insertApplying}
+     *  so the audit drawer reflects the user's choice even when the
+     *  rollout crashes later. Pass {@code null} for "v2.8.0 default
+     *  scheduler" (no audit row touch). */
+    public void setComputeStrategy(long rowId, String json) throws SQLException {
+        if (json == null) return;
+        synchronized (database.writeLock()) {
+            try (PreparedStatement ps = database.connection().prepareStatement(
+                    "UPDATE provisioning_records SET compute_strategy_json = ? WHERE id = ?")) {
+                ps.setString(1, json);
+                ps.setLong(2, rowId);
+                ps.executeUpdate();
+            }
+        }
+    }
+
     public void attachConnection(long rowId, String connectionId) throws SQLException {
         synchronized (database.writeLock()) {
             try (PreparedStatement ps = database.connection().prepareStatement(

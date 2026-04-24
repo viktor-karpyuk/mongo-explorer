@@ -118,6 +118,17 @@ public final class ApplyOrchestrator {
                     model.mongoVersion(), model.topology().name(),
                     model.profile().name(), manifests.crYaml(), sha256,
                     model.profile() == com.kubrik.mex.k8s.provision.Profile.PROD);
+            // v2.8.2 Q2.8.2-A — audit the compute strategy alongside
+            // the CR hash + deletion-protection bit. Best-effort; the
+            // row still writes if this UPDATE fails.
+            try {
+                recordDao.setComputeStrategy(rowId,
+                        com.kubrik.mex.k8s.compute.ComputeStrategyJson.toJson(
+                                model.computeStrategy()));
+            } catch (Exception stratEx) {
+                log.debug("audit compute strategy failed for row {}: {}",
+                        rowId, stratEx.toString());
+            }
         } catch (Exception e) {
             throw new IOException("insert provisioning row failed: " + e.getMessage(), e);
         }
