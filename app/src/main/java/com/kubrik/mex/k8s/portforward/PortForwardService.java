@@ -390,6 +390,13 @@ public final class PortForwardService implements AutoCloseable {
         }
     }
 
+    /** Factory for the client-java-backed opener. Used by
+     *  {@link ChainedPortForwardOpener} to compose a multi-backend
+     *  chain without reaching into the package-private default. */
+    public static PortForwardOpener newDefaultOpener() {
+        return new DefaultPortForwardOpener();
+    }
+
     private static final class DefaultPortForwardOpener implements PortForwardOpener {
         @Override
         public StreamPair open(ApiClient client, String namespace, String pod, int remotePort)
