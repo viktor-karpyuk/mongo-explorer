@@ -340,7 +340,14 @@ public class MainView extends BorderPane {
                 item("Clusters",
                         new KeyCodeCombination(KeyCode.K,
                                 KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
-                        this::openClustersTab));
+                        this::openClustersTab),
+                // v2.8.1 Q2.8-N — Local K8s Labs tab. Requires k8s.enabled
+                // (reuses the production pipeline) + labs.k8s.enabled to
+                // explicitly opt in to the distro-lifecycle flow.
+                item("K8s Labs",
+                        new KeyCodeCombination(KeyCode.J,
+                                KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
+                        this::openK8sLabsTab));
 
         // ----- Help -----
         Menu help = new Menu("Help");
@@ -569,6 +576,15 @@ public class MainView extends BorderPane {
     private com.kubrik.mex.k8s.rollout.RolloutEventDao kubeRolloutEventDao;
     private com.kubrik.mex.k8s.provision.ProvisioningService kubeProvisioningService;
     private com.kubrik.mex.k8s.teardown.TearDownService kubeTearDownService;
+    // v2.8.1 Q2.8-N — Local K8s Labs: distro-lifecycle + template
+    // catalogue layer on top of the production provisioning path.
+    private Tab k8sLabsTab;
+    private com.kubrik.mex.labs.k8s.ui.LabK8sPane k8sLabsPane;
+    private com.kubrik.mex.labs.k8s.distro.DistroDetector labK8sDetector;
+    private com.kubrik.mex.labs.k8s.store.LabK8sClusterDao labK8sClusterDao;
+    private com.kubrik.mex.labs.k8s.distro.LocalK8sDistroService labK8sDistroService;
+    private com.kubrik.mex.labs.k8s.templates.LabK8sTemplateRegistry labK8sRegistry;
+    private com.kubrik.mex.labs.k8s.lifecycle.LabK8sLifecycleService labK8sLifecycle;
     private com.kubrik.mex.security.baseline.SecurityBaselineDao securityBaselineDao;
     private com.kubrik.mex.security.drift.DriftAckDao driftAckDao;
     private com.kubrik.mex.security.cis.CisSuppressionsDao cisSuppressionsDao;
@@ -940,6 +956,63 @@ public class MainView extends BorderPane {
         String v = System.getProperty("k8s.enabled");
         return v != null && (v.equalsIgnoreCase("true") || v.equals("1")
                 || v.equalsIgnoreCase("yes"));
+    }
+
+    private static boolean isLabsK8sEnabled() {
+        String v = System.getProperty("labs.k8s.enabled");
+        return v != null && (v.equalsIgnoreCase("true") || v.equals("1")
+                || v.equalsIgnoreCase("yes"));
+    }
+
+    /**
+     * v2.8.1 Q2.8-N — Open the Local K8s Labs tab. Requires both
+     * {@code k8s.enabled} (the production pipeline) and
+     * {@code labs.k8s.enabled} (the distro-lifecycle opt-in); a
+     * disabled flag renders an explanation pane instead so the menu
+     * entry is discoverable without accidentally wiring the CLI
+     * shell-outs into a production environment.
+     */
+    private void openK8sLabsTab() {
+        if (k8sLabsTab != null && tabs.getTabs().contains(k8sLabsTab)) {
+            tabs.getSelectionModel().select(k8sLabsTab);
+            return;
+        }
+        if (!isK8sEnabled() || !isLabsK8sEnabled()) {
+            Label disabled = new Label(
+                    "Local K8s Labs requires BOTH -Dk8s.enabled=true "
+                    + "(production pipeline) AND -Dlabs.k8s.enabled=true "
+                    + "(distro-lifecycle opt-in). Launch with both "
+                    + "system properties set to attach a local cluster.");
+            disabled.setWrapText(true);
+            disabled.setPadding(new Insets(24));
+            k8sLabsTab = new Tab("K8s Labs", disabled);
+            k8sLabsTab.setOnClosed(e -> k8sLabsTab = null);
+            tabs.getTabs().add(k8sLabsTab);
+            tabs.getSelectionModel().select(k8sLabsTab);
+            return;
+        }
+        ensureK8sWiring();        // foundation + provisioning services
+        ensureLabsK8sWiring();    // distro detector + registry + DAO + lifecycle
+        k8sLabsPane = new com.kubrik.mex.labs.k8s.ui.LabK8sPane(
+                labK8sDetector, labK8sRegistry, labK8sClusterDao, labK8sLifecycle);
+        k8sLabsTab = new Tab("K8s Labs", k8sLabsPane);
+        k8sLabsTab.setOnClosed(e -> {
+            k8sLabsTab = null;
+            k8sLabsPane = null;
+        });
+        tabs.getTabs().add(k8sLabsTab);
+        tabs.getSelectionModel().select(k8sLabsTab);
+    }
+
+    private void ensureLabsK8sWiring() {
+        if (labK8sLifecycle != null) return;
+        labK8sDetector = new com.kubrik.mex.labs.k8s.distro.DistroDetector();
+        labK8sClusterDao = new com.kubrik.mex.labs.k8s.store.LabK8sClusterDao(database);
+        labK8sRegistry = new com.kubrik.mex.labs.k8s.templates.LabK8sTemplateRegistry();
+        labK8sDistroService = new com.kubrik.mex.labs.k8s.distro.LocalK8sDistroService(
+                labK8sDetector, labK8sClusterDao, kubeClusterService);
+        labK8sLifecycle = new com.kubrik.mex.labs.k8s.lifecycle.LabK8sLifecycleService(
+                labK8sDistroService, kubeProvisioningService);
     }
 
     private static String mexVersion() {
