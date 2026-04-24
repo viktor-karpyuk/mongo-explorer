@@ -931,6 +931,12 @@ public class Database implements AutoCloseable {
             // DAO carries an app-level guard.
             try { st.execute("ALTER TABLE provisioning_records ADD COLUMN lab_k8s_cluster_id INTEGER"); }
             catch (SQLException ignored) { /* column already present */ }
+
+            // v2.8.2 Q2.8.2-A — Dedicated compute strategy JSON blob.
+            // NULL means "v2.8.0 default scheduler"; non-NULL values
+            // are shaped per ComputeStrategyJson.toJson.
+            try { st.execute("ALTER TABLE provisioning_records ADD COLUMN compute_strategy_json TEXT"); }
+            catch (SQLException ignored) { /* column already present */ }
         }
     }
 
