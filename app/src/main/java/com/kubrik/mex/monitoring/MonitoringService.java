@@ -75,7 +75,7 @@ public final class MonitoringService implements AutoCloseable {
         this.database = database;
         this.eventBus = eventBus;
         this.profileDao = new MonitoringProfileDao(database.connection());
-        this.metricStore = new MetricStore(database.connection());
+        this.metricStore = new MetricStore(database.connection(), database.writeLock());
         this.scheduler = new SamplerScheduler(this::onSamples, this::onSamplerError);
         RollupDao rollupDao = new RollupDao(database.connection());
         this.rollupWorker = new RollupWorker(rollupDao);
@@ -190,7 +190,7 @@ public final class MonitoringService implements AutoCloseable {
      *  {@link ProfileSampleDao}; callers pass it to {@link #registerSampler(Sampler)}. */
     public ProfilerSampler newProfilerSampler(String connectionId, com.kubrik.mex.core.MongoService mongo) {
         return new ProfilerSampler(connectionId, mongo,
-                new ProfileSampleDao(database.connection()),
+                new ProfileSampleDao(database.connection(), database.writeLock()),
                 eventBus,
                 mongo::listDatabaseNames);
     }

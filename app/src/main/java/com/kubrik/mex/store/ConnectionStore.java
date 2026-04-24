@@ -77,6 +77,7 @@ public class ConnectionStore {
                     app_name=excluded.app_name, manual_uri_options=excluded.manual_uri_options,
                     updated_at=excluded.updated_at
                 """;
+        synchronized (db.writeLock()) {
         try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
             int i = 1;
             ps.setString(i++, id);
@@ -122,6 +123,7 @@ public class ConnectionStore {
         } catch (SQLException e) {
             throw new RuntimeException(e);
         }
+        }  // synchronized (db.writeLock())
         return get(id);
     }
 
@@ -217,24 +219,32 @@ public class ConnectionStore {
         // reference the connection id (migrations, monitoring) are expected
         // to cope with stale rows pointing at a removed id — none of them
         // treats the id as a foreign key.
-        java.sql.Connection c = db.connection();
-        try {
-            boolean prevAuto = c.getAutoCommit();
-            c.setAutoCommit(false);
+        //
+        // The whole block is held under db.writeLock() because
+        // setAutoCommit(false) mutates the SHARED JDBC connection; without
+        // the lock, a concurrent monitoring-sampler write would be pulled
+        // into this transaction (its commit would commit our deletes, or
+        // its rollback would roll them back).
+        synchronized (db.writeLock()) {
+            java.sql.Connection c = db.connection();
             try {
-                deleteFrom(c, "ops_audit", id);
-                deleteFrom(c, "topology_snapshots", id);
-                deleteFrom(c, "role_cache", id);
-                deleteFrom(c, "connections", id);
-                c.commit();
-            } catch (SQLException inner) {
-                try { c.rollback(); } catch (SQLException ignored) {}
-                throw inner;
-            } finally {
-                c.setAutoCommit(prevAuto);
+                boolean prevAuto = c.getAutoCommit();
+                c.setAutoCommit(false);
+                try {
+                    deleteFrom(c, "ops_audit", id);
+                    deleteFrom(c, "topology_snapshots", id);
+                    deleteFrom(c, "role_cache", id);
+                    deleteFrom(c, "connections", id);
+                    c.commit();
+                } catch (SQLException inner) {
+                    try { c.rollback(); } catch (SQLException ignored) {}
+                    throw inner;
+                } finally {
+                    c.setAutoCommit(prevAuto);
+                }
+            } catch (SQLException e) {
+                throw new RuntimeException(e);
             }
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
         }
     }
 

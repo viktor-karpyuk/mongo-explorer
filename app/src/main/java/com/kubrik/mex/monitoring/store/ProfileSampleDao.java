@@ -29,32 +29,48 @@ public final class ProfileSampleDao {
             """;
 
     private final Connection conn;
+    private final Object writeLock;
 
-    public ProfileSampleDao(Connection conn) { this.conn = conn; }
+    /**
+     * @deprecated prefer the two-arg form; the single-arg falls back
+     *   to a private monitor that doesn't prevent concurrent writers
+     *   on other DAOs from racing our setAutoCommit(false) toggle.
+     */
+    @Deprecated
+    public ProfileSampleDao(Connection conn) { this(conn, new Object()); }
+
+    public ProfileSampleDao(Connection conn, Object writeLock) {
+        this.conn = conn;
+        this.writeLock = writeLock;
+    }
 
     public void insert(ProfileSampleRecord r) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
-            bind(ps, r);
-            ps.executeUpdate();
+        synchronized (writeLock) {
+            try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+                bind(ps, r);
+                ps.executeUpdate();
+            }
         }
     }
 
     public void insertBatch(List<ProfileSampleRecord> records) throws SQLException {
         if (records.isEmpty()) return;
-        boolean prevAuto = conn.getAutoCommit();
-        conn.setAutoCommit(false);
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
-            for (ProfileSampleRecord r : records) {
-                bind(ps, r);
-                ps.addBatch();
+        synchronized (writeLock) {
+            boolean prevAuto = conn.getAutoCommit();
+            conn.setAutoCommit(false);
+            try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+                for (ProfileSampleRecord r : records) {
+                    bind(ps, r);
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+                conn.commit();
+            } catch (SQLException e) {
+                try { conn.rollback(); } catch (SQLException ignored) {}
+                throw e;
+            } finally {
+                conn.setAutoCommit(prevAuto);
             }
-            ps.executeBatch();
-            conn.commit();
-        } catch (SQLException e) {
-            try { conn.rollback(); } catch (SQLException ignored) {}
-            throw e;
-        } finally {
-            conn.setAutoCommit(prevAuto);
         }
     }
 

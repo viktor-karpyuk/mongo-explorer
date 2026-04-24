@@ -57,7 +57,17 @@ public final class MetricStore implements AutoCloseable {
     private volatile boolean running = true;
 
     public MetricStore(Connection connection) {
-        this.dao = new RawSampleDao(connection);
+        this(connection, new Object());
+    }
+
+    /**
+     * Preferred constructor — pairs the shared connection with the
+     * database's {@code writeLock()} object so {@link RawSampleDao}
+     * serialises its {@code setAutoCommit(false)} toggle against
+     * every other writer in the app.
+     */
+    public MetricStore(Connection connection, Object writeLock) {
+        this.dao = new RawSampleDao(connection, writeLock);
         writer.submit(this::writeLoop);
     }
 

@@ -37,33 +37,54 @@ public final class RawSampleDao {
             """;
 
     private final Connection conn;
+    private final Object writeLock;
 
-    public RawSampleDao(Connection conn) { this.conn = conn; }
+    /**
+     * @deprecated kept for call sites that still inject the raw connection;
+     *   prefer the two-arg constructor so concurrent writers don't
+     *   step on each other's setAutoCommit(false) toggles on the
+     *   shared JDBC connection. The single-arg form synchronizes on
+     *   the DAO instance itself as a best-effort.
+     */
+    @Deprecated
+    public RawSampleDao(Connection conn) { this(conn, new Object()); }
 
-    /** Insert one batch transactionally. */
+    public RawSampleDao(Connection conn, Object writeLock) {
+        this.conn = conn;
+        this.writeLock = writeLock;
+    }
+
+    /**
+     * Insert one batch transactionally. Holds the {@code writeLock}
+     * throughout the txn so no concurrent writer hits a
+     * {@code setAutoCommit(false)} window on the shared connection;
+     * without this another DAO's commit would commit ours too.
+     */
     public int insertBatch(List<MetricSample> samples) throws SQLException {
         if (samples.isEmpty()) return 0;
-        boolean prevAuto = conn.getAutoCommit();
-        conn.setAutoCommit(false);
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
-            for (MetricSample s : samples) {
-                ps.setString(1, s.connectionId());
-                ps.setString(2, s.metric().metricName());
-                ps.setString(3, s.labels().toJson());
-                ps.setLong  (4, s.tsMs());
-                ps.setDouble(5, s.value());
-                ps.addBatch();
+        synchronized (writeLock) {
+            boolean prevAuto = conn.getAutoCommit();
+            conn.setAutoCommit(false);
+            try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+                for (MetricSample s : samples) {
+                    ps.setString(1, s.connectionId());
+                    ps.setString(2, s.metric().metricName());
+                    ps.setString(3, s.labels().toJson());
+                    ps.setLong  (4, s.tsMs());
+                    ps.setDouble(5, s.value());
+                    ps.addBatch();
+                }
+                int[] rc = ps.executeBatch();
+                conn.commit();
+                int total = 0;
+                for (int r : rc) if (r > 0) total += r;
+                return total;
+            } catch (SQLException e) {
+                try { conn.rollback(); } catch (SQLException ignored) {}
+                throw e;
+            } finally {
+                conn.setAutoCommit(prevAuto);
             }
-            int[] rc = ps.executeBatch();
-            conn.commit();
-            int total = 0;
-            for (int r : rc) if (r > 0) total += r;
-            return total;
-        } catch (SQLException e) {
-            try { conn.rollback(); } catch (SQLException ignored) {}
-            throw e;
-        } finally {
-            conn.setAutoCommit(prevAuto);
         }
     }
 
