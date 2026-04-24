@@ -55,7 +55,7 @@ public final class PreflightEngine {
     }
 
     public static List<PreflightCheck> defaultChecks() {
-        return List.of(
+        List<PreflightCheck> all = new java.util.ArrayList<>(List.of(
                 new OperatorInstalledCheck(),
                 new ClusterVersionCheck(),
                 new NamespaceCheck(),
@@ -63,7 +63,12 @@ public final class PreflightEngine {
                 new StorageClassCheck(),
                 new NodeFeasibilityCheck(),
                 new CertManagerCheck(),
-                new QuotaCheck());
+                new QuotaCheck()));
+        // v2.8.2 Q2.8.2-C — node-pool targeting checks. Each is
+        // gated by scope() so a ComputeStrategy.None model skips
+        // them quietly.
+        all.addAll(com.kubrik.mex.k8s.compute.nodepool.NodePoolPreflightChecks.all());
+        return List.copyOf(all);
     }
 
     public PreflightSummary run(K8sClusterRef clusterRef, ProvisionModel model) {
