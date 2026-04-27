@@ -134,17 +134,26 @@ public final class AksAdapter implements ManagedPoolAdapter {
     private TokenCredential credentialFor(CloudCredential cred) {
         if (cred.authMode() == CloudCredential.AuthMode.SERVICE_PRINCIPAL) {
             String body = secrets.read(cred.keychainRef()).orElse("");
-            String[] parts = body.split(":", 3);
-            if (parts.length != 3) {
+            // Azure client secrets can legitimately contain ':' (rare but
+            // legal in newer secret formats). Split at the first two
+            // colons by hand so the third segment keeps any trailing
+            // colons intact.
+            int firstColon = body.indexOf(':');
+            int secondColon = firstColon < 0 ? -1 : body.indexOf(':', firstColon + 1);
+            if (firstColon <= 0 || secondColon <= firstColon + 1
+                    || secondColon >= body.length() - 1) {
                 log.warn("SERVICE_PRINCIPAL credential {} payload not "
                         + "tenantId:clientId:secret — falling back to default chain",
                         cred.displayName());
                 return new DefaultAzureCredentialBuilder().build();
             }
+            String tenantId = body.substring(0, firstColon);
+            String clientId = body.substring(firstColon + 1, secondColon);
+            String secret = body.substring(secondColon + 1);
             return new ClientSecretCredentialBuilder()
-                    .tenantId(parts[0])
-                    .clientId(parts[1])
-                    .clientSecret(parts[2])
+                    .tenantId(tenantId)
+                    .clientId(clientId)
+                    .clientSecret(secret)
                     .build();
         }
         return new DefaultAzureCredentialBuilder().build();

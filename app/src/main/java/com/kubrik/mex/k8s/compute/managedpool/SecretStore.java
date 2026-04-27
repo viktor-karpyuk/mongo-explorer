@@ -29,11 +29,14 @@ public interface SecretStore {
     void delete(String ref);
 
     /** Build a fresh ref for a credential. The format is opaque to
-     *  callers — they treat it as a UUID-shaped opaque token. */
+     *  callers — they treat it as a UUID-shaped opaque token. The
+     *  full UUID (128 bits) is appended so the birthday collision
+     *  window is astronomical even for organisations with millions
+     *  of credentials. */
     static String newRef(CloudProvider provider, String displayName) {
         String safe = displayName.toLowerCase().replaceAll("[^a-z0-9]", "-")
                 .replaceAll("-+", "-");
         return "mex/" + provider.wireValue().toLowerCase() + "/" + safe + "-"
-                + java.util.UUID.randomUUID().toString().substring(0, 8);
+                + java.util.UUID.randomUUID();
     }
 }

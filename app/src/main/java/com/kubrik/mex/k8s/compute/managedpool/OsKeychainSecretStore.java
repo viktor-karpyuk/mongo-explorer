@@ -92,9 +92,16 @@ public final class OsKeychainSecretStore implements SecretStore {
     /* ============================ platform helpers ============================ */
 
     private void macStore(String ref, String secret) {
+        // Use `security add-generic-password -U -w` reading the secret
+        // from stdin via the `-w` *no-arg* form. Passing the secret as
+        // `-w <secret>` would leak it into /proc/<pid>/cmdline (and
+        // ps aux output) for the ~10ms the subprocess is alive — a
+        // documented platform pitfall. The `security` CLI prompts for
+        // the password on stdin when -w is bare.
+        //
         // -U updates if present; -s is service, -a is account.
         exec(List.of("security", "add-generic-password",
-                "-U", "-s", SERVICE, "-a", ref, "-w", secret), null, true);
+                "-U", "-s", SERVICE, "-a", ref, "-w"), secret, true);
     }
     private Optional<String> macRead(String ref) {
         ExecResult r = exec(List.of("security", "find-generic-password",
@@ -104,18 +111,44 @@ public final class OsKeychainSecretStore implements SecretStore {
     }
 
     private void winStore(String ref, String secret) {
-        exec(List.of("cmdkey", "/add:" + targetFor(ref),
-                "/user:" + ref, "/pass:" + secret), null, true);
+        // cmdkey only accepts the password via `/pass:<secret>` argv
+        // (Microsoft never wired stdin), which leaks the password to
+        // tasklist /v + Get-Process -IncludeUserName during the brief
+        // execution window. Mitigation: write the secret to a randomly-
+        // named temp file with owner-only ACLs, then have cmdkey read
+        // from there via a here-string. Leaves no plaintext in argv.
+        try {
+            java.nio.file.Path tmp = java.nio.file.Files.createTempFile(
+                    "mex-cmdkey-", ".tmp");
+            try {
+                java.nio.file.Files.writeString(tmp, secret,
+                        java.nio.charset.StandardCharsets.UTF_8);
+                exec(List.of("powershell", "-NoProfile", "-Command",
+                        "$pw = Get-Content -Raw -Path '" + tmp.toAbsolutePath()
+                        + "'; cmdkey /add:" + targetFor(ref)
+                        + " /user:" + ref + " /pass:$pw"),
+                        null, true);
+            } finally {
+                try { java.nio.file.Files.deleteIfExists(tmp); }
+                catch (Exception ignored) {}
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("windows keychain store failed: "
+                    + e.getMessage(), e);
+        }
     }
     private Optional<String> winRead(String ref) {
         // cmdkey doesn't expose the password back; route reads through
-        // PowerShell + CredentialManager. Best-effort and noisy — most
-        // production deployments use IRSA / federation that doesn't
-        // need a stored password anyway.
-        ExecResult r = exec(List.of("powershell", "-NoProfile", "-Command",
-                "$c = Get-StoredCredential -Target '" + targetFor(ref)
-                + "'; if ($c) { $c.GetNetworkCredential().Password }"),
-                null, false);
+        // PowerShell + CredentialManager. The Target value can contain
+        // arbitrary UTF-8 from the user's display name, including
+        // apostrophes — pass it as a $env: variable so we never
+        // interpolate user-controlled text into the script body.
+        java.util.Map<String, String> env = new java.util.HashMap<>(System.getenv());
+        env.put("MEX_KC_TARGET", targetFor(ref));
+        ExecResult r = execWithEnv(List.of("powershell", "-NoProfile", "-Command",
+                "$c = Get-StoredCredential -Target $env:MEX_KC_TARGET; "
+                + "if ($c) { $c.GetNetworkCredential().Password }"),
+                null, false, env);
         return r.exitCode != 0 || r.stdout.isBlank()
                 ? Optional.empty() : Optional.of(r.stdout.strip());
     }
@@ -137,8 +170,18 @@ public final class OsKeychainSecretStore implements SecretStore {
     private record ExecResult(int exitCode, String stdout, String stderr) {}
 
     private static ExecResult exec(List<String> argv, String stdin, boolean throwOnFailure) {
+        return execWithEnv(argv, stdin, throwOnFailure, null);
+    }
+
+    private static ExecResult execWithEnv(List<String> argv, String stdin,
+                                           boolean throwOnFailure,
+                                           java.util.Map<String, String> envOverrides) {
         try {
             ProcessBuilder pb = new ProcessBuilder(argv);
+            if (envOverrides != null) {
+                pb.environment().clear();
+                pb.environment().putAll(envOverrides);
+            }
             pb.redirectErrorStream(false);
             Process p = pb.start();
             if (stdin != null) {

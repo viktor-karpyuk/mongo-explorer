@@ -169,14 +169,20 @@ public final class EksAdapter implements ManagedPoolAdapter {
         return switch (cred.authMode()) {
             case STATIC -> {
                 String body = secrets.read(cred.keychainRef()).orElse("");
-                int colon = body.indexOf(':');
-                if (colon <= 0) {
-                    log.warn("STATIC credential {} keychain payload has no ':' separator",
+                // AWS secret keys contain '/' and '+' but never ':'.
+                // The access-key id is fixed-format alphanumeric. Splitting
+                // at the FIRST colon would still be correct, but using a
+                // 2-element limit is safer if the format ever changes —
+                // the right-hand side keeps any embedded colons intact.
+                String[] parts = body.split(":", 2);
+                if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank()) {
+                    log.warn("STATIC credential {} keychain payload not "
+                            + "accessKey:secretKey — falling back to default chain",
                             cred.displayName());
                     yield DefaultCredentialsProvider.create();
                 }
-                yield StaticCredentialsProvider.create(AwsBasicCredentials.create(
-                        body.substring(0, colon), body.substring(colon + 1)));
+                yield StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create(parts[0], parts[1]));
             }
             case EXTERNAL_ID -> {
                 String profile = secrets.read(cred.keychainRef()).orElse("default");
