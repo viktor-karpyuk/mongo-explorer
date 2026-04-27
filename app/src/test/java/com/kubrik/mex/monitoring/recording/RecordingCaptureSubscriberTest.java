@@ -113,10 +113,14 @@ class RecordingCaptureSubscriberTest {
                 sample("conn-a", MetricId.INST_OP_1, 1_000L, 1.0),
                 sample("conn-b", MetricId.INST_OP_1, 1_000L, 2.0),
                 sample("conn-a", MetricId.INST_OP_2, 1_000L, 3.0)));
-        sub.flush();
-
-        assertEquals(2, sampleDao.sampleCount("rec-a"));
-        assertEquals(1, sampleDao.sampleCount("rec-b"));
+        // The writer-thread can race with the test's flush() — flush
+        // grabs the writeLock first, drains nothing because the writer
+        // already drainedTo'd the queue, then the writer's
+        // writeBatchSync runs and writes everything. Poll until the
+        // expected counts land instead of asserting against a single
+        // snapshot.
+        awaitSampleCount("rec-a", 2);
+        awaitSampleCount("rec-b", 1);
     }
 
     @Test
@@ -135,9 +139,9 @@ class RecordingCaptureSubscriberTest {
         bus.publishMetrics(List.of(
                 sample("conn-m", MetricId.INST_OP_1, 1_000L, 1.0),
                 sample("conn-m", MetricId.INST_OP_1, 1_100L, 2.0)));
-        sub.flush();
-
-        assertEquals(2, sub.capturedTotal());
+        // Writer thread + flush race — see comment in
+        // concurrentActiveRecordingsRouteIndependently.
+        awaitCapturedTotal(2);
         assertEquals(0, sub.droppedQueueFull());
         assertEquals(0, sub.writeErrors());
     }
@@ -179,4 +183,31 @@ class RecordingCaptureSubscriberTest {
     }
 
     private static long nowMs() { return System.currentTimeMillis(); }
+
+    /** Polls flush + sampleCount up to 5s — absorbs the writer-thread
+     *  race noted in the test bodies. */
+    private void awaitSampleCount(String recordingId, int expected) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        long actual = -1;
+        while (System.nanoTime() < deadline) {
+            sub.flush();
+            actual = sampleDao.sampleCount(recordingId);
+            if (actual == expected) return;
+            Thread.sleep(20);
+        }
+        fail("expected " + expected + " sample(s) for " + recordingId
+                + " but saw " + actual + " after 5s");
+    }
+
+    private void awaitCapturedTotal(long expected) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        long actual = -1;
+        while (System.nanoTime() < deadline) {
+            sub.flush();
+            actual = sub.capturedTotal();
+            if (actual == expected) return;
+            Thread.sleep(20);
+        }
+        fail("expected capturedTotal=" + expected + " but saw " + actual + " after 5s");
+    }
 }

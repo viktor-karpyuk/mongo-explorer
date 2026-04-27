@@ -25,6 +25,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
+import javafx.scene.control.SplitPane;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
@@ -58,6 +59,23 @@ public final class PolicyEditorPane extends BorderPane {
     private final ConnectionStore connectionStore;
 
     private final SimpleObjectProperty<String> connection = new SimpleObjectProperty<>();
+
+    /** Split-pane wrapping the policies list (item 0) and the editor form
+     *  (item 1). Swapping item 0 between the full list panel and a narrow
+     *  "show" strip is what drives the collapse / expand UX. */
+    private final SplitPane split = new SplitPane();
+    /** Full left panel — policies list + connection picker + New button. */
+    private Region leftPanel;
+    /** Narrow vertical strip shown in place of {@link #leftPanel} when
+     *  collapsed. Hosts a single ▶ button that restores the list. */
+    private Region collapsedStrip;
+    /** Editor form (right-hand side of the split). */
+    private Region editor;
+    private boolean listCollapsed = false;
+    /** Last user-chosen divider position for the expanded state, so expanding
+     *  after a drag-resize restores the user's width instead of snapping back
+     *  to the default. */
+    private double lastDivider = 0.28;
 
     /* left panel */
     private final ObservableList<BackupPolicy> policyList = FXCollections.observableArrayList();
@@ -138,8 +156,23 @@ public final class PolicyEditorPane extends BorderPane {
         setStyle("-fx-background-color: white;");
         setPadding(new Insets(12));
 
-        setLeft(buildLeftPanel());
-        setCenter(buildEditor());
+        this.leftPanel = buildLeftPanel();
+        this.collapsedStrip = buildCollapsedStrip();
+        this.editor = buildEditor();
+
+        split.setOrientation(javafx.geometry.Orientation.HORIZONTAL);
+        split.getItems().addAll(leftPanel, editor);
+        // Keep the policies column at its user-chosen width when the window
+        // grows — the editor on the right should absorb the extra space.
+        SplitPane.setResizableWithParent(leftPanel, Boolean.FALSE);
+        SplitPane.setResizableWithParent(editor, Boolean.TRUE);
+        split.setDividerPositions(lastDivider);
+        // Persist the user's drag-resize so expanding after collapse doesn't
+        // snap back to the 0.28 default.
+        split.getDividers().get(0).positionProperty().addListener((o, a, b) -> {
+            if (!listCollapsed) lastDivider = b.doubleValue();
+        });
+        setCenter(split);
 
         connection.addListener((obs, old, id) -> reloadPolicies());
         policyListView.getSelectionModel().selectedItemProperty().addListener((obs, old, sel) -> {
@@ -156,8 +189,8 @@ public final class PolicyEditorPane extends BorderPane {
     /* ============================= left panel ============================= */
 
     private Region buildLeftPanel() {
-        Label label = new Label("Connection");
-        label.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
+        Label connLabel = new Label("Connection");
+        connLabel.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
 
         connectionPicker.valueProperty().addListener((obs, o, n) -> {
             if (n != null) connection.set(n);
@@ -176,11 +209,75 @@ public final class PolicyEditorPane extends BorderPane {
 
         newBtn.setOnAction(e -> blankForm());
 
-        VBox left = new VBox(8, label, connectionPicker, new Label("Policies"),
+        // "Policies" header row carries a right-aligned collapse button so the
+        // user can push the list out of the way and give the editor the full
+        // width of the tab. Using Unicode arrows (◀ / ▶) sidesteps the Ikonli
+        // icon-name lookup hazards we hit earlier with `fth-server-off`.
+        Label policiesLabel = new Label("Policies");
+        policiesLabel.setStyle("-fx-text-fill: #374151; -fx-font-size: 12px; -fx-font-weight: 600;");
+        Region headerGrow = new Region();
+        HBox.setHgrow(headerGrow, Priority.ALWAYS);
+        Button collapseBtn = new Button("◀");
+        collapseBtn.setTooltip(new Tooltip("Hide policies list"));
+        collapseBtn.setStyle("-fx-font-size: 11px; -fx-padding: 2 8 2 8; "
+                + "-fx-background-color: transparent; -fx-border-color: #e5e7eb; "
+                + "-fx-border-radius: 4; -fx-background-radius: 4;");
+        collapseBtn.setFocusTraversable(false);
+        collapseBtn.setOnAction(e -> toggleList(true));
+        HBox policiesHeader = new HBox(6, policiesLabel, headerGrow, collapseBtn);
+        policiesHeader.setAlignment(Pos.CENTER_LEFT);
+
+        VBox left = new VBox(8, connLabel, connectionPicker, policiesHeader,
                 policyListView, newBtn);
         VBox.setVgrow(policyListView, Priority.ALWAYS);
         left.setPadding(new Insets(0, 12, 0, 0));
         return left;
+    }
+
+    /** Narrow vertical strip shown while the policies list is collapsed. Hosts
+     *  only a ▶ expand button. Kept to ~28 px wide and marked unresizable so
+     *  it doesn't steal space from the editor. */
+    private Region buildCollapsedStrip() {
+        Button expandBtn = new Button("▶");
+        expandBtn.setTooltip(new Tooltip("Show policies list"));
+        expandBtn.setStyle("-fx-font-size: 11px; -fx-padding: 2 6 2 6; "
+                + "-fx-background-color: transparent; -fx-border-color: #e5e7eb; "
+                + "-fx-border-radius: 4; -fx-background-radius: 4;");
+        expandBtn.setFocusTraversable(false);
+        expandBtn.setOnAction(e -> toggleList(false));
+        VBox strip = new VBox(expandBtn);
+        strip.setAlignment(Pos.TOP_CENTER);
+        strip.setPadding(new Insets(4, 2, 0, 0));
+        strip.setMinWidth(28);
+        strip.setPrefWidth(28);
+        strip.setMaxWidth(28);
+        strip.setStyle("-fx-border-color: transparent #e5e7eb transparent transparent; "
+                + "-fx-border-width: 0 1 0 0;");
+        return strip;
+    }
+
+    /** Swap the SplitPane's item-0 between the full list panel and the narrow
+     *  strip. Divider position is pinned near zero while collapsed (the strip
+     *  is unresizable anyway) and restored to the user's last expanded width
+     *  on the way back. */
+    private void toggleList(boolean collapse) {
+        if (collapse == listCollapsed) return;
+        listCollapsed = collapse;
+        if (collapse) {
+            split.getItems().setAll(collapsedStrip, editor);
+            SplitPane.setResizableWithParent(collapsedStrip, Boolean.FALSE);
+            SplitPane.setResizableWithParent(editor, Boolean.TRUE);
+            // Position the divider right next to the strip's fixed width so
+            // the editor claims everything else.
+            javafx.application.Platform.runLater(() ->
+                    split.setDividerPositions(0.0));
+        } else {
+            split.getItems().setAll(leftPanel, editor);
+            SplitPane.setResizableWithParent(leftPanel, Boolean.FALSE);
+            SplitPane.setResizableWithParent(editor, Boolean.TRUE);
+            javafx.application.Platform.runLater(() ->
+                    split.setDividerPositions(lastDivider));
+        }
     }
 
     /* =============================== editor =============================== */
@@ -262,13 +359,6 @@ public final class PolicyEditorPane extends BorderPane {
         g.add(new Label(""), 0, row);
         g.add(scopeList, 1, row++, 2, 1);
 
-        g.add(helpLabel("Archive", HELP_ARCHIVE), 0, row);
-        HBox archiveRow = new HBox(10, gzipBox,
-                small("Level"), gzipLevel,
-                small("Output"), archiveTemplate);
-        HBox.setHgrow(archiveTemplate, Priority.ALWAYS);
-        g.add(archiveRow, 1, row++, 2, 1);
-
         g.add(helpLabel("Retention", HELP_RETENTION), 0, row);
         g.add(new HBox(10,
                 small("Keep last"), retentionCount, small("runs"),
@@ -281,6 +371,22 @@ public final class PolicyEditorPane extends BorderPane {
 
         g.add(helpLabel("Options", HELP_ENABLED + "\n\n" + HELP_OPLOG), 0, row);
         g.add(new HBox(10, enabledBox, oplogBox), 1, row++, 2, 1);
+
+        // Archive block is last in the form and gets its own two-row layout so
+        // labels stay visible on narrow scenes. The previous single-HBox layout
+        // (gzipBox · Level · spinner · Output · textfield) clipped "Level" and
+        // "Output" first — a FlowPane would wrap at runtime but wrapping a
+        // field label under a different control is confusing. Splitting into
+        // (Gzip + Level) and (Output, label-above-control) keeps each pair
+        // self-contained and always readable.
+        g.add(helpLabel("Archive", HELP_ARCHIVE), 0, row);
+        HBox gzipRow = new HBox(10, gzipBox, small("Level"), gzipLevel);
+        gzipRow.setAlignment(Pos.CENTER_LEFT);
+        VBox outputCol = new VBox(2, small("Output template"), archiveTemplate);
+        outputCol.setFillWidth(true);
+        VBox archiveBlock = new VBox(8, gzipRow, outputCol);
+        archiveBlock.setFillWidth(true);
+        g.add(archiveBlock, 1, row++, 2, 1);
 
         g.add(errorLabel, 0, row++, 3, 1);
 

@@ -19,7 +19,7 @@ name: mex-sharded
 services:
   # ============================== config ==============================
   cfg1:
-    image: mongo:7
+    image: mongo:latest
     container_name: mex-cfg1
     command: >
       mongod --configsvr --replSet cfgrs
@@ -33,7 +33,7 @@ services:
       retries: 20
 
   cfg2:
-    image: mongo:7
+    image: mongo:latest
     container_name: mex-cfg2
     command: mongod --configsvr --replSet cfgrs --port 27017 --bind_ip_all
     ports: ["27102:27017"]
@@ -45,7 +45,7 @@ services:
       retries: 20
 
   cfg3:
-    image: mongo:7
+    image: mongo:latest
     container_name: mex-cfg3
     command: mongod --configsvr --replSet cfgrs --port 27017 --bind_ip_all
     ports: ["27103:27017"]
@@ -58,7 +58,7 @@ services:
 
   # ============================= shard 1 =============================
   shard1a:
-    image: mongo:7
+    image: mongo:latest
     container_name: mex-shard1a
     command: mongod --shardsvr --replSet shard1rs --port 27017 --bind_ip_all
     ports: ["27111:27017"]
@@ -70,7 +70,7 @@ services:
       retries: 20
 
   shard1b:
-    image: mongo:7
+    image: mongo:latest
     container_name: mex-shard1b
     command: mongod --shardsvr --replSet shard1rs --port 27017 --bind_ip_all
     ports: ["27112:27017"]
@@ -82,7 +82,7 @@ services:
       retries: 20
 
   shard1c:
-    image: mongo:7
+    image: mongo:latest
     container_name: mex-shard1c
     command: mongod --shardsvr --replSet shard1rs --port 27017 --bind_ip_all
     ports: ["27113:27017"]
@@ -100,7 +100,7 @@ services:
   # circular dependency. Instead, `init` polls mongos via its own
   # wait_ping loop after electing the cfg primary.
   mongos:
-    image: mongo:7
+    image: mongo:latest
     container_name: mex-mongos
     command: >
       mongos
@@ -123,7 +123,7 @@ services:
   # 0 on success. Safe to re-run — rs.initiate is guarded by a pre-check
   # and sh.addShard is idempotent server-side.
   init:
-    image: mongo:7
+    image: mongo:latest
     container_name: mex-sharded-init
     depends_on:
       cfg1: { condition: service_healthy }

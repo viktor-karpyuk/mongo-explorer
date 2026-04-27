@@ -422,11 +422,19 @@ public final class JobRunner {
         // Run verification on successful non-dry-run data-transfer jobs (T-7).
         com.kubrik.mex.migration.verify.VerificationReport verification =
                 com.kubrik.mex.migration.verify.VerificationReport.empty(jobId.value(), "1.1.0");
+        // EXT-2 — when a non-Mongo sink is configured, the target Mongo
+        // is intentionally empty, so the source-vs-target verifier
+        // would always FAIL. Skip it; the sink's own success counters
+        // are the source of truth in that mode.
+        boolean hasFileSink = spec.options() != null
+                && spec.options().sinks() != null
+                && !spec.options().sinks().isEmpty();
         if (fatal == null
                 && !ctx.stopping()
                 && spec.options().executionMode() == ExecutionMode.RUN
                 && spec.kind() == com.kubrik.mex.migration.spec.MigrationKind.DATA_TRANSFER
-                && spec.options().verification().enabled()) {
+                && spec.options().verification().enabled()
+                && !hasFileSink) {
             try {
                 var srcSvc = manager.service(spec.source().connectionId());
                 var tgtSvc = manager.service(spec.target().connectionId());

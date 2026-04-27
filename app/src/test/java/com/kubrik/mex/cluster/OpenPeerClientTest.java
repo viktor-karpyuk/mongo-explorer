@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class OpenPeerClientTest {
 
     @Container
-    static MongoDBContainer MONGO = new MongoDBContainer("mongo:7.0");
+    static MongoDBContainer MONGO = new MongoDBContainer("mongo:latest");
 
     @Test
     void openPeerClient_rejects_malformed_specs() {

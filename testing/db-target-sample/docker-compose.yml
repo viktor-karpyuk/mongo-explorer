@@ -1,6 +1,6 @@
 services:
   mongo-target:
-    image: mongo:8
+    image: mongo:latest
     container_name: mex-mongo-target-sample
     ports:
       - "28000:27017"

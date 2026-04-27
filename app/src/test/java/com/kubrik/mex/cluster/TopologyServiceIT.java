@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * v2.4 TOPO-1..9 acceptance — runs the topology sampler against a live
- * {@code mongo:7.0} replica set. The Testcontainers {@code MongoDBContainer}
+ * {@code mongo:latest} replica set. The Testcontainers {@code MongoDBContainer}
  * starts a single-node replset by default; the full 3-node matrix (step-down,
  * lag, elections) lives in the hardening soak suite (Q2.4-J). This IT covers
  * the REPLSET code path end-to-end: kind detection, primary identification,
@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class TopologyServiceIT {
 
     @Container
-    static MongoDBContainer MONGO = new MongoDBContainer("mongo:7.0");
+    static MongoDBContainer MONGO = new MongoDBContainer("mongo:latest");
 
     @TempDir Path dataDir;
 

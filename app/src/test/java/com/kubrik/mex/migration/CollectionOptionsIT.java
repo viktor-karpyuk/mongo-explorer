@@ -51,10 +51,10 @@ import static org.junit.jupiter.api.Assertions.*;
 class CollectionOptionsIT {
 
     @Container
-    static MongoDBContainer SOURCE = new MongoDBContainer("mongo:7.0");
+    static MongoDBContainer SOURCE = new MongoDBContainer("mongo:latest");
 
     @Container
-    static MongoDBContainer TARGET = new MongoDBContainer("mongo:7.0");
+    static MongoDBContainer TARGET = new MongoDBContainer("mongo:latest");
 
     @TempDir Path dataDir;
 

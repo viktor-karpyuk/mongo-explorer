@@ -53,8 +53,8 @@ import static org.junit.jupiter.api.Assertions.*;
 @EnabledIfSystemProperty(named = "mex.perf", matches = "true")
 class ThroughputPerfTest {
 
-    @Container static MongoDBContainer SOURCE = new MongoDBContainer("mongo:7.0");
-    @Container static MongoDBContainer TARGET = new MongoDBContainer("mongo:7.0");
+    @Container static MongoDBContainer SOURCE = new MongoDBContainer("mongo:latest");
+    @Container static MongoDBContainer TARGET = new MongoDBContainer("mongo:latest");
 
     @TempDir Path dataDir;
 

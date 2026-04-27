@@ -51,10 +51,10 @@ import static org.junit.jupiter.api.Assertions.*;
 class MigrateCliIT {
 
     @Container
-    static MongoDBContainer SOURCE = new MongoDBContainer("mongo:7.0");
+    static MongoDBContainer SOURCE = new MongoDBContainer("mongo:latest");
 
     @Container
-    static MongoDBContainer TARGET = new MongoDBContainer("mongo:7.0");
+    static MongoDBContainer TARGET = new MongoDBContainer("mongo:latest");
 
     @TempDir Path dataDir;
     @TempDir Path profileDir;
@@ -84,6 +84,16 @@ class MigrateCliIT {
     @AfterEach
     void tearDown() {
         System.clearProperty("user.home");
+        // Static @Container shares SOURCE + TARGET across every test
+        // in this class. Drop the test data so a happy-path run that
+        // copied to TARGET doesn't leak into the next test's
+        // "did dry-run skip writes?" assertion.
+        try (MongoClient c = MongoClients.create(SOURCE.getConnectionString())) {
+            c.getDatabase("app").drop();
+        } catch (Exception ignored) {}
+        try (MongoClient c = MongoClients.create(TARGET.getConnectionString())) {
+            c.getDatabase("app").drop();
+        } catch (Exception ignored) {}
     }
 
     @Test

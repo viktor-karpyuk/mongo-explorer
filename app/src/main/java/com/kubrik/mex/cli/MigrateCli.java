@@ -113,6 +113,7 @@ public final class MigrateCli implements Runnable {
             ConnectionStore store = new ConnectionStore(db);
             EventBus bus = new EventBus();
             manager = new ConnectionManager(store, bus, new Crypto());
+            this.cliManager = manager;
             MigrationService service = new MigrationService(
                     manager, store, db, bus, new PreconditionGate(store, manager));
 
@@ -171,8 +172,49 @@ public final class MigrateCli implements Runnable {
         MigrationSpec spec = new ProfileCodec().fromYaml(yaml);
         spec = applyOverrides(spec);
 
+        // The CLI shares ConnectionManager with the GUI but never had
+        // a connect() prelude — UI flows trigger it via tab activation.
+        // Without it, preflight sees both connections as "not active"
+        // and fails before the spec runs.
+        connectAndWait(spec.source().connectionId(), "source");
+        connectAndWait(spec.target().connectionId(), "target");
+
         return dryRun ? service.startDryRun(spec) : service.start(spec);
     }
+
+    /** Drive a connect → wait-for-CONNECTED handshake on the shared
+     *  manager so {@code PreflightChecker.manager.service(id)} returns
+     *  a live MongoService. 30 s budget — generous for a localhost
+     *  testcontainer, comfortable for a real Atlas endpoint behind
+     *  TLS handshake. */
+    private void connectAndWait(String connectionId, String role) {
+        if (cliManager == null || connectionId == null) return;
+        if (cliManager.state(connectionId).status()
+                == com.kubrik.mex.model.ConnectionState.Status.CONNECTED) {
+            return;
+        }
+        cliManager.connect(connectionId);
+        long deadline = System.currentTimeMillis() + 30_000L;
+        while (System.currentTimeMillis() < deadline) {
+            var st = cliManager.state(connectionId).status();
+            if (st == com.kubrik.mex.model.ConnectionState.Status.CONNECTED) return;
+            if (st == com.kubrik.mex.model.ConnectionState.Status.ERROR) {
+                throw new IllegalStateException(role + " connection '" + connectionId
+                        + "' failed to connect: "
+                        + cliManager.state(connectionId).lastError());
+            }
+            try { Thread.sleep(50); }
+            catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        throw new IllegalStateException(role + " connection '" + connectionId
+                + "' did not reach CONNECTED within 30s");
+    }
+
+    /** Captured during run() so launch() can call connectAndWait. */
+    private com.kubrik.mex.core.ConnectionManager cliManager;
 
     private JobId resume(MigrationService service) {
         return service.resume(JobId.of(resumeJobId));

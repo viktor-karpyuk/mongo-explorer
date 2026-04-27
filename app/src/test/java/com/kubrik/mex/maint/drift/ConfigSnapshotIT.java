@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ConfigSnapshotIT {
 
     @Container
-    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:7.0");
+    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:latest");
 
     @TempDir Path dataDir;
 

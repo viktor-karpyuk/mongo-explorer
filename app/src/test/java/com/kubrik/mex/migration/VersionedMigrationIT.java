@@ -46,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class VersionedMigrationIT {
 
     @Container
-    static MongoDBContainer SERVER = new MongoDBContainer("mongo:7.0");
+    static MongoDBContainer SERVER = new MongoDBContainer("mongo:latest");
 
     @TempDir Path dataDir;
     @TempDir Path scriptsDir;
