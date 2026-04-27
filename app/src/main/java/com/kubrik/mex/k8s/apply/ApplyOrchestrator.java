@@ -316,6 +316,9 @@ public final class ApplyOrchestrator {
             case "CronJob" -> "batch/v1";
             case "MongoDBCommunity" -> "mongodbcommunity.mongodb.com/v1";
             case "PerconaServerMongoDB" -> "psmdb.percona.com/v1";
+            // v2.8.3 Q2.8.3-D — Karpenter NodePool ends up in the
+            // catalogue alongside the Mongo CR so cleanup deletes it.
+            case "NodePool" -> "karpenter.sh/v1";
             default -> "v1";
         };
     }

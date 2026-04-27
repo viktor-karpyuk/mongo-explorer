@@ -76,7 +76,10 @@ public final class LiveApplyOpener implements ApplyOrchestrator.ApplyOpener {
             Map.entry("Deployment", "deployments"),
             Map.entry("StatefulSet", "statefulsets"),
             Map.entry("MongoDBCommunity", "mongodbcommunity"),
-            Map.entry("PerconaServerMongoDB", "perconaservermongodbs"));
+            Map.entry("PerconaServerMongoDB", "perconaservermongodbs"),
+            // v2.8.3 Q2.8.3-D — Karpenter NodePool joins the catalogue
+            // so cleanup deletes it alongside the Mongo CR.
+            Map.entry("NodePool", "nodepools"));
 
     private final ApiClient boundClient;
     private final ConcurrentMap<String, DynamicKubernetesApi> apis = new ConcurrentHashMap<>();

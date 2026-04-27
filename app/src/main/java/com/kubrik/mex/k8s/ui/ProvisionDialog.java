@@ -88,6 +88,23 @@ public final class ProvisionDialog extends Dialog<Void> {
     private final ComboBox<Toleration.Effect> poolTaintEffectBox = new ComboBox<>();
     private final VBox nodePoolForm = new VBox(6);
 
+    // v2.8.3 Q2.8.3-D — Full Karpenter sub-form.
+    private final TextField kpNodeClassNameField = new TextField("default");
+    private final ComboBox<String> kpNodeClassKindBox = new ComboBox<>();
+    private final TextField kpInstanceFamiliesField = new TextField("m6i,r6i");
+    private final ComboBox<String> kpCapacityTypeBox = new ComboBox<>();
+    private final ComboBox<String> kpArchBox = new ComboBox<>();
+    private final TextField kpCpuMinField = new TextField("2");
+    private final TextField kpCpuMaxField = new TextField("32");
+    private final TextField kpMemMinField = new TextField("4Gi");
+    private final TextField kpMemMaxField = new TextField("128Gi");
+    private final TextField kpExpireAfterField = new TextField("720h");
+    private final TextField kpLimitCpuField = new TextField("100");
+    private final TextField kpLimitMemField = new TextField("400Gi");
+    private final javafx.scene.control.CheckBox kpConsolidationBox =
+            new javafx.scene.control.CheckBox("Consolidate when underutilized");
+    private final VBox karpenterForm = new VBox(6);
+
     private final TextArea preflightArea = new TextArea();
     private final TextArea logArea = new TextArea();
     private final Label statusLabel = new Label("Fill the form, then click Pre-flight.");
@@ -178,9 +195,13 @@ public final class ProvisionDialog extends Dialog<Void> {
         }
         strategyNoneRadio.setSelected(true);
         strategyGroup.selectedToggleProperty().addListener((o, a, b) -> {
-            boolean showForm = b != null && b.getUserData() == StrategyId.NODE_POOL;
-            nodePoolForm.setVisible(showForm);
-            nodePoolForm.setManaged(showForm);
+            Object id = b == null ? null : b.getUserData();
+            boolean showNp = id == StrategyId.NODE_POOL;
+            boolean showKp = id == StrategyId.KARPENTER;
+            nodePoolForm.setVisible(showNp);
+            nodePoolForm.setManaged(showNp);
+            karpenterForm.setVisible(showKp);
+            karpenterForm.setManaged(showKp);
             invalidatePreflight();
         });
         poolLabelKeyField.textProperty().addListener((o, a, b) -> invalidatePreflight());
@@ -189,6 +210,20 @@ public final class ProvisionDialog extends Dialog<Void> {
         poolTaintValueField.textProperty().addListener((o, a, b) -> invalidatePreflight());
         poolTaintEffectBox.getItems().setAll(Toleration.Effect.values());
         poolTaintEffectBox.getSelectionModel().select(Toleration.Effect.NO_SCHEDULE);
+
+        // Karpenter sub-form defaults.
+        kpNodeClassKindBox.getItems().setAll("EC2NodeClass", "AKSNodeClass", "GCENodeClass");
+        kpNodeClassKindBox.getSelectionModel().select("EC2NodeClass");
+        kpCapacityTypeBox.getItems().setAll("spot", "on-demand", "spot,on-demand");
+        kpCapacityTypeBox.getSelectionModel().select("spot,on-demand");
+        kpArchBox.getItems().setAll("amd64", "arm64", "amd64,arm64");
+        kpArchBox.getSelectionModel().select("amd64");
+        kpConsolidationBox.setSelected(true);
+        for (TextField tf : List.of(kpNodeClassNameField, kpInstanceFamiliesField,
+                kpCpuMinField, kpCpuMaxField, kpMemMinField, kpMemMaxField,
+                kpExpireAfterField, kpLimitCpuField, kpLimitMemField)) {
+            tf.textProperty().addListener((o, a, b) -> invalidatePreflight());
+        }
     }
 
     private Region buildContent() {
@@ -226,9 +261,31 @@ public final class ProvisionDialog extends Dialog<Void> {
         nodePoolForm.setVisible(false);
         nodePoolForm.setManaged(false);
 
+        // Karpenter sub-form (UI-DC-KP-* — milestone-v2.8.3 §2.1).
+        GridPane kpGrid = new GridPane();
+        kpGrid.setHgap(8); kpGrid.setVgap(4);
+        kpGrid.setPadding(new Insets(4, 0, 0, 24));
+        int kr = 0;
+        kpGrid.add(new Label("NodeClass kind"), 0, kr); kpGrid.add(kpNodeClassKindBox, 1, kr);
+        kpGrid.add(new Label("NodeClass name"), 2, kr); kpGrid.add(kpNodeClassNameField, 3, kr++);
+        kpGrid.add(new Label("Instance families"), 0, kr); kpGrid.add(kpInstanceFamiliesField, 1, kr, 3, 1); kr++;
+        kpGrid.add(new Label("Capacity type"), 0, kr); kpGrid.add(kpCapacityTypeBox, 1, kr);
+        kpGrid.add(new Label("Architecture"), 2, kr); kpGrid.add(kpArchBox, 3, kr++);
+        kpGrid.add(new Label("CPU min"), 0, kr); kpGrid.add(kpCpuMinField, 1, kr);
+        kpGrid.add(new Label("CPU max"), 2, kr); kpGrid.add(kpCpuMaxField, 3, kr++);
+        kpGrid.add(new Label("Mem min"), 0, kr); kpGrid.add(kpMemMinField, 1, kr);
+        kpGrid.add(new Label("Mem max"), 2, kr); kpGrid.add(kpMemMaxField, 3, kr++);
+        kpGrid.add(kpConsolidationBox, 0, kr, 2, 1);
+        kpGrid.add(new Label("Expire after"), 2, kr); kpGrid.add(kpExpireAfterField, 3, kr++);
+        kpGrid.add(new Label("Limit CPU"), 0, kr); kpGrid.add(kpLimitCpuField, 1, kr);
+        kpGrid.add(new Label("Limit memory"), 2, kr); kpGrid.add(kpLimitMemField, 3, kr++);
+        karpenterForm.getChildren().setAll(kpGrid);
+        karpenterForm.setVisible(false);
+        karpenterForm.setManaged(false);
+
         VBox strategyBlock = new VBox(4, strategyHead, strategyHint,
                 strategyNoneRadio, strategyNodePoolRadio, nodePoolForm,
-                strategyKarpenterRadio, strategyManagedRadio);
+                strategyKarpenterRadio, karpenterForm, strategyManagedRadio);
         strategyBlock.setPadding(new Insets(0, 0, 10, 0));
 
         Label pfHead = new Label("Pre-flight");
@@ -384,9 +441,7 @@ public final class ProvisionDialog extends Dialog<Void> {
                 ? StrategyId.NONE
                 : strategyGroup.getSelectedToggle().getUserData();
         if (picked == StrategyId.KARPENTER) {
-            return new ComputeStrategy.Karpenter(
-                    com.kubrik.mex.k8s.compute.karpenter.KarpenterSpec.sensibleAwsDefaults(
-                            deploymentNameField.getText().trim()));
+            return new ComputeStrategy.Karpenter(buildKarpenterSpec());
         }
         if (picked == StrategyId.MANAGED_POOL) {
             // Alpha: defaults land on the EKS stub; real credentials
@@ -412,6 +467,45 @@ public final class ProvisionDialog extends Dialog<Void> {
             tolerations.add(new Toleration(tKey, tVal.isEmpty() ? null : tVal, effect));
         }
         return new ComputeStrategy.NodePool(selector, tolerations, SpreadScope.WITHIN_POOL);
+    }
+
+    private com.kubrik.mex.k8s.compute.karpenter.KarpenterSpec buildKarpenterSpec() {
+        String apiVersion = switch (kpNodeClassKindBox.getValue()) {
+            case "AKSNodeClass" -> "karpenter.azure.com/v1";
+            case "GCENodeClass" -> "karpenter.gce.gke.io/v1";
+            default -> "karpenter.k8s.aws/v1";
+        };
+        com.kubrik.mex.k8s.compute.karpenter.KarpenterSpec.NodeClassRef ref =
+                new com.kubrik.mex.k8s.compute.karpenter.KarpenterSpec.NodeClassRef(
+                        apiVersion, kpNodeClassKindBox.getValue(),
+                        kpNodeClassNameField.getText().trim());
+        return new com.kubrik.mex.k8s.compute.karpenter.KarpenterSpec(
+                ref,
+                splitCsv(kpCapacityTypeBox.getValue()),
+                splitCsv(kpInstanceFamiliesField.getText()),
+                splitCsv(kpArchBox.getValue()),
+                blankToNull(kpCpuMinField.getText()),
+                blankToNull(kpCpuMaxField.getText()),
+                blankToNull(kpMemMinField.getText()),
+                blankToNull(kpMemMaxField.getText()),
+                kpConsolidationBox.isSelected(),
+                blankToNull(kpExpireAfterField.getText()),
+                blankToNull(kpLimitCpuField.getText()),
+                blankToNull(kpLimitMemField.getText()));
+    }
+
+    private static List<String> splitCsv(String raw) {
+        if (raw == null || raw.isBlank()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String t : raw.split(",")) {
+            String s = t.trim();
+            if (!s.isEmpty()) out.add(s);
+        }
+        return List.copyOf(out);
+    }
+
+    private static String blankToNull(String raw) {
+        return raw == null || raw.isBlank() ? null : raw.trim();
     }
 
     private static String pad(String s, int width) {

@@ -8,6 +8,7 @@ import io.kubernetes.client.openapi.ApiClient;
 import io.kubernetes.client.openapi.ApiException;
 import io.kubernetes.client.openapi.apis.AppsV1Api;
 import io.kubernetes.client.openapi.apis.ApiextensionsV1Api;
+import io.kubernetes.client.openapi.apis.CustomObjectsApi;
 import io.kubernetes.client.openapi.models.V1DeploymentList;
 
 import java.util.List;
@@ -34,6 +35,7 @@ public final class KarpenterPreflightChecks {
         return List.of(
                 new CrdsCheck(),
                 new ControllerCheck(),
+                new NodeClassCheck(),
                 new RequirementsCheck());
     }
 
@@ -123,6 +125,74 @@ public final class KarpenterPreflightChecks {
                         "Controller probe errored: " + e.getMessage(),
                         "Retry once the API server is reachable.");
             }
+        }
+    }
+
+    /* ============================ PRE-KP-3 ============================ */
+
+    public static final class NodeClassCheck implements PreflightCheck {
+        public static final String ID = "preflight.karpenter.node-class";
+
+        @Override public String id() { return ID; }
+        @Override public String label() { return "NodeClass reachable"; }
+        @Override public PreflightScope scope(ProvisionModel m) {
+            return m.computeStrategy() instanceof ComputeStrategy.Karpenter k
+                    && k.spec().isPresent()
+                    ? PreflightScope.CONDITIONAL : PreflightScope.SKIP;
+        }
+
+        @Override
+        public PreflightResult run(ApiClient client, ProvisionModel m) {
+            ComputeStrategy.Karpenter k = (ComputeStrategy.Karpenter) m.computeStrategy();
+            KarpenterSpec sp = k.spec().orElseThrow();
+            KarpenterSpec.NodeClassRef ref = sp.nodeClassRef();
+            String group = groupOf(ref.apiVersion());
+            String version = versionOf(ref.apiVersion());
+            String plural = pluralOf(ref.kind());
+            try {
+                new CustomObjectsApi(client)
+                        .getClusterCustomObject(group, version, plural, ref.name())
+                        .execute();
+                return PreflightResult.pass(ID);
+            } catch (ApiException ae) {
+                if (ae.getCode() == 404) {
+                    return PreflightResult.fail(ID,
+                            ref.kind() + " '" + ref.name() + "' not found in "
+                            + ref.apiVersion() + ".",
+                            "Apply the NodeClass manifest before provisioning, "
+                            + "or pick an existing one.");
+                }
+                return PreflightResult.fail(ID,
+                        "NodeClass probe failed: HTTP " + ae.getCode(),
+                        "Verify the ServiceAccount can read " + ref.kind() + ".");
+            } catch (Exception e) {
+                return PreflightResult.fail(ID,
+                        "NodeClass probe errored: " + e.getMessage(),
+                        "Retry once the API server is reachable.");
+            }
+        }
+
+        private static String groupOf(String apiVersion) {
+            int slash = apiVersion.indexOf('/');
+            return slash < 0 ? "" : apiVersion.substring(0, slash);
+        }
+
+        private static String versionOf(String apiVersion) {
+            int slash = apiVersion.indexOf('/');
+            return slash < 0 ? apiVersion : apiVersion.substring(slash + 1);
+        }
+
+        /** Best-effort pluralisation for the well-known NodeClass kinds.
+         *  Falls back to lowercase + "s" — adequate for v2.8.3 which
+         *  only blesses EC2NodeClass (AWS), AKSNodeClass (Azure
+         *  preview), and a generic fallback. */
+        private static String pluralOf(String kind) {
+            return switch (kind) {
+                case "EC2NodeClass" -> "ec2nodeclasses";
+                case "AKSNodeClass" -> "aksnodeclasses";
+                case "GCENodeClass" -> "gcenodeclasses";
+                default -> kind.toLowerCase() + "s";
+            };
         }
     }
 
