@@ -52,6 +52,11 @@ public final class RolloutWatcher {
 
     private static final Logger log = LoggerFactory.getLogger(RolloutWatcher.class);
 
+    /** Gson is documented thread-safe + its construction walks every
+     *  registered TypeAdapterFactory, so a shared instance saves a
+     *  non-trivial allocation per provision. */
+    private static final Gson SHARED_GSON = new Gson();
+
     /** Default: 3s between polls — matches MCO / PSMDB status-refresh cadence. */
     public static final long DEFAULT_POLL_INTERVAL_MS = 3_000L;
     /** Default: 15 min for a full provision to stabilise on kind / dev clusters. */
@@ -103,7 +108,7 @@ public final class RolloutWatcher {
         long deadline = System.currentTimeMillis() + timeoutMs;
         DeploymentStatus lastStatus = DeploymentStatus.UNKNOWN;
         int polls = 0;
-        Gson gson = new Gson();
+        Gson gson = SHARED_GSON;
 
         while (System.currentTimeMillis() < deadline) {
             polls++;

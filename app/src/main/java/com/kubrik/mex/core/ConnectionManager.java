@@ -89,6 +89,20 @@ public class ConnectionManager {
             try { s.close(); } catch (Exception ignored) {}
         }
         active.clear();
+        // The states map kept its rows for every connection ever
+        // observed — fine for a long-running app, but on app exit
+        // we want clean state for any test fixture that swaps the
+        // ConnectionManager out.
+        states.clear();
+    }
+
+    /** Drop all in-memory state for {@code id} — connection-level
+     *  GC after the user deletes a connection from the store. Without
+     *  this, {@link #states} holds a row per ever-seen connection
+     *  for the JVM's lifetime. */
+    public void forget(String id) {
+        disconnect(id);
+        states.remove(id);
     }
 
     private static String describe(Throwable t) {

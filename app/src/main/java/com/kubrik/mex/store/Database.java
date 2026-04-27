@@ -15,20 +15,29 @@ public class Database implements AutoCloseable {
     public Database() throws SQLException, IOException {
         Files.createDirectories(AppPaths.dataDir());
         String url = "jdbc:sqlite:" + AppPaths.databaseFile().toAbsolutePath();
-        this.connection = DriverManager.getConnection(url);
-        try (Statement st = connection.createStatement()) {
-            st.execute("PRAGMA journal_mode=WAL");
-            st.execute("PRAGMA foreign_keys=ON");
-            // Without busy_timeout any SQLITE_BUSY (a writer lock
-            // conflict during a WAL checkpoint, or a read racing a
-            // still-in-flight write) throws immediately. 5s matches the
-            // sqlite CLI default and absorbs the short bursts the app's
-            // samplers + UI writes produce without masking real
-            // deadlocks. Many DAOs in the app write without the
-            // writeLock() contract; this pragma protects them.
-            st.execute("PRAGMA busy_timeout=5000");
+        Connection c = DriverManager.getConnection(url);
+        try {
+            try (Statement st = c.createStatement()) {
+                st.execute("PRAGMA journal_mode=WAL");
+                st.execute("PRAGMA foreign_keys=ON");
+                // Without busy_timeout any SQLITE_BUSY (a writer lock
+                // conflict during a WAL checkpoint, or a read racing a
+                // still-in-flight write) throws immediately. 5s matches the
+                // sqlite CLI default and absorbs the short bursts the app's
+                // samplers + UI writes produce without masking real
+                // deadlocks. Many DAOs in the app write without the
+                // writeLock() contract; this pragma protects them.
+                st.execute("PRAGMA busy_timeout=5000");
+            }
+            this.connection = c;
+            migrate();
+        } catch (RuntimeException | SQLException e) {
+            // A failed pragma or migration would have leaked the JDBC
+            // connection (and its 1-2 MB SQLite handle) for the JVM's
+            // lifetime — close it before propagating.
+            try { c.close(); } catch (SQLException ignored) {}
+            throw e;
         }
-        migrate();
     }
 
     public Connection connection() { return connection; }

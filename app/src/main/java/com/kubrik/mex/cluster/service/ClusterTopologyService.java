@@ -128,10 +128,20 @@ public final class ClusterTopologyService implements AutoCloseable {
             return t;
         });
         State s = new State(connectionId, exec);
-        ScheduledFuture<?> tick = exec.scheduleAtFixedRate(s::heartbeat,
-                HEARTBEAT_MS, HEARTBEAT_MS, TimeUnit.MILLISECONDS);
-        s.tick = tick;
-        return s;
+        try {
+            ScheduledFuture<?> tick = exec.scheduleAtFixedRate(s::heartbeat,
+                    HEARTBEAT_MS, HEARTBEAT_MS, TimeUnit.MILLISECONDS);
+            s.tick = tick;
+            return s;
+        } catch (RuntimeException re) {
+            // RejectedExecutionException would only fire on a pre-shut
+            // executor — defensive belt-and-braces in case someone
+            // wraps the factory later. Without this, a failed schedule
+            // leaks the unexecuted ScheduledExecutorService for the
+            // JVM's lifetime.
+            exec.shutdownNow();
+            throw re;
+        }
     }
 
     /** Per-connection state + tick loop. */
