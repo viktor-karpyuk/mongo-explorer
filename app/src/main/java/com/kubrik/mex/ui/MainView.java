@@ -353,7 +353,12 @@ public class MainView extends BorderPane {
                 item("Cloud Credentials",
                         new KeyCodeCombination(KeyCode.D,
                                 KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
-                        this::openCloudCredentialsTab));
+                        this::openCloudCredentialsTab),
+                // v2.8.4 Q2.8.4-F — Cloud Operations history.
+                item("Cloud Operations",
+                        new KeyCodeCombination(KeyCode.O,
+                                KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN),
+                        this::openCloudOperationsTab));
 
         // ----- Help -----
         Menu help = new Menu("Help");
@@ -1067,6 +1072,33 @@ public class MainView extends BorderPane {
 
     public com.kubrik.mex.k8s.compute.managedpool.CloudCredentialDao cloudCredentialDaoOrNull() {
         return cloudCredentialDao;
+    }
+
+    private com.kubrik.mex.k8s.compute.managedpool.ManagedPoolOperationDao cloudOpsDao;
+    private com.kubrik.mex.k8s.compute.managedpool.ui.CloudOperationsPane cloudOpsPane;
+    private Tab cloudOpsTab;
+
+    /** v2.8.4 — open the Cloud Operations history pane (read-only
+     *  view over managed_pool_operations). */
+    private void openCloudOperationsTab() {
+        if (cloudOpsTab != null && tabs.getTabs().contains(cloudOpsTab)) {
+            tabs.getSelectionModel().select(cloudOpsTab);
+            return;
+        }
+        if (cloudOpsDao == null) {
+            cloudOpsDao = new com.kubrik.mex.k8s.compute.managedpool
+                    .ManagedPoolOperationDao(database);
+        }
+        cloudOpsPane = new com.kubrik.mex.k8s.compute.managedpool.ui
+                .CloudOperationsPane(cloudOpsDao);
+        cloudOpsTab = new Tab("Cloud Operations", cloudOpsPane);
+        cloudOpsTab.setOnClosed(e -> {
+            if (cloudOpsPane != null) cloudOpsPane.close();
+            cloudOpsTab = null;
+            cloudOpsPane = null;
+        });
+        tabs.getTabs().add(cloudOpsTab);
+        tabs.getSelectionModel().select(cloudOpsTab);
     }
 
     private void ensureLabsK8sWiring() {
