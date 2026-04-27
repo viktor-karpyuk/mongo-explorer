@@ -22,12 +22,33 @@ public final class DeploymentSpecImporter {
 
     private static final ObjectMapper JSON = new ObjectMapper()
             .registerModule(new Jdk8Module())
+            .registerModule(buildComputeStrategyModule())
             // The records expose derived accessors (isProdAcceptable, coordinates,
             // replicasPerReplset, …) that Jackson picks up as properties on the
             // writer side. We don't want them to fail the reader when a spec
             // written by a newer mex install carries additional derived fields.
             .configure(com.fasterxml.jackson.databind.DeserializationFeature
                     .FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+    private static com.fasterxml.jackson.databind.module.SimpleModule buildComputeStrategyModule() {
+        com.fasterxml.jackson.databind.module.SimpleModule m =
+                new com.fasterxml.jackson.databind.module.SimpleModule("mex-compute-strategy-import");
+        m.addDeserializer(com.kubrik.mex.k8s.compute.ComputeStrategy.class,
+                new com.fasterxml.jackson.databind.JsonDeserializer<>() {
+                    @Override public com.kubrik.mex.k8s.compute.ComputeStrategy deserialize(
+                            com.fasterxml.jackson.core.JsonParser p,
+                            com.fasterxml.jackson.databind.DeserializationContext ctx)
+                            throws IOException {
+                        com.fasterxml.jackson.databind.JsonNode node = p.readValueAsTree();
+                        if (node == null || node.isNull()) {
+                            return com.kubrik.mex.k8s.compute.ComputeStrategy.NONE;
+                        }
+                        return com.kubrik.mex.k8s.compute.ComputeStrategyJson
+                                .fromJson(node.toString());
+                    }
+                });
+        return m;
+    }
 
     private DeploymentSpecImporter() {}
 
