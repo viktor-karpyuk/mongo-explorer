@@ -166,7 +166,7 @@ tasks.test {
         // v2.8.1 — `k8sKind` tests need a kind cluster reachable via
         // the caller's kubeconfig + MEX_K8S_IT=kind. Skipped by default;
         // run with `./gradlew :app:k8sKindTest`.
-        excludeTags("perf", "shardedRig", "labDocker", "k8sKind")
+        excludeTags("perf", "shardedRig", "labDocker", "k8sKind", "k8sSoak")
     }
 }
 
@@ -205,6 +205,22 @@ tasks.register<Test>("shardedRigTest") {
     }
     classpath = sourceSets["test"].runtimeClasspath
     testClassesDirs = sourceSets["test"].output.classesDirs
+}
+
+tasks.register<Test>("k8sSoakTest") {
+    description = "Runs the v2.8.1 Q2.8-L3 72-hour kind soak. " +
+            "Requires kind + MEX_K8S_IT=kind + MEX_SOAK=<duration> " +
+            "(e.g. 72h) or MEX_SOAK_ITERATIONS=<n> in the environment. " +
+            "Optional: MEX_SOAK_ITERATIONS caps the loop independently of the wall clock."
+    group = "verification"
+    useJUnitPlatform {
+        includeTags("k8sSoak")
+    }
+    classpath = sourceSets["test"].runtimeClasspath
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    // Soak has its own internal budget; don't let JUnit's per-test
+    // timeout fire before the harness loop reaches MEX_SOAK.
+    systemProperty("junit.jupiter.execution.timeout.default", "73h")
 }
 
 tasks.register<Test>("k8sKindTest") {
