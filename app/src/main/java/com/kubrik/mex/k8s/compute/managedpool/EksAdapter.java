@@ -165,7 +165,8 @@ public final class EksAdapter implements ManagedPoolAdapter {
                 .build();
     }
 
-    private AwsCredentialsProvider providerFor(CloudCredential cred) {
+    /** Visible for tests — auth-mode dispatch + payload parsing. */
+    AwsCredentialsProvider providerFor(CloudCredential cred) {
         return switch (cred.authMode()) {
             case STATIC -> {
                 String body = secrets.read(cred.keychainRef()).orElse("");

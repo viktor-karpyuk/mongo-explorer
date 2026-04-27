@@ -62,24 +62,7 @@ public final class GkeAdapter implements ManagedPoolAdapter {
     public PoolOperationResult createPool(CloudCredential credential, ManagedPoolSpec spec) {
         try (ClusterManagerClient client = newClient(credential)) {
             String parent = parentFor(credential, spec.region());
-            NodePool pool = NodePool.newBuilder()
-                    .setName(spec.poolName())
-                    .setInitialNodeCount(spec.desiredNodes())
-                    .setAutoscaling(NodePoolAutoscaling.newBuilder()
-                            .setEnabled(true)
-                            .setMinNodeCount(spec.minNodes())
-                            .setMaxNodeCount(spec.maxNodes())
-                            .build())
-                    .setConfig(NodeConfig.newBuilder()
-                            .setMachineType(spec.instanceType())
-                            .setSpot(spec.capacityType()
-                                    == ManagedPoolSpec.CapacityType.SPOT)
-                            .build())
-                    .build();
-            CreateNodePoolRequest req = CreateNodePoolRequest.newBuilder()
-                    .setParent(parent)
-                    .setNodePool(pool)
-                    .build();
+            CreateNodePoolRequest req = buildCreateRequest(spec, parent);
             Operation op = client.createNodePool(req);
             log.info("GKE createNodePool {} -> {}", spec.poolName(), op.getName());
             return PoolOperationResult.accepted(op.getName());
@@ -87,6 +70,30 @@ public final class GkeAdapter implements ManagedPoolAdapter {
             log.warn("GKE createNodePool failed: {}", e.toString());
             return PoolOperationResult.rejected(e.getMessage());
         }
+    }
+
+    /** Visible for tests — assembles the {@code CreateNodePoolRequest}
+     *  proto from a spec + GKE parent name without opening a live SDK
+     *  client. Lets unit tests assert the wire shape. */
+    static CreateNodePoolRequest buildCreateRequest(ManagedPoolSpec spec, String parent) {
+        NodePool pool = NodePool.newBuilder()
+                .setName(spec.poolName())
+                .setInitialNodeCount(spec.desiredNodes())
+                .setAutoscaling(NodePoolAutoscaling.newBuilder()
+                        .setEnabled(true)
+                        .setMinNodeCount(spec.minNodes())
+                        .setMaxNodeCount(spec.maxNodes())
+                        .build())
+                .setConfig(NodeConfig.newBuilder()
+                        .setMachineType(spec.instanceType())
+                        .setSpot(spec.capacityType()
+                                == ManagedPoolSpec.CapacityType.SPOT)
+                        .build())
+                .build();
+        return CreateNodePoolRequest.newBuilder()
+                .setParent(parent)
+                .setNodePool(pool)
+                .build();
     }
 
     @Override
@@ -136,7 +143,8 @@ public final class GkeAdapter implements ManagedPoolAdapter {
         return ClusterManagerClient.create(settings);
     }
 
-    private CredentialsProvider providerFor(CloudCredential cred) throws Exception {
+    /** Visible for tests — auth-mode dispatch + payload parsing. */
+    CredentialsProvider providerFor(CloudCredential cred) throws Exception {
         if (cred.authMode() == CloudCredential.AuthMode.SERVICE_ACCOUNT_KEY) {
             String body = secrets.read(cred.keychainRef()).orElse("");
             if (body.isBlank()) {

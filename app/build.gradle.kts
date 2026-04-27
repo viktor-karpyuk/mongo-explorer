@@ -124,6 +124,10 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     testImplementation("org.testcontainers:mongodb:1.20.1")
     testImplementation("org.testcontainers:junit-jupiter:1.20.1")
+    // v2.8.4 — Mockito for cloud-SDK request-shape assertions on the
+    // GKE / AKS adapters; lets us lock the wire payload without
+    // standing up a live cloud account.
+    testImplementation("org.mockito:mockito-core:5.12.0")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

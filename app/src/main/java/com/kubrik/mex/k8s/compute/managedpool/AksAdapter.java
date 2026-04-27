@@ -56,17 +56,7 @@ public final class AksAdapter implements ManagedPoolAdapter {
             ContainerServiceManager mgr = managerFor(credential);
             String rg = resourceGroup();
             String cluster = clusterName();
-            AgentPoolInner pool = new AgentPoolInner()
-                    .withCount(spec.desiredNodes())
-                    .withMinCount(spec.minNodes())
-                    .withMaxCount(spec.maxNodes())
-                    .withEnableAutoScaling(true)
-                    .withVmSize(spec.instanceType())
-                    .withMode(AgentPoolMode.USER)
-                    .withOsType(OSType.LINUX)
-                    .withScaleSetPriority(spec.capacityType()
-                            == ManagedPoolSpec.CapacityType.SPOT
-                            ? ScaleSetPriority.SPOT : ScaleSetPriority.REGULAR);
+            AgentPoolInner pool = buildAgentPool(spec);
             AgentPoolInner created = mgr.serviceClient().getAgentPools()
                     .createOrUpdate(rg, cluster, spec.poolName(), pool);
             log.info("AKS createOrUpdate {} -> id={}", spec.poolName(), created.id());
@@ -75,6 +65,24 @@ public final class AksAdapter implements ManagedPoolAdapter {
             log.warn("AKS createOrUpdate failed: {}", e.toString());
             return PoolOperationResult.rejected(e.getMessage());
         }
+    }
+
+    /** Visible for tests — assembles the {@code AgentPoolInner} body
+     *  from a spec without opening a live ARM client. Lets unit tests
+     *  assert the wire shape (vm size, scale-set priority, OS type,
+     *  autoscale bounds). */
+    static AgentPoolInner buildAgentPool(ManagedPoolSpec spec) {
+        return new AgentPoolInner()
+                .withCount(spec.desiredNodes())
+                .withMinCount(spec.minNodes())
+                .withMaxCount(spec.maxNodes())
+                .withEnableAutoScaling(true)
+                .withVmSize(spec.instanceType())
+                .withMode(AgentPoolMode.USER)
+                .withOsType(OSType.LINUX)
+                .withScaleSetPriority(spec.capacityType()
+                        == ManagedPoolSpec.CapacityType.SPOT
+                        ? ScaleSetPriority.SPOT : ScaleSetPriority.REGULAR);
     }
 
     @Override
@@ -131,7 +139,8 @@ public final class AksAdapter implements ManagedPoolAdapter {
         return ContainerServiceManager.authenticate(credentialFor(cred), profile);
     }
 
-    private TokenCredential credentialFor(CloudCredential cred) {
+    /** Visible for tests — auth-mode dispatch + payload parsing. */
+    TokenCredential credentialFor(CloudCredential cred) {
         if (cred.authMode() == CloudCredential.AuthMode.SERVICE_PRINCIPAL) {
             String body = secrets.read(cred.keychainRef()).orElse("");
             // Azure client secrets can legitimately contain ':' (rare but
