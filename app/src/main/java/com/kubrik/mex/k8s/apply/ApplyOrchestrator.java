@@ -104,6 +104,16 @@ public final class ApplyOrchestrator {
         this.opener = Objects.requireNonNull(opener);
     }
 
+    /** v2.8.4 Q2.8.4-D — wire a managed-pool phase service so Apply
+     *  creates + waits for the cloud node pool before rolling out the
+     *  CR. Optional: when null the cloud phase is skipped (every
+     *  pre-v2.8.4 caller path). */
+    private com.kubrik.mex.k8s.compute.managedpool.ManagedPoolPhaseService managedPoolPhase;
+    public void setManagedPoolPhase(
+            com.kubrik.mex.k8s.compute.managedpool.ManagedPoolPhaseService svc) {
+        this.managedPoolPhase = svc;
+    }
+
     /** Run Apply. Returns the new {@code provisioning_records} row id on success. */
     public ApplyResult apply(K8sClusterRef clusterRef,
                                OperatorAdapter adapter,
@@ -141,6 +151,25 @@ public final class ApplyOrchestrator {
         } catch (IOException ioe) {
             recordFail(rowId, "kubeconfig build failed: " + ioe.getMessage());
             throw ioe;
+        }
+
+        // v2.8.4 Q2.8.4-D — cloud phase. Runs only when the strategy
+        // is ManagedPool *and* the orchestrator has been wired with a
+        // phase service. Failure here aborts before any K8s resource
+        // is touched, leaving a FAILED row + audit trail behind.
+        if (managedPoolPhase != null
+                && model.computeStrategy()
+                instanceof com.kubrik.mex.k8s.compute.ComputeStrategy.ManagedPool mp
+                && mp.spec().isPresent()) {
+            recordProgress(rowId, "cloud: creating managed pool");
+            var cloud = managedPoolPhase.createAndAwaitReady(rowId, mp.spec().get());
+            if (!cloud.ok()) {
+                String msg = "cloud phase failed: " + cloud.errorMessage().orElse("?");
+                recordFail(rowId, msg);
+                return new ApplyResult(rowId, new ResourceCatalogue(), sha256, msg);
+            }
+            recordProgress(rowId, "cloud: pool Ready (call "
+                    + cloud.cloudCallId().orElse("?") + ")");
         }
 
         ResourceCatalogue catalogue = new ResourceCatalogue();

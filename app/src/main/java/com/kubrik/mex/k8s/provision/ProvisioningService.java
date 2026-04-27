@@ -105,9 +105,23 @@ public final class ProvisioningService {
                                               com.kubrik.mex.events.EventBus events,
                                               com.kubrik.mex.k8s.portforward.PortForwardService portForwardService,
                                               com.kubrik.mex.store.ConnectionStore connectionStore) {
+        return wire(clientFactory, recordDao, eventDao, events,
+                portForwardService, connectionStore, null);
+    }
+
+    /** v2.8.4 — overload that takes a managed-pool phase service so
+     *  the orchestrator runs the cloud phase before the K8s phase. */
+    public static ProvisioningService wire(com.kubrik.mex.k8s.client.KubeClientFactory clientFactory,
+                                              ProvisioningRecordDao recordDao,
+                                              com.kubrik.mex.k8s.rollout.RolloutEventDao eventDao,
+                                              com.kubrik.mex.events.EventBus events,
+                                              com.kubrik.mex.k8s.portforward.PortForwardService portForwardService,
+                                              com.kubrik.mex.store.ConnectionStore connectionStore,
+                                              com.kubrik.mex.k8s.compute.managedpool.ManagedPoolPhaseService managedPoolPhase) {
         PreflightEngine preflight = new PreflightEngine(clientFactory);
         ApplyOrchestrator orchestrator =
                 new ApplyOrchestrator(clientFactory, recordDao, eventDao, events);
+        if (managedPoolPhase != null) orchestrator.setManagedPoolPhase(managedPoolPhase);
         RolloutWatcher watcher = new RolloutWatcher(clientFactory);
         PostReadyConnector connector =
                 new PostReadyConnector(portForwardService, connectionStore, recordDao);

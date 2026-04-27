@@ -946,9 +946,23 @@ public class MainView extends BorderPane {
                 kubeClientFactory, kubePortForwardAuditDao, events);
         kubeProvisioningDao = new com.kubrik.mex.k8s.apply.ProvisioningRecordDao(database);
         kubeRolloutEventDao = new com.kubrik.mex.k8s.rollout.RolloutEventDao(database);
+        // v2.8.4 — managed-pool phase. Cloud-creds DAO is lazy-built;
+        // the registry ships three stubs by default so all four
+        // strategies execute through the same orchestrator path.
+        if (cloudCredentialDao == null) {
+            cloudCredentialDao =
+                    new com.kubrik.mex.k8s.compute.managedpool.CloudCredentialDao(database);
+        }
+        com.kubrik.mex.k8s.compute.managedpool.ManagedPoolOperationDao mpOpDao =
+                new com.kubrik.mex.k8s.compute.managedpool.ManagedPoolOperationDao(database);
+        com.kubrik.mex.k8s.compute.managedpool.ManagedPoolPhaseService mpPhase =
+                new com.kubrik.mex.k8s.compute.managedpool.ManagedPoolPhaseService(
+                        com.kubrik.mex.k8s.compute.managedpool.ManagedPoolAdapterRegistry.defaultRegistry(),
+                        cloudCredentialDao, mpOpDao);
+
         kubeProvisioningService = com.kubrik.mex.k8s.provision.ProvisioningService.wire(
                 kubeClientFactory, kubeProvisioningDao, kubeRolloutEventDao, events,
-                kubePortForwardService, connectionStore);
+                kubePortForwardService, connectionStore, mpPhase);
         // TearDownService sits parallel to the ProvisioningService — it
         // doesn't own an adapter, just reuses the LiveApplyOpener's
         // delete path. Constructing it here keeps the wiring explicit.
