@@ -955,9 +955,16 @@ public class MainView extends BorderPane {
         }
         com.kubrik.mex.k8s.compute.managedpool.ManagedPoolOperationDao mpOpDao =
                 new com.kubrik.mex.k8s.compute.managedpool.ManagedPoolOperationDao(database);
+        if (cloudSecretStore == null) {
+            com.kubrik.mex.k8s.compute.managedpool.OsKeychainSecretStore os =
+                    new com.kubrik.mex.k8s.compute.managedpool.OsKeychainSecretStore();
+            cloudSecretStore = os.isAvailable() ? os
+                    : new com.kubrik.mex.k8s.compute.managedpool.InMemorySecretStore();
+        }
         com.kubrik.mex.k8s.compute.managedpool.ManagedPoolPhaseService mpPhase =
                 new com.kubrik.mex.k8s.compute.managedpool.ManagedPoolPhaseService(
-                        com.kubrik.mex.k8s.compute.managedpool.ManagedPoolAdapterRegistry.defaultRegistry(),
+                        com.kubrik.mex.k8s.compute.managedpool.ManagedPoolAdapterRegistry
+                                .defaultRegistry(cloudSecretStore),
                         cloudCredentialDao, mpOpDao);
 
         kubeProvisioningService = com.kubrik.mex.k8s.provision.ProvisioningService.wire(

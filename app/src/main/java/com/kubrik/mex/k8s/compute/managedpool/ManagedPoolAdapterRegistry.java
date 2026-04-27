@@ -29,11 +29,26 @@ public final class ManagedPoolAdapterRegistry {
 
     /** GA default — three stubs covering AWS / GCP / Azure. Production
      *  bootstraps replace each with the SDK-backed implementation as
-     *  the per-cloud point releases land. */
+     *  the per-cloud point releases land. The real adapters are
+     *  opt-in via {@code mex.cloud.real_adapters=true}. */
     public static ManagedPoolAdapterRegistry defaultRegistry() {
-        return new ManagedPoolAdapterRegistry()
-                .register(new EksAdapterStub())
-                .register(new GkeAdapterStub())
-                .register(new AksAdapterStub());
+        return defaultRegistry(new InMemorySecretStore());
+    }
+
+    public static ManagedPoolAdapterRegistry defaultRegistry(SecretStore secrets) {
+        ManagedPoolAdapterRegistry r = new ManagedPoolAdapterRegistry();
+        boolean real = Boolean.parseBoolean(
+                System.getProperty("mex.cloud.real_adapters", "false"));
+        if (real) {
+            r.register(new EksAdapter(secrets,
+                    System.getProperty("mex.eks.node_role_arn")));
+            r.register(new GkeAdapterStub()); // real GKE adapter pending
+            r.register(new AksAdapterStub()); // real AKS adapter pending
+        } else {
+            r.register(new EksAdapterStub());
+            r.register(new GkeAdapterStub());
+            r.register(new AksAdapterStub());
+        }
+        return r;
     }
 }

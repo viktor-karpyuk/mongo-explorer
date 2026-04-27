@@ -55,6 +55,14 @@ dependencies {
     }
     implementation("software.amazon.awssdk:url-connection-client:2.26.12")
 
+    // v2.8.4 — Real EKS adapter for managed-pool provisioning. Same
+    // url-connection transport as the S3 sink to avoid a second
+    // Netty tree.
+    implementation("software.amazon.awssdk:eks:2.26.12") {
+        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+        exclude(group = "software.amazon.awssdk", module = "apache-client")
+    }
+
     // v2.6.1 Q2.6.1-A — Google Cloud Storage backup sink. Uses the
     // HTTP / JSON transport; we exclude the gRPC-shaded client which
     // pulls a separate Netty (~30 MB) we don't need for occasional
