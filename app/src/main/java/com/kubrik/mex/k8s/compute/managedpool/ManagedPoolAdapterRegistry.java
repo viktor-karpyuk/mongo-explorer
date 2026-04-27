@@ -43,7 +43,7 @@ public final class ManagedPoolAdapterRegistry {
             r.register(new EksAdapter(secrets,
                     System.getProperty("mex.eks.node_role_arn")));
             r.register(new GkeAdapter(secrets));
-            r.register(new AksAdapterStub()); // real AKS adapter pending
+            r.register(new AksAdapter(secrets));
         } else {
             r.register(new EksAdapterStub());
             r.register(new GkeAdapterStub());

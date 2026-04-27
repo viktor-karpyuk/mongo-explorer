@@ -71,6 +71,12 @@ dependencies {
         exclude(group = "io.grpc", module = "grpc-netty-shaded")
     }
 
+    // v2.8.4.2 — Real AKS adapter for managed-pool provisioning. Uses
+    // the resourcemanager-containerservice ARM client; identity comes
+    // from azure-identity (lighter than the full azure-sdk bom).
+    implementation("com.azure.resourcemanager:azure-resourcemanager-containerservice:2.43.0")
+    implementation("com.azure:azure-identity:1.13.2")
+
     // v2.6.1 Q2.6.1-A — Google Cloud Storage backup sink. Uses the
     // HTTP / JSON transport; we exclude the gRPC-shaded client which
     // pulls a separate Netty (~30 MB) we don't need for occasional
