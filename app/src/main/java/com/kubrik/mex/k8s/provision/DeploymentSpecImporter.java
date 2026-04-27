@@ -39,12 +39,13 @@ public final class DeploymentSpecImporter {
                             com.fasterxml.jackson.core.JsonParser p,
                             com.fasterxml.jackson.databind.DeserializationContext ctx)
                             throws IOException {
+                        // Read the embedded subtree and hand it to the
+                        // codec's JsonNode entry-point — bypasses the
+                        // string→tree→string round-trip that loses
+                        // canonicalisation on every export+import cycle.
                         com.fasterxml.jackson.databind.JsonNode node = p.readValueAsTree();
-                        if (node == null || node.isNull()) {
-                            return com.kubrik.mex.k8s.compute.ComputeStrategy.NONE;
-                        }
                         return com.kubrik.mex.k8s.compute.ComputeStrategyJson
-                                .fromJson(node.toString());
+                                .fromJsonNode(node);
                     }
                 });
         return m;

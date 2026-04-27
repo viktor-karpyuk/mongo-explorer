@@ -112,7 +112,15 @@ public final class DeploymentSpecExporter {
      *  can't reflect over a sealed interface with optional records;
      *  delegating to the explicit codec keeps the wire format
      *  identical to the {@code provisioning_records.compute_strategy_json}
-     *  column. */
+     *  column.
+     *
+     *  <p>Only the serializer is registered here — the importer owns
+     *  the deserialiser (this exporter never reads back a JSON it
+     *  produced). The serialiser routes through {@code writeTree} on
+     *  a Jackson-parsed copy of the codec's output so any embedded
+     *  control characters, escapes, or non-canonical encoding are
+     *  re-canonicalised by the parent ObjectMapper rather than being
+     *  blindly written via {@code writeRawValue}.</p> */
     private static com.fasterxml.jackson.databind.module.SimpleModule computeStrategyModule() {
         com.fasterxml.jackson.databind.module.SimpleModule m =
                 new com.fasterxml.jackson.databind.module.SimpleModule("mex-compute-strategy");
@@ -124,22 +132,16 @@ public final class DeploymentSpecExporter {
                             com.fasterxml.jackson.databind.SerializerProvider provs)
                             throws IOException {
                         String json = com.kubrik.mex.k8s.compute.ComputeStrategyJson.toJson(value);
-                        if (json == null) gen.writeNull();
-                        else gen.writeRawValue(json);
-                    }
-                });
-        m.addDeserializer(com.kubrik.mex.k8s.compute.ComputeStrategy.class,
-                new com.fasterxml.jackson.databind.JsonDeserializer<>() {
-                    @Override public com.kubrik.mex.k8s.compute.ComputeStrategy deserialize(
-                            com.fasterxml.jackson.core.JsonParser p,
-                            com.fasterxml.jackson.databind.DeserializationContext ctx)
-                            throws IOException {
-                        com.fasterxml.jackson.databind.JsonNode node = p.readValueAsTree();
-                        if (node == null || node.isNull()) {
-                            return com.kubrik.mex.k8s.compute.ComputeStrategy.NONE;
+                        if (json == null) {
+                            gen.writeNull();
+                            return;
                         }
-                        return com.kubrik.mex.k8s.compute.ComputeStrategyJson
-                                .fromJson(node.toString());
+                        // Re-parse so the parent generator emits a
+                        // canonical embedding — never trust raw bytes
+                        // from a third-party codec to be quote-safe
+                        // inside our document.
+                        com.fasterxml.jackson.databind.JsonNode node = JSON.readTree(json);
+                        gen.writeTree(node);
                     }
                 });
         return m;

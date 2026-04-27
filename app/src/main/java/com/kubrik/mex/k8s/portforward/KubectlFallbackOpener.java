@@ -128,11 +128,14 @@ public final class KubectlFallbackOpener implements PortForwardService.PortForwa
     private static Socket waitForPortReady(int port, Duration timeout) {
         long deadline = System.nanoTime() + timeout.toNanos();
         while (System.nanoTime() < deadline) {
+            Socket s = new Socket();
             try {
-                Socket s = new Socket();
                 s.connect(new InetSocketAddress("127.0.0.1", port), 500);
                 return s;
             } catch (IOException retry) {
+                // Close the unconnected socket so we don't leak one
+                // file descriptor per failed connect attempt.
+                try { s.close(); } catch (IOException ignored) {}
                 try { Thread.sleep(200); }
                 catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();

@@ -78,9 +78,13 @@ public final class NodePoolRenderer {
         }
         if (!merged.isEmpty()) podSpec.put("tolerations", merged);
 
-        // topologySpreadConstraints — replace with the pool-scoped
-        // variant. Decision 4: per-deployment labelSelector, not a
-        // namespace-wide one.
+        // topologySpreadConstraints — APPEND the pool-scoped variant
+        // alongside any existing constraints (e.g. the operator's
+        // zone-spread). Replacing them stomped multi-zone resilience
+        // when both spreads are valid + complementary. Decision 4
+        // narrows the labelSelector to *this deployment* via the
+        // `app` matchLabel so the pool-scoped entry doesn't compete
+        // with namespace-wide siblings.
         if (np.spreadScope() == SpreadScope.WITHIN_POOL) {
             Map<String, Object> tsc = new LinkedHashMap<>();
             tsc.put("maxSkew", 1);
@@ -88,8 +92,25 @@ public final class NodePoolRenderer {
             tsc.put("whenUnsatisfiable", "DoNotSchedule");
             tsc.put("labelSelector", Map.of("matchLabels",
                     Map.of("app", podLabelSelector + "-svc")));
-            podSpec.put("topologySpreadConstraints", List.of(tsc));
+            List<Map<String, Object>> existingSpread = coerceSpread(
+                    podSpec.get("topologySpreadConstraints"));
+            existingSpread.add(tsc);
+            podSpec.put("topologySpreadConstraints", existingSpread);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> coerceSpread(Object raw) {
+        if (raw instanceof List<?> list) {
+            List<Map<String, Object>> out = new ArrayList<>(list.size() + 1);
+            for (Object o : list) {
+                if (o instanceof Map<?, ?> m) {
+                    out.add(new LinkedHashMap<>((Map<String, Object>) m));
+                }
+            }
+            return out;
+        }
+        return new ArrayList<>();
     }
 
     @SuppressWarnings("unchecked")

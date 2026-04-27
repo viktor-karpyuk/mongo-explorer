@@ -156,21 +156,46 @@ public final class KarpenterRenderer {
 
     private Map<String, Object> disruptionBlock(KarpenterSpec sp) {
         Map<String, Object> d = new LinkedHashMap<>();
+        // Karpenter v1 (karpenter.sh/v1) renamed the consolidation
+        // policy values: the legacy v1beta1 "WhenUnderutilized" is
+        // now "WhenEmptyOrUnderutilized"; "WhenEmpty" is still valid.
         d.put("consolidationPolicy", sp.consolidation()
-                ? "WhenUnderutilized" : "WhenEmpty");
+                ? "WhenEmptyOrUnderutilized" : "WhenEmpty");
         if (sp.expireAfter() != null) d.put("expireAfter", sp.expireAfter());
         return d;
     }
 
-    private static String groupOf(String apiVersion) {
+    /** Returns the API group portion of an apiVersion string —
+     *  e.g. {@code "karpenter.k8s.aws/v1"} → {@code "karpenter.k8s.aws"}.
+     *  The core API ({@code "v1"} alone) has an empty group, so a
+     *  no-slash apiVersion returns {@code ""} per Kubernetes' wire
+     *  shape (NodeClassRef.group is required-but-may-be-empty for
+     *  core resources). */
+    static String groupOf(String apiVersion) {
+        if (apiVersion == null) return "";
         int slash = apiVersion.indexOf('/');
-        return slash < 0 ? apiVersion : apiVersion.substring(0, slash);
+        return slash < 0 ? "" : apiVersion.substring(0, slash);
     }
 
-    private static String safeName(String raw) {
-        // NodePool names must be DNS-1123 subdomain; strip + lower
-        // the deployment name.
-        return raw.toLowerCase().replaceAll("[^a-z0-9-]", "-")
-                .replaceAll("-+", "-");
+    /** Sanitise a deployment name into a DNS-1123 subdomain. K8s
+     *  requires [a-z0-9]([a-z0-9-]*[a-z0-9])? — must start and end
+     *  with an alphanumeric. We always prefix with "mex-" upstream,
+     *  so a leading-digit "123-rs" becomes "mex-123-rs" and keeps
+     *  the start-letter rule. End-trim the trailing dash that the
+     *  hyphen-collapse can produce ("foo-" → "foo"). */
+    static String safeName(String raw) {
+        if (raw == null) return "x";
+        String squashed = raw.toLowerCase().replaceAll("[^a-z0-9-]", "-")
+                .replaceAll("-+", "-")
+                .replaceAll("^-|-$", "");
+        if (squashed.isEmpty()) return "x";
+        // DNS-1123 mandates a leading alphanumeric; the upstream
+        // "mex-" prefix already satisfies this for the NodePool
+        // name path. For other callers, prepend an "x" if needed.
+        if (!Character.isLetter(squashed.charAt(0))
+                && !Character.isDigit(squashed.charAt(0))) {
+            squashed = "x" + squashed;
+        }
+        return squashed;
     }
 }

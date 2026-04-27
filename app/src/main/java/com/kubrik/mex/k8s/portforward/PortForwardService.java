@@ -199,6 +199,10 @@ public final class PortForwardService implements AutoCloseable {
     }
 
     public void close(long auditRowId, String reason) {
+        // The reason ends up on the Closed event + the audit row's
+        // reason_closed column. Default to MANUAL rather than NPE-ing
+        // if the caller forgot to supply one.
+        if (reason == null) reason = REASON_MANUAL;
         Handle h = handlesByAuditId.remove(auditRowId);
         if (h == null) return;
         if (!h.closing.compareAndSet(false, true)) return;

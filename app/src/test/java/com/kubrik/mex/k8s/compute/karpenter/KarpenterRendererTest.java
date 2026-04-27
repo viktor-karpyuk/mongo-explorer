@@ -30,7 +30,10 @@ class KarpenterRendererTest {
         assertTrue(yaml.contains("karpenter.k8s.aws/instance-family"));
         assertTrue(yaml.contains("kubernetes.io/arch"));
         assertTrue(yaml.contains("mex.deployment"));
-        assertTrue(yaml.contains("WhenUnderutilized"));
+        // Karpenter v1 renamed the consolidation policy value from
+        // v1beta1's "WhenUnderutilized" to "WhenEmptyOrUnderutilized";
+        // the renderer was updated to match the v1 API.
+        assertTrue(yaml.contains("WhenEmptyOrUnderutilized"));
         assertTrue(yaml.contains("expireAfter"));
         assertTrue(yaml.contains("limits"));
 

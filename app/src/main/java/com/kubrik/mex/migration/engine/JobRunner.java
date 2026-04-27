@@ -425,10 +425,24 @@ public final class JobRunner {
         // EXT-2 — when a non-Mongo sink is configured, the target Mongo
         // is intentionally empty, so the source-vs-target verifier
         // would always FAIL. Skip it; the sink's own success counters
-        // are the source of truth in that mode.
-        boolean hasFileSink = spec.options() != null
-                && spec.options().sinks() != null
-                && !spec.options().sinks().isEmpty();
+        // are the source of truth in that mode. The Options record's
+        // canonical ctor coerces a null sinks list to List.of(), so
+        // one emptiness check covers both the null + empty cases.
+        boolean hasFileSink = !spec.options().sinks().isEmpty();
+        if (fatal == null
+                && !ctx.stopping()
+                && spec.options().executionMode() == ExecutionMode.RUN
+                && spec.kind() == com.kubrik.mex.migration.spec.MigrationKind.DATA_TRANSFER
+                && spec.options().verification().enabled()
+                && hasFileSink) {
+            // User explicitly enabled verification but also routed
+            // to a sink — surface the skip decision instead of
+            // leaving the audit drawer with an empty verification
+            // report and no explanation.
+            log.warn("verification skipped for job {}: file sink configured "
+                    + "(spec.options.sinks not empty); Mongo target would "
+                    + "always FAIL the count comparison", jobId.value());
+        }
         if (fatal == null
                 && !ctx.stopping()
                 && spec.options().executionMode() == ExecutionMode.RUN

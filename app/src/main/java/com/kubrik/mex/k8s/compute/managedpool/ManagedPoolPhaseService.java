@@ -77,6 +77,13 @@ public final class ManagedPoolPhaseService {
         }
 
         long deadline = System.currentTimeMillis() + READY_TIMEOUT.toMillis();
+        // Adapter.describe folds "pool genuinely deleted" and
+        // "transient API error" into the same Optional.empty(). Track
+        // consecutive empties so a real deletion exits fast instead of
+        // burning the entire 10-minute budget — a flapping API can
+        // recover within a minute or two before we give up.
+        int consecutiveEmpty = 0;
+        final int EMPTY_BAIL_THRESHOLD = 6;
         while (System.currentTimeMillis() < deadline) {
             long describeOpId = startOp(provisioningRecordId, cred,
                     ManagedPoolOperationDao.Action.POOL_DESCRIBE, spec);
@@ -86,13 +93,21 @@ public final class ManagedPoolPhaseService {
                     desc.isPresent() ? ManagedPoolOperationDao.Status.OK
                             : ManagedPoolOperationDao.Status.FAILED,
                     Optional.empty());
-            if (desc.isPresent() && desc.get().phase()
-                    == ManagedPoolAdapter.PoolPhase.READY) {
-                return Result.success(createResult.cloudCallId().orElse(null));
-            }
-            if (desc.isPresent() && desc.get().phase()
-                    == ManagedPoolAdapter.PoolPhase.FAILED) {
-                return Result.failure("pool entered FAILED state after create");
+            if (desc.isPresent()) {
+                consecutiveEmpty = 0;
+                if (desc.get().phase() == ManagedPoolAdapter.PoolPhase.READY) {
+                    return Result.success(createResult.cloudCallId().orElse(null));
+                }
+                if (desc.get().phase() == ManagedPoolAdapter.PoolPhase.FAILED) {
+                    return Result.failure("pool entered FAILED state after create");
+                }
+            } else {
+                consecutiveEmpty++;
+                if (consecutiveEmpty >= EMPTY_BAIL_THRESHOLD) {
+                    return Result.failure("pool absent for " + EMPTY_BAIL_THRESHOLD
+                            + " consecutive describe calls — assumed deleted "
+                            + "out-of-band or never created");
+                }
             }
             try { Thread.sleep(POLL_INTERVAL); }
             catch (InterruptedException ie) {

@@ -195,6 +195,11 @@ public final class MigrateCli implements Runnable {
         }
         cliManager.connect(connectionId);
         long deadline = System.currentTimeMillis() + 30_000L;
+        // After a fresh connect() call we should never see DISCONNECTED
+        // unless someone disconnected the connection mid-flight (race
+        // with another caller, manual SIGINT, etc.). Exit immediately
+        // instead of spinning until the 30 s deadline.
+        boolean sawConnecting = false;
         while (System.currentTimeMillis() < deadline) {
             var st = cliManager.state(connectionId).status();
             if (st == com.kubrik.mex.model.ConnectionState.Status.CONNECTED) return;
@@ -202,6 +207,15 @@ public final class MigrateCli implements Runnable {
                 throw new IllegalStateException(role + " connection '" + connectionId
                         + "' failed to connect: "
                         + cliManager.state(connectionId).lastError());
+            }
+            if (st == com.kubrik.mex.model.ConnectionState.Status.CONNECTING) {
+                sawConnecting = true;
+            } else if (st == com.kubrik.mex.model.ConnectionState.Status.DISCONNECTED
+                    && sawConnecting) {
+                // We saw CONNECTING transition back to DISCONNECTED
+                // — that's a regression, not a startup race.
+                throw new IllegalStateException(role + " connection '" + connectionId
+                        + "' transitioned back to DISCONNECTED during connect");
             }
             try { Thread.sleep(50); }
             catch (InterruptedException ie) {

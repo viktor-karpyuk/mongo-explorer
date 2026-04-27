@@ -81,9 +81,26 @@ public final class ComputeStrategyJson {
         try { root = M.readTree(json); }
         catch (IOException ioe) { throw new IllegalArgumentException(
                 "parse compute_strategy_json: " + ioe.getMessage(), ioe); }
+        return fromJsonNode(root);
+    }
+
+    /** Decode from an already-parsed {@link JsonNode}. Used by the
+     *  Jackson modules in DeploymentSpec(Im|Ex)porter to avoid the
+     *  string→tree→string round-trip that loses canonicalisation
+     *  (escapes, key order) on every export+import cycle. */
+    public static ComputeStrategy fromJsonNode(JsonNode root) {
+        if (root == null || root.isNull()) return ComputeStrategy.NONE;
         String type = root.path("type").asText("none");
         return switch (type) {
-            case "node_pool" -> parseNodePool(root);
+            case "node_pool" -> {
+                ComputeStrategy.NodePool np = parseNodePool(root);
+                // The NodePool record forbids empty selectors. A
+                // malformed row (e.g. wizard mid-edit, manual SQL
+                // tinkering) shouldn't crash the codec — fall back
+                // to the v2.8.0-compatible default.
+                yield np == null || np.selector().isEmpty()
+                        ? ComputeStrategy.NONE : np;
+            }
             case "karpenter" -> new ComputeStrategy.Karpenter(parseKarpenter(root));
             case "managed_pool" -> new ComputeStrategy.ManagedPool(parseManagedPool(root));
             default -> ComputeStrategy.NONE;
@@ -216,6 +233,9 @@ public final class ComputeStrategyJson {
                 selector.add(new LabelPair(e.getKey(), e.getValue().asText()));
             }
         }
+        // Empty selector violates the record invariant — caller falls
+        // back to NONE. Returning null keeps the parser branch-free.
+        if (selector.isEmpty()) return null;
         List<Toleration> tolerations = new ArrayList<>();
         JsonNode tol = root.path("tolerations");
         if (tol.isArray()) {

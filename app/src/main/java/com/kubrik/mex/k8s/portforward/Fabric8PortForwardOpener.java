@@ -101,13 +101,30 @@ public final class Fabric8PortForwardOpener
         };
     }
 
-    private Config buildConfig() {
+    private Config buildConfig() throws IOException {
         if (kubeconfigPath != null && !kubeconfigPath.isBlank()) {
             try {
                 String content = java.nio.file.Files.readString(Path.of(kubeconfigPath));
+                if (contextName == null || contextName.isBlank()) {
+                    // Fabric8's fromKubeconfig accepts null but then
+                    // picks the file's current-context — if the user
+                    // explicitly handed us a path, they expect to
+                    // route to a specific named context. Refuse to
+                    // silently route somewhere else.
+                    throw new IOException(
+                            "Fabric8 port-forward needs a non-empty contextName "
+                            + "when a kubeconfigPath is supplied");
+                }
                 return Config.fromKubeconfig(contextName, content, kubeconfigPath);
-            } catch (Exception ignored) {
-                // Fall through — let the builder pick up KUBECONFIG / ~/.kube/config.
+            } catch (IOException io) {
+                // Re-throw IOException — silently falling back to
+                // ~/.kube/config used to mask typo'd paths and route
+                // the port-forward to the wrong cluster.
+                throw io;
+            } catch (Exception other) {
+                log.warn("Fabric8 port-forward: kubeconfig at {} unreadable, "
+                        + "falling back to default chain ({}/~/.kube/config): {}",
+                        kubeconfigPath, "$KUBECONFIG", other.toString());
             }
         }
         return new ConfigBuilder().build();
@@ -116,11 +133,15 @@ public final class Fabric8PortForwardOpener
     private static Socket waitForPortReady(int port, Duration timeout) {
         long deadline = System.nanoTime() + timeout.toNanos();
         while (System.nanoTime() < deadline) {
+            Socket s = new Socket();
             try {
-                Socket s = new Socket();
                 s.connect(new InetSocketAddress("127.0.0.1", port), 500);
                 return s;
             } catch (IOException retry) {
+                // The unconnected socket holds a file descriptor —
+                // close it before sleeping or we leak one descriptor
+                // per failed probe.
+                try { s.close(); } catch (IOException ignored) {}
                 try { Thread.sleep(200); }
                 catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();

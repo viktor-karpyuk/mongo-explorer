@@ -42,8 +42,11 @@ public final class KarpenterEventProbe {
     }
 
     /** Poll once. Caller invokes this on the same cadence as the
-     *  Mongo CR watcher; each transition is emitted via {@code sink}. */
-    public void poll(Consumer<RolloutEvent> sink) {
+     *  Mongo CR watcher; each transition is emitted via {@code sink}.
+     *  Synchronized so a retry-overlap or a parallel watcher tick
+     *  can't ConcurrentModification the phase tracker — the call
+     *  cost is dominated by the API round-trip anyway. */
+    public synchronized void poll(Consumer<RolloutEvent> sink) {
         try {
             DynamicKubernetesApi api = new DynamicKubernetesApi(
                     "karpenter.sh", "v1", "nodeclaims", client);
@@ -74,9 +77,11 @@ public final class KarpenterEventProbe {
             }
             // Detect deleted claims so the user sees pool consolidation.
             lastPhaseByName.keySet().retainAll(seen);
-        } catch (Throwable t) {
+        } catch (Exception e) {
             // Probe is best-effort; the watcher's main loop must not
-            // fail because Karpenter happens to be unhealthy.
+            // fail because Karpenter happens to be unhealthy. Errors
+            // (OOM, StackOverflow) keep propagating so the JVM can
+            // surface them — only Exception is swallowed.
         }
     }
 
