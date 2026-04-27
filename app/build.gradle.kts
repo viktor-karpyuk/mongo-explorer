@@ -85,6 +85,20 @@ dependencies {
         exclude(group = "org.slf4j", module = "slf4j-simple")
     }
 
+    // v2.8.4 — Fabric8 port-forward leg. Used as a third backend in
+    // the chain (client-java → fabric8 → kubectl) for environments
+    // where the client-java SPDY upgrade path stumbles. Only the
+    // kubernetes-client-api + okhttp-client subset is pulled — the
+    // model + crd-generator transitive trees are excluded so the
+    // app image only grows by ~3 MB.
+    implementation("io.fabric8:kubernetes-client:6.13.4") {
+        exclude(group = "io.fabric8", module = "kubernetes-model-gatewayapi")
+        exclude(group = "io.fabric8", module = "kubernetes-model-events")
+        exclude(group = "io.fabric8", module = "kubernetes-model-flowcontrol")
+        exclude(group = "io.fabric8", module = "kubernetes-model-metrics")
+        exclude(group = "io.fabric8", module = "kubernetes-model-resource")
+    }
+
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     testImplementation("org.testcontainers:mongodb:1.20.1")
     testImplementation("org.testcontainers:junit-jupiter:1.20.1")

@@ -73,6 +73,17 @@ class ChainedPortForwardOpenerTest {
         assertEquals(2, types.size());
     }
 
+    @Test
+    void default_chain_is_three_legs_in_order() {
+        ChainedPortForwardOpener chain = ChainedPortForwardOpener.defaultChain(
+                "/tmp/kube/config", "test-ctx");
+        List<Class<?>> types = chain.delegateTypes();
+        assertEquals(3, types.size());
+        assertEquals("DefaultClientJavaOpener", types.get(0).getSimpleName());
+        assertEquals("Fabric8PortForwardOpener", types.get(1).getSimpleName());
+        assertEquals("KubectlFallbackOpener", types.get(2).getSimpleName());
+    }
+
     static final class StubOpener implements PortForwardService.PortForwardOpener {
         int calls;
         final boolean succeed;

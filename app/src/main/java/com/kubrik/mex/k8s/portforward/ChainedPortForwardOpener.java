@@ -50,11 +50,15 @@ public final class ChainedPortForwardOpener
 
     public static ChainedPortForwardOpener defaultChain(String kubeconfigPath,
                                                          String contextName) {
-        // Primary: client-java (works for OIDC / exec-plugin auth on
-        // mainstream API servers). Fallback: kubectl (bypasses SPDY/
-        // WebSocket quirks some proxies or old API servers trip on).
+        // 3-leg chain — Decision 5 in full:
+        //   1. client-java (default; widest auth support).
+        //   2. fabric8 (succeeds where client-java's SPDY upgrade
+        //      stumbles, no external CLI needed).
+        //   3. kubectl (last-resort subprocess for environments
+        //      where neither Java path negotiates the upgrade).
         List<PortForwardService.PortForwardOpener> chain = new ArrayList<>();
         chain.add(new DefaultClientJavaOpener());
+        chain.add(new Fabric8PortForwardOpener(kubeconfigPath, contextName));
         chain.add(new KubectlFallbackOpener("kubectl", kubeconfigPath, contextName));
         return new ChainedPortForwardOpener(chain);
     }
