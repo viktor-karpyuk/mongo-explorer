@@ -48,6 +48,11 @@ public final class CloudOperationsPane extends BorderPane {
     private final Label statusLabel = new Label("No rows yet — apply a cloud-backed deployment to populate.");
     private final CheckBox tailLatest = new CheckBox("Tail latest (auto-refresh every 5 s)");
     private volatile Thread tailThread;
+    /** Off-FX-thread loop flag. The CheckBox's isSelected() is FX-
+     *  thread-only by contract; this volatile mirror lets the worker
+     *  thread observe stop signals deterministically. */
+    private final java.util.concurrent.atomic.AtomicBoolean tailRunning =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     public CloudOperationsPane(ManagedPoolOperationDao dao) {
         this.dao = Objects.requireNonNull(dao, "dao");
@@ -177,20 +182,27 @@ public final class CloudOperationsPane extends BorderPane {
 
     private void startTail() {
         stopTail();
+        tailRunning.set(true);
         tailThread = Thread.ofVirtual().name("cloud-ops-tail").start(() -> {
-            while (tailLatest.isSelected()) {
+            // tailRunning is FX-thread-safe; isSelected() is technically
+            // FX-thread-only and reading it from a virtual thread is
+            // a property-binding race. The atomic mirror makes shutdown
+            // deterministic AND survives the close() path where the
+            // CheckBox may already be detached.
+            while (tailRunning.get()) {
                 try { Thread.sleep(5_000); }
                 catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     return;
                 }
-                if (!tailLatest.isSelected()) return;
+                if (!tailRunning.get()) return;
                 Platform.runLater(this::reload);
             }
         });
     }
 
     private void stopTail() {
+        tailRunning.set(false);
         Thread t = tailThread;
         if (t != null) t.interrupt();
         tailThread = null;

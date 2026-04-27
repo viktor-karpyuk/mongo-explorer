@@ -171,10 +171,12 @@ public final class S3Target implements StorageTarget {
     @Override
     public InputStream get(String relPath) throws IOException {
         String key = resolveKey(relPath);
-        try {
-            ResponseInputStream<?> stream = client.getObject(
-                    GetObjectRequest.builder().bucket(bucket).key(key).build(),
-                    ResponseTransformer.toInputStream());
+        try (ResponseInputStream<?> stream = client.getObject(
+                GetObjectRequest.builder().bucket(bucket).key(key).build(),
+                ResponseTransformer.toInputStream())) {
+            // try-with-resources: if readAllBytes() throws (network
+            // blip, I/O error, OOM), the underlying HTTP connection
+            // returns to the SDK's pool instead of leaking until GC.
             return new ByteArrayInputStream(stream.readAllBytes());
         } catch (S3Exception e) {
             throw new IOException("S3 GET " + key + " failed: "
