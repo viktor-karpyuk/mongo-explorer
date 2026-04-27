@@ -211,10 +211,21 @@ public final class ProvisionDialog extends Dialog<Void> {
         getDialogPane().setPrefWidth(760);
         getDialogPane().setPrefHeight(620);
 
-        // Tear down the bus subscription when the dialog closes.
-        setOnCloseRequest(e -> {
-            if (provisionSub != null) provisionSub.close();
-        });
+        // Tear down the bus subscription on every visibility-loss
+        // pathway. setOnCloseRequest only fires when the user clicks
+        // the close button — if the dialog is hidden() programmatically
+        // (parent stage closes, scene swap, etc.) the close-request
+        // handler never runs and the subscription leaks. Hooking
+        // dialogPane().sceneProperty().getWindow() onHidden covers
+        // every visibility-loss path the JavaFX dialog API exposes.
+        Runnable teardown = () -> {
+            if (provisionSub != null) {
+                provisionSub.close();
+                provisionSub = null;
+            }
+        };
+        setOnCloseRequest(e -> teardown.run());
+        setOnHidden(e -> teardown.run());
     }
 
     private void wireStrategyGroup() {

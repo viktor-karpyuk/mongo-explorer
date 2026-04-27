@@ -122,7 +122,22 @@ public final class CloudOperationsPane extends BorderPane {
 
     private void reload() {
         try {
+            // Preserve the user's selection across the rebuild — a
+            // 5 s tail-latest poll otherwise jumps the highlighted
+            // row off-screen every tick, making it impossible to
+            // keep an eye on a single operation.
+            ManagedPoolOperationDao.Row prevSel = table.getSelectionModel()
+                    .getSelectedItem();
+            long prevSelId = prevSel == null ? -1L : prevSel.id();
             rows.setAll(dao.listAll());
+            if (prevSelId > 0) {
+                for (int i = 0; i < rows.size(); i++) {
+                    if (rows.get(i).id() == prevSelId) {
+                        table.getSelectionModel().select(i);
+                        break;
+                    }
+                }
+            }
             statusLabel.setText("Showing " + rows.size() + " operation(s).");
         } catch (SQLException sqle) {
             statusLabel.setText("Reload failed: " + sqle.getMessage());

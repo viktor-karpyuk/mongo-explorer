@@ -45,7 +45,11 @@ public final class KarpenterRenderer {
     public static final String NODEPOOL_KIND = "NodePool";
     public static final String DEPLOYMENT_TAINT_KEY = "mex.deployment";
 
-    private final ObjectMapper yaml = new ObjectMapper(new YAMLFactory()
+    /** Jackson YAML mapper construction is non-trivial (factory +
+     *  module discovery + thread-local pool init); a static instance
+     *  amortises that cost across every renderer call. ObjectMapper
+     *  is documented thread-safe after configuration. */
+    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory()
             .disable(YAMLGenerator.Feature.WRITE_DOC_START_MARKER)
             .disable(YAMLGenerator.Feature.SPLIT_LINES));
 
@@ -100,7 +104,7 @@ public final class KarpenterRenderer {
         }
         cr.put("spec", spec);
 
-        try { return yaml.writeValueAsString(cr); }
+        try { return YAML.writeValueAsString(cr); }
         catch (Exception e) { throw new IllegalStateException(
                 "render karpenter nodepool: " + e.getMessage(), e); }
     }

@@ -44,6 +44,16 @@ public final class AksAdapter implements ManagedPoolAdapter {
 
     private final SecretStore secrets;
 
+    /** ContainerServiceManager wraps the ARM HTTP pipeline (auth +
+     *  retry + telemetry policies + JSON serializer state) — the
+     *  heaviest of the three SDK clients. Cache one per
+     *  (credential id, subscription) so a soak loop reuses the same
+     *  manager instead of re-running the auth challenge on every
+     *  describe / poll. ContainerServiceManager has no close() — its
+     *  underlying HttpPipeline is GC-friendly. */
+    private final java.util.concurrent.ConcurrentMap<String, ContainerServiceManager> managerCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     public AksAdapter(SecretStore secrets) {
         this.secrets = Objects.requireNonNull(secrets, "secrets");
     }
@@ -159,11 +169,15 @@ public final class AksAdapter implements ManagedPoolAdapter {
                     + "CloudCredential.azureSubscription or pass "
                     + "mex.aks.subscription system property.");
         }
-        AzureProfile profile = new AzureProfile(
-                /* tenantId */ null,
-                subscription,
-                AzureEnvironment.AZURE);
-        return ContainerServiceManager.authenticate(credentialFor(cred), profile);
+        return managerCache.computeIfAbsent(cred.id() + "@" + subscription,
+                key -> {
+                    AzureProfile profile = new AzureProfile(
+                            /* tenantId */ null,
+                            subscription,
+                            AzureEnvironment.AZURE);
+                    return ContainerServiceManager.authenticate(
+                            credentialFor(cred), profile);
+                });
     }
 
     /** Visible for tests — auth-mode dispatch + payload parsing. */

@@ -13,7 +13,7 @@ import java.util.Optional;
  * time. A provider without a registered adapter causes the managed-
  * pool preflight to fail with an actionable hint.</p>
  */
-public final class ManagedPoolAdapterRegistry {
+public final class ManagedPoolAdapterRegistry implements AutoCloseable {
 
     private final Map<CloudProvider, ManagedPoolAdapter> adapters =
             new EnumMap<>(CloudProvider.class);
@@ -21,6 +21,20 @@ public final class ManagedPoolAdapterRegistry {
     public ManagedPoolAdapterRegistry register(ManagedPoolAdapter a) {
         adapters.put(a.provider(), a);
         return this;
+    }
+
+    /** Close every adapter that's also AutoCloseable. The real EKS /
+     *  GKE adapters cache SDK clients (HTTP pools, gRPC channels)
+     *  that need to be released on app shutdown so the SDK doesn't
+     *  emit a finalizer warning on un-closed clients. */
+    @Override
+    public void close() {
+        for (ManagedPoolAdapter a : adapters.values()) {
+            if (a instanceof AutoCloseable c) {
+                try { c.close(); } catch (Exception ignored) {}
+            }
+        }
+        adapters.clear();
     }
 
     public Optional<ManagedPoolAdapter> lookup(CloudProvider provider) {

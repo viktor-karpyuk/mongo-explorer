@@ -164,9 +164,21 @@ public final class AboutDialog {
         return sb.toString();
     }
 
+    /** Cached so the dialog doesn't re-spawn the `which` / `where`
+     *  subprocesses every time it's opened (they probe PATH for
+     *  security / cmdkey / secret-tool — ~5-15 ms × 3 platforms on
+     *  the FX thread). Computed once on first dialog open and
+     *  reused thereafter. */
+    private static volatile String cachedKeychainStatus;
+
     private static String keychainStatus() {
+        String cached = cachedKeychainStatus;
+        if (cached != null) return cached;
         OsKeychainSecretStore store = new OsKeychainSecretStore();
-        return store.isAvailable() ? "available" : "unavailable (using in-memory fallback)";
+        String result = store.isAvailable() ? "available"
+                : "unavailable (using in-memory fallback)";
+        cachedKeychainStatus = result;
+        return result;
     }
 
     private static String boolFlag(String key) {

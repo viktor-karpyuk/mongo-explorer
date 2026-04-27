@@ -54,7 +54,7 @@ import java.util.Optional;
  * row. Until the wizard surface for that lands, the adapter accepts
  * a system property {@code mex.eks.cluster} as an override.</p>
  */
-public final class EksAdapter implements ManagedPoolAdapter {
+public final class EksAdapter implements ManagedPoolAdapter, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(EksAdapter.class);
 
@@ -64,6 +64,14 @@ public final class EksAdapter implements ManagedPoolAdapter {
      *  surface for this lands with the full credential pane. */
     private final String defaultNodeRoleArn;
 
+    /** SDK clients are heavyweight (HTTP pool + TLS state + endpoint
+     *  resolver). Cache one per (credential id, region) so every
+     *  describe / create / delete in a soak loop reuses the same
+     *  client instead of paying the ~100 ms construction cost on
+     *  every poll. Closed via {@link #close()} on adapter teardown. */
+    private final java.util.concurrent.ConcurrentMap<String, EksClient> clientCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     public EksAdapter(SecretStore secrets, String defaultNodeRoleArn) {
         this.secrets = Objects.requireNonNull(secrets, "secrets");
         this.defaultNodeRoleArn = defaultNodeRoleArn;
@@ -72,8 +80,15 @@ public final class EksAdapter implements ManagedPoolAdapter {
     @Override public CloudProvider provider() { return CloudProvider.AWS; }
 
     @Override
+    public void close() {
+        clientCache.values().forEach(c -> { try { c.close(); } catch (Exception ignored) {} });
+        clientCache.clear();
+    }
+
+    @Override
     public PoolOperationResult createPool(CloudCredential credential, ManagedPoolSpec spec) {
-        try (EksClient eks = clientFor(credential, spec)) {
+        EksClient eks = clientFor(credential, spec);
+        try {
             CreateNodegroupRequest req = CreateNodegroupRequest.builder()
                     .clusterName(clusterName(spec))
                     .nodegroupName(spec.poolName())
@@ -105,7 +120,8 @@ public final class EksAdapter implements ManagedPoolAdapter {
     @Override
     public Optional<PoolDescription> describe(CloudCredential credential,
                                                 String region, String poolName) {
-        try (EksClient eks = clientFor(credential, region)) {
+        EksClient eks = clientFor(credential, region);
+        try {
             String cluster = System.getProperty("mex.eks.cluster", poolName + "-cluster");
             DescribeNodegroupResponse resp = eks.describeNodegroup(
                     DescribeNodegroupRequest.builder()
@@ -128,7 +144,8 @@ public final class EksAdapter implements ManagedPoolAdapter {
     @Override
     public PoolOperationResult deletePool(CloudCredential credential,
                                             String region, String poolName) {
-        try (EksClient eks = clientFor(credential, region)) {
+        EksClient eks = clientFor(credential, region);
+        try {
             String cluster = System.getProperty("mex.eks.cluster", poolName + "-cluster");
             DeleteNodegroupResponse resp = eks.deleteNodegroup(
                     DeleteNodegroupRequest.builder()
@@ -158,6 +175,11 @@ public final class EksAdapter implements ManagedPoolAdapter {
     }
 
     private EksClient clientFor(CloudCredential credential, String region) {
+        return clientCache.computeIfAbsent(credential.id() + "@" + region,
+                key -> buildClient(credential, region));
+    }
+
+    private EksClient buildClient(CloudCredential credential, String region) {
         return EksClient.builder()
                 .region(Region.of(region))
                 .credentialsProvider(providerFor(credential))

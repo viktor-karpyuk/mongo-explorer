@@ -44,13 +44,20 @@ import java.util.Optional;
  * full GKE sub-form lands (the credential's {@code defaultRegion}
  * fallback is honoured for {@code location}).</p>
  */
-public final class GkeAdapter implements ManagedPoolAdapter {
+public final class GkeAdapter implements ManagedPoolAdapter, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(GkeAdapter.class);
     private static final List<String> SCOPES =
             List.of("https://www.googleapis.com/auth/cloud-platform");
 
     private final SecretStore secrets;
+
+    /** ClusterManagerClient holds a gRPC channel + auth state — the
+     *  costliest of the three SDKs to construct. Cache one per
+     *  credential id so a soak loop doesn't pay the gRPC handshake on
+     *  every poll. */
+    private final java.util.concurrent.ConcurrentMap<Long, ClusterManagerClient> clientCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     public GkeAdapter(SecretStore secrets) {
         this.secrets = Objects.requireNonNull(secrets, "secrets");
@@ -59,8 +66,15 @@ public final class GkeAdapter implements ManagedPoolAdapter {
     @Override public CloudProvider provider() { return CloudProvider.GCP; }
 
     @Override
+    public void close() {
+        clientCache.values().forEach(c -> { try { c.close(); } catch (Exception ignored) {} });
+        clientCache.clear();
+    }
+
+    @Override
     public PoolOperationResult createPool(CloudCredential credential, ManagedPoolSpec spec) {
-        try (ClusterManagerClient client = newClient(credential)) {
+        try {
+            ClusterManagerClient client = clientFor(credential);
             String parent = parentFor(credential, spec.region());
             CreateNodePoolRequest req = buildCreateRequest(spec, parent);
             Operation op = client.createNodePool(req);
@@ -99,7 +113,8 @@ public final class GkeAdapter implements ManagedPoolAdapter {
     @Override
     public Optional<PoolDescription> describe(CloudCredential credential,
                                                 String region, String poolName) {
-        try (ClusterManagerClient client = newClient(credential)) {
+        try {
+            ClusterManagerClient client = clientFor(credential);
             String name = parentFor(credential, region) + "/nodePools/" + poolName;
             NodePool pool = client.getNodePool(
                     GetNodePoolRequest.newBuilder().setName(name).build());
@@ -119,7 +134,8 @@ public final class GkeAdapter implements ManagedPoolAdapter {
     @Override
     public PoolOperationResult deletePool(CloudCredential credential,
                                             String region, String poolName) {
-        try (ClusterManagerClient client = newClient(credential)) {
+        try {
+            ClusterManagerClient client = clientFor(credential);
             String name = parentFor(credential, region) + "/nodePools/" + poolName;
             Operation op = client.deleteNodePool(
                     DeleteNodePoolRequest.newBuilder().setName(name).build());
@@ -134,6 +150,12 @@ public final class GkeAdapter implements ManagedPoolAdapter {
 
     public static void wireInto(ManagedPoolAdapterRegistry registry, SecretStore secrets) {
         registry.register(new GkeAdapter(secrets));
+    }
+
+    private ClusterManagerClient clientFor(CloudCredential credential) {
+        return clientCache.computeIfAbsent(credential.id(),
+                key -> { try { return newClient(credential); }
+                         catch (Exception e) { throw new RuntimeException(e); } });
     }
 
     private ClusterManagerClient newClient(CloudCredential cred) throws Exception {

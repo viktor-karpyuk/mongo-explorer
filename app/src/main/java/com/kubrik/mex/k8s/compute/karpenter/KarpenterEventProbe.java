@@ -33,12 +33,19 @@ public final class KarpenterEventProbe {
     private final String nodePoolLabel;
     private final Map<String, String> lastPhaseByName = new HashMap<>();
 
+    /** DynamicKubernetesApi construction wires up Gson + the
+     *  generic-resource codec; cached as a field so the watcher's
+     *  poll cadence doesn't reconstruct it on every tick. */
+    private final DynamicKubernetesApi nodeClaimsApi;
+
     public KarpenterEventProbe(ApiClient client, long provisioningId,
                                 String nodePoolName) {
         this.client = Objects.requireNonNull(client, "client");
         this.provisioningId = provisioningId;
         this.nodePoolLabel = "karpenter.sh/nodepool=" + Objects.requireNonNull(
                 nodePoolName, "nodePoolName");
+        this.nodeClaimsApi = new DynamicKubernetesApi(
+                "karpenter.sh", "v1", "nodeclaims", client);
     }
 
     /** Poll once. Caller invokes this on the same cadence as the
@@ -48,9 +55,7 @@ public final class KarpenterEventProbe {
      *  cost is dominated by the API round-trip anyway. */
     public synchronized void poll(Consumer<RolloutEvent> sink) {
         try {
-            DynamicKubernetesApi api = new DynamicKubernetesApi(
-                    "karpenter.sh", "v1", "nodeclaims", client);
-            var list = api.list().getObject();
+            var list = nodeClaimsApi.list().getObject();
             if (list == null || list.getItems() == null) return;
 
             Set<String> seen = new java.util.HashSet<>();

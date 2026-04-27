@@ -176,6 +176,7 @@ public final class OsKeychainSecretStore implements SecretStore {
     private static ExecResult execWithEnv(List<String> argv, String stdin,
                                            boolean throwOnFailure,
                                            java.util.Map<String, String> envOverrides) {
+        Process p = null;
         try {
             ProcessBuilder pb = new ProcessBuilder(argv);
             if (envOverrides != null) {
@@ -183,24 +184,36 @@ public final class OsKeychainSecretStore implements SecretStore {
                 pb.environment().putAll(envOverrides);
             }
             pb.redirectErrorStream(false);
-            Process p = pb.start();
-            if (stdin != null) {
-                p.getOutputStream().write(stdin.getBytes(StandardCharsets.UTF_8));
-                p.getOutputStream().close();
+            p = pb.start();
+            try (var stdinStream = p.getOutputStream();
+                 var stdoutStream = p.getInputStream();
+                 var stderrStream = p.getErrorStream()) {
+                if (stdin != null) {
+                    stdinStream.write(stdin.getBytes(StandardCharsets.UTF_8));
+                    stdinStream.flush();
+                }
+                stdinStream.close();
+                String out = new String(stdoutStream.readAllBytes(), StandardCharsets.UTF_8);
+                String err = new String(stderrStream.readAllBytes(), StandardCharsets.UTF_8);
+                if (!p.waitFor(15, TimeUnit.SECONDS)) {
+                    p.destroyForcibly();
+                    throw new IOException("keychain CLI timed out: " + argv.get(0));
+                }
+                int code = p.exitValue();
+                if (code != 0 && throwOnFailure) {
+                    throw new IOException("keychain CLI " + argv.get(0)
+                            + " exited " + code + ": " + err.strip());
+                }
+                return new ExecResult(code, out, err);
             }
-            String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            String err = new String(p.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
-            if (!p.waitFor(15, TimeUnit.SECONDS)) {
-                p.destroyForcibly();
-                throw new IOException("keychain CLI timed out: " + argv.get(0));
-            }
-            int code = p.exitValue();
-            if (code != 0 && throwOnFailure) {
-                throw new IOException("keychain CLI " + argv.get(0)
-                        + " exited " + code + ": " + err.strip());
-            }
-            return new ExecResult(code, out, err);
         } catch (Exception e) {
+            // The try-with-resources above already closed stdin /
+            // stdout / stderr, but a subprocess that's still alive
+            // would leak its file descriptors until GC. Force-kill
+            // it explicitly on the error path.
+            if (p != null && p.isAlive()) {
+                p.destroyForcibly();
+            }
             if (throwOnFailure) throw new RuntimeException(e);
             return new ExecResult(-1, "", e.getMessage() == null ? "" : e.getMessage());
         }
