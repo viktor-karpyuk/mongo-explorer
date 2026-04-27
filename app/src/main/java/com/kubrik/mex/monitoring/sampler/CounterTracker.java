@@ -21,15 +21,12 @@ public final class CounterTracker {
     public OptionalDouble rate(String connectionId, MetricId metric, LabelSet labels,
                                long tsMs, double cumulative) {
         Key key = new Key(connectionId, metric, labels);
-        PrevSample[] prev = new PrevSample[1];
-        last.compute(key, (k, v) -> {
-            prev[0] = v;
-            if (v == null || cumulative < v.value) {
-                return new PrevSample(tsMs, cumulative);
-            }
-            return new PrevSample(tsMs, cumulative);
-        });
-        PrevSample p = prev[0];
+        // Atomic replace + return-prior — both legs of the prior
+        // branch returned the same `new PrevSample(tsMs, cumulative)`
+        // (a server restart or a fresh key both reset to "this sample
+        // is now the baseline"). Collapsed to one allocation +
+        // .put() since we're unconditionally replacing.
+        PrevSample p = last.put(key, new PrevSample(tsMs, cumulative));
         if (p == null) return OptionalDouble.empty();
         if (cumulative < p.value) return OptionalDouble.empty();
         double dtSec = (tsMs - p.tsMs) / 1000.0;

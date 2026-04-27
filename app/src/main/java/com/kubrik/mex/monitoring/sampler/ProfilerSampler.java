@@ -35,6 +35,13 @@ public final class ProfilerSampler implements Sampler {
 
     private static final Logger log = LoggerFactory.getLogger(ProfilerSampler.class);
 
+    /** JsonWriterSettings.builder().build() walks every BSON type on
+     *  every call; caching the immutable result saves a non-trivial
+     *  allocation per profiler doc. The default settings are what we
+     *  want — extended JSON, no indenting. */
+    private static final JsonWriterSettings JSON_SETTINGS =
+            JsonWriterSettings.builder().build();
+
     public static final int CAP_PER_POLL = 200;
 
     private final String connectionId;
@@ -80,8 +87,7 @@ public final class ProfilerSampler implements Sampler {
                 if (ts == null) continue;
                 if (ts.after(newest)) newest = ts;
                 Document cmd = DocUtil.sub(d, "command");
-                String cmdJson = Redactor.redact(cmd)
-                        .toJson(JsonWriterSettings.builder().build());
+                String cmdJson = Redactor.redact(cmd).toJson(JSON_SETTINGS);
                 batch.add(new ProfileSampleRecord(
                         connectionId,
                         ts.getTime(),

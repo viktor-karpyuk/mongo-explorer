@@ -61,23 +61,30 @@ public final class Alerter {
 
     private void evaluate(MetricSample s) {
         List<AlertRule> matched = matchingRules(s);
+        if (matched.isEmpty()) return;
+        // Compute labels.toJson() once for the whole sample — it's a
+        // StringBuilder build over every label, and the previous
+        // shape called it twice per matching rule (once on fire, once
+        // on clear) AND once more inside activeKey. With ~2 matching
+        // rules per sample, that's 6 builds per sample.
+        String labelsJson = s.labels().toJson();
         for (AlertRule rule : matched) {
             Severity observed = classify(rule, s.value());
             SustainTracker.Transition tr = tracker.observe(rule, s.labels().labels(), observed, s.tsMs());
             if (tr == null) continue;
             if (tr.fired()) {
                 Severity sev = (tr.to() == SustainTracker.State.CRIT) ? Severity.CRIT : Severity.WARN;
-                active.put(activeKey(rule, s), sev);
+                active.put(activeKey(rule, s, labelsJson), sev);
                 firedSink.accept(toEvent(rule, s, sev));
             } else if (tr.cleared()) {
-                active.remove(activeKey(rule, s));
+                active.remove(activeKey(rule, s, labelsJson));
                 clearedSink.accept(toEvent(rule, s, Severity.OK));
             }
         }
     }
 
-    private static String activeKey(AlertRule rule, MetricSample s) {
-        return s.connectionId() + "\u0000" + rule.id() + "\u0000" + s.labels().toJson();
+    private static String activeKey(AlertRule rule, MetricSample s, String labelsJson) {
+        return s.connectionId() + "\u0000" + rule.id() + "\u0000" + labelsJson;
     }
 
     /** Worst currently-active severity for a connection — {@link Severity#OK} when none. */
@@ -107,18 +114,29 @@ public final class Alerter {
     }
 
     private List<AlertRule> matchingRules(MetricSample s) {
-        List<AlertRule> per = new ArrayList<>();
-        List<AlertRule> global = new ArrayList<>();
+        // Hot-path early-return: with no rules installed (the common
+        // case for users who haven't opened the alerts pane), skip
+        // the per-sample ArrayList allocation entirely. Saves
+        // ~50 bytes × samples-per-second × connections.
+        if (rules.isEmpty()) return List.of();
+
+        List<AlertRule> per = null;
+        List<AlertRule> global = null;
         for (AlertRule r : rules) {
             if (!r.enabled()) continue;
             if (r.metric() != s.metric()) continue;
             if (!r.matches(s.labels())) continue;
-            if (s.connectionId().equals(r.connectionId())) per.add(r);
-            else if (r.connectionId() == null) global.add(r);
+            if (s.connectionId().equals(r.connectionId())) {
+                if (per == null) per = new ArrayList<>(2);
+                per.add(r);
+            } else if (r.connectionId() == null) {
+                if (global == null) global = new ArrayList<>(2);
+                global.add(r);
+            }
         }
         // Per-connection rules shadow same-metric globals per ALERT-RULE-7.
-        if (!per.isEmpty()) return per;
-        return global;
+        if (per != null) return per;
+        return global != null ? global : List.of();
     }
 
     private Severity classify(AlertRule rule, double v) {
