@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.kubrik.mex"
-version = "2.8.0-alpha"
+version = "2.8.4-alpha"
 
 java {
     toolchain {
@@ -93,6 +93,16 @@ dependencies {
 
 application {
     mainClass.set("com.kubrik.mex.Launcher")
+}
+
+tasks.jar {
+    manifest {
+        attributes(mapOf(
+            "Implementation-Title" to "Mongo Explorer",
+            "Implementation-Version" to project.version.toString(),
+            "Implementation-Vendor" to "Mongo Explorer (built " + System.currentTimeMillis() + ")"
+        ))
+    }
 }
 
 // UX-5 — run the headless migrate CLI with `./gradlew :app:migrate --args="--profile foo.yaml"`.

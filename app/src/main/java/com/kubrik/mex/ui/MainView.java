@@ -348,13 +348,17 @@ public class MainView extends BorderPane {
                 item("K8s Labs",
                         new KeyCodeCombination(KeyCode.J,
                                 KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
-                        this::openK8sLabsTab));
+                        this::openK8sLabsTab),
+                // v2.8.4 Q2.8.4-A — Cloud credentials manager.
+                item("Cloud Credentials",
+                        new KeyCodeCombination(KeyCode.D,
+                                KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN),
+                        this::openCloudCredentialsTab));
 
         // ----- Help -----
         Menu help = new Menu("Help");
         help.getItems().add(item("About Mongo Explorer", null, () ->
-                UiHelpers.info(getScene().getWindow(), "Mongo Explorer",
-                        "A simple MongoDB explorer.\nBuilt with JavaFX + AtlantaFX.")));
+                AboutDialog.show(getScene() == null ? null : getScene().getWindow())));
 
         bar.getMenus().addAll(file, edit, view, connection, tools, help);
         return bar;
@@ -1005,6 +1009,38 @@ public class MainView extends BorderPane {
         });
         tabs.getTabs().add(k8sLabsTab);
         tabs.getSelectionModel().select(k8sLabsTab);
+    }
+
+    private com.kubrik.mex.k8s.compute.managedpool.CloudCredentialDao cloudCredentialDao;
+    private com.kubrik.mex.k8s.compute.managedpool.SecretStore cloudSecretStore;
+    private Tab cloudCredentialsTab;
+
+    /** v2.8.4 Q2.8.4-A — open the Cloud Credentials manager. */
+    private void openCloudCredentialsTab() {
+        if (cloudCredentialsTab != null && tabs.getTabs().contains(cloudCredentialsTab)) {
+            tabs.getSelectionModel().select(cloudCredentialsTab);
+            return;
+        }
+        if (cloudCredentialDao == null) {
+            cloudCredentialDao =
+                    new com.kubrik.mex.k8s.compute.managedpool.CloudCredentialDao(database);
+        }
+        if (cloudSecretStore == null) {
+            com.kubrik.mex.k8s.compute.managedpool.OsKeychainSecretStore os =
+                    new com.kubrik.mex.k8s.compute.managedpool.OsKeychainSecretStore();
+            cloudSecretStore = os.isAvailable() ? os
+                    : new com.kubrik.mex.k8s.compute.managedpool.InMemorySecretStore();
+        }
+        var pane = new com.kubrik.mex.k8s.compute.managedpool.ui.CloudCredentialsPane(
+                cloudCredentialDao, cloudSecretStore);
+        cloudCredentialsTab = new Tab("Cloud Credentials", pane);
+        cloudCredentialsTab.setOnClosed(e -> cloudCredentialsTab = null);
+        tabs.getTabs().add(cloudCredentialsTab);
+        tabs.getSelectionModel().select(cloudCredentialsTab);
+    }
+
+    public com.kubrik.mex.k8s.compute.managedpool.CloudCredentialDao cloudCredentialDaoOrNull() {
+        return cloudCredentialDao;
     }
 
     private void ensureLabsK8sWiring() {
