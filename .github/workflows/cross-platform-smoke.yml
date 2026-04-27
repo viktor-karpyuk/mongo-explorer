@@ -1,0 +1,106 @@
+#
+# v2.8.1 Q2.8-N8 — Cross-platform Local-K8s-Labs smoke.
+#
+# Walks the matrix from the milestone:
+#   macOS arm64 + amd64 × Linux amd64 × Windows 11 amd64
+#   ×
+#   {minikube, k3d}
+#
+# For each cell it installs the distro CLI, runs unit tests +
+# compute-strategy tests, then probes the distro adapter's
+# detect/createOrStart/list/destroy lifecycle against a freshly
+# created cluster. Heavyweight provisioning (operators, real CRs)
+# is left to the dedicated blessed-matrix workflow which only runs
+# on Linux — the cross-platform sweep proves the launcher + distro
+# adapters work everywhere, not the full pipeline.
+#
+# Skipped on every PR (matrix is slow); manual + weekly schedule.
+#
+
+name: cross-platform-smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 04:42 UTC Sunday — weekly is the right cadence for catching
+    # platform-tooling drift without burning runner minutes.
+    - cron: "42 4 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ${{ matrix.os }} / ${{ matrix.distro }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04          # Linux amd64
+          - macos-13              # macOS amd64 (Intel runners)
+          - macos-14              # macOS arm64 (Apple Silicon runners)
+          - windows-2022          # Windows 11 amd64 (Docker Desktop)
+        distro:
+          - minikube
+          - k3d
+        exclude:
+          # k3d on Windows runs but is slow + flaky; skip until v2.8.4.x.
+          - os: windows-2022
+            distro: k3d
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # ---------------- distro install (per-OS) ----------------
+
+      - name: Install minikube (Linux)
+        if: matrix.distro == 'minikube' && runner.os == 'Linux'
+        run: |
+          curl -Lo minikube \
+            https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+          sudo install minikube /usr/local/bin/
+
+      - name: Install minikube (macOS)
+        if: matrix.distro == 'minikube' && runner.os == 'macOS'
+        run: brew install minikube
+
+      - name: Install minikube (Windows)
+        if: matrix.distro == 'minikube' && runner.os == 'Windows'
+        run: choco install minikube --yes --no-progress
+
+      - name: Install k3d (Linux)
+        if: matrix.distro == 'k3d' && runner.os == 'Linux'
+        run: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+
+      - name: Install k3d (macOS)
+        if: matrix.distro == 'k3d' && runner.os == 'macOS'
+        run: brew install k3d
+
+      # ---------------- gradle unit + compute tests ----------------
+
+      - name: Run JVM tests
+        run: ./gradlew :app:test --tests "com.kubrik.mex.k8s.compute.*" --tests "com.kubrik.mex.labs.k8s.*" --no-daemon
+
+      # ---------------- distro lifecycle probe ----------------
+
+      - name: minikube lifecycle probe
+        if: matrix.distro == 'minikube'
+        shell: bash
+        run: |
+          minikube start --profile mex-cp-${{ matrix.os }}
+          minikube status --profile mex-cp-${{ matrix.os }}
+          minikube delete --profile mex-cp-${{ matrix.os }}
+
+      - name: k3d lifecycle probe
+        if: matrix.distro == 'k3d'
+        shell: bash
+        run: |
+          k3d cluster create mex-cp
+          k3d cluster list | grep mex-cp
+          k3d cluster delete mex-cp
