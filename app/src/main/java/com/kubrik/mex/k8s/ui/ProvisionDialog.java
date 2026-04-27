@@ -105,6 +105,22 @@ public final class ProvisionDialog extends Dialog<Void> {
             new javafx.scene.control.CheckBox("Consolidate when underutilized");
     private final VBox karpenterForm = new VBox(6);
 
+    // v2.8.4 — Full Managed-pool sub-form.
+    private final ComboBox<com.kubrik.mex.k8s.compute.managedpool.CloudCredential>
+            mpCredentialBox = new ComboBox<>();
+    private final TextField mpRegionField = new TextField("us-east-1");
+    private final TextField mpInstanceTypeField = new TextField("m6i.large");
+    private final ComboBox<com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec.CapacityType>
+            mpCapacityBox = new ComboBox<>();
+    private final TextField mpMinNodesField = new TextField("3");
+    private final TextField mpDesiredNodesField = new TextField("3");
+    private final TextField mpMaxNodesField = new TextField("5");
+    private final ComboBox<String> mpArchBox = new ComboBox<>();
+    private final TextField mpZonesField = new TextField();
+    private final TextField mpSubnetsField = new TextField();
+    private final VBox managedPoolForm = new VBox(6);
+    private final com.kubrik.mex.k8s.compute.managedpool.CloudCredentialDao mpCredDao;
+
     private final TextArea preflightArea = new TextArea();
     private final TextArea logArea = new TextArea();
     private final Label statusLabel = new Label("Fill the form, then click Pre-flight.");
@@ -117,9 +133,15 @@ public final class ProvisionDialog extends Dialog<Void> {
     private volatile boolean preflightPassed = false;
 
     public ProvisionDialog(ProvisioningService service, EventBus events, K8sClusterRef clusterRef) {
+        this(service, events, clusterRef, null);
+    }
+
+    public ProvisionDialog(ProvisioningService service, EventBus events, K8sClusterRef clusterRef,
+                            com.kubrik.mex.k8s.compute.managedpool.CloudCredentialDao credDao) {
         this.service = service;
         this.events = events;
         this.clusterRef = clusterRef;
+        this.mpCredDao = credDao;
 
         setTitle("Provision MongoDB on Kubernetes");
         setHeaderText("Target: " + clusterRef.displayName()
@@ -198,10 +220,14 @@ public final class ProvisionDialog extends Dialog<Void> {
             Object id = b == null ? null : b.getUserData();
             boolean showNp = id == StrategyId.NODE_POOL;
             boolean showKp = id == StrategyId.KARPENTER;
+            boolean showMp = id == StrategyId.MANAGED_POOL;
             nodePoolForm.setVisible(showNp);
             nodePoolForm.setManaged(showNp);
             karpenterForm.setVisible(showKp);
             karpenterForm.setManaged(showKp);
+            managedPoolForm.setVisible(showMp);
+            managedPoolForm.setManaged(showMp);
+            if (showMp) refreshCredentialBox();
             invalidatePreflight();
         });
         poolLabelKeyField.textProperty().addListener((o, a, b) -> invalidatePreflight());
@@ -224,6 +250,40 @@ public final class ProvisionDialog extends Dialog<Void> {
                 kpExpireAfterField, kpLimitCpuField, kpLimitMemField)) {
             tf.textProperty().addListener((o, a, b) -> invalidatePreflight());
         }
+
+        // Managed-pool sub-form defaults.
+        mpCapacityBox.getItems().setAll(
+                com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec.CapacityType.values());
+        mpCapacityBox.getSelectionModel().select(
+                com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec.CapacityType.ON_DEMAND);
+        mpArchBox.getItems().setAll("amd64", "arm64");
+        mpArchBox.getSelectionModel().select("amd64");
+        mpCredentialBox.setConverter(
+                new javafx.util.StringConverter<com.kubrik.mex.k8s.compute.managedpool.CloudCredential>() {
+                    @Override public String toString(
+                            com.kubrik.mex.k8s.compute.managedpool.CloudCredential c) {
+                        return c == null ? "(none)"
+                                : c.displayName() + " (" + c.provider() + ")";
+                    }
+                    @Override public com.kubrik.mex.k8s.compute.managedpool.CloudCredential
+                            fromString(String s) { return null; }
+                });
+        for (TextField tf : List.of(mpRegionField, mpInstanceTypeField,
+                mpMinNodesField, mpDesiredNodesField, mpMaxNodesField,
+                mpZonesField, mpSubnetsField)) {
+            tf.textProperty().addListener((o, a, b) -> invalidatePreflight());
+        }
+    }
+
+    private void refreshCredentialBox() {
+        if (mpCredDao == null) return;
+        try {
+            mpCredentialBox.getItems().setAll(mpCredDao.listAll());
+            if (!mpCredentialBox.getItems().isEmpty()
+                    && mpCredentialBox.getValue() == null) {
+                mpCredentialBox.getSelectionModel().selectFirst();
+            }
+        } catch (java.sql.SQLException ignored) { /* best effort */ }
     }
 
     private Region buildContent() {
@@ -283,9 +343,30 @@ public final class ProvisionDialog extends Dialog<Void> {
         karpenterForm.setVisible(false);
         karpenterForm.setManaged(false);
 
+        // Managed-pool sub-form (UI-CLOUD-* — milestone-v2.8.4 §2.2).
+        GridPane mpGrid = new GridPane();
+        mpGrid.setHgap(8); mpGrid.setVgap(4);
+        mpGrid.setPadding(new Insets(4, 0, 0, 24));
+        int mr = 0;
+        mpGrid.add(new Label("Cloud credential"), 0, mr);
+        mpGrid.add(mpCredentialBox, 1, mr, 3, 1); mr++;
+        mpGrid.add(new Label("Region"), 0, mr); mpGrid.add(mpRegionField, 1, mr);
+        mpGrid.add(new Label("Capacity"), 2, mr); mpGrid.add(mpCapacityBox, 3, mr++);
+        mpGrid.add(new Label("Instance type"), 0, mr); mpGrid.add(mpInstanceTypeField, 1, mr);
+        mpGrid.add(new Label("Architecture"), 2, mr); mpGrid.add(mpArchBox, 3, mr++);
+        mpGrid.add(new Label("Min nodes"), 0, mr); mpGrid.add(mpMinNodesField, 1, mr);
+        mpGrid.add(new Label("Desired"), 2, mr); mpGrid.add(mpDesiredNodesField, 3, mr++);
+        mpGrid.add(new Label("Max nodes"), 0, mr); mpGrid.add(mpMaxNodesField, 1, mr++);
+        mpGrid.add(new Label("Zones (CSV)"), 0, mr); mpGrid.add(mpZonesField, 1, mr, 3, 1); mr++;
+        mpGrid.add(new Label("Subnet IDs (CSV)"), 0, mr); mpGrid.add(mpSubnetsField, 1, mr, 3, 1); mr++;
+        managedPoolForm.getChildren().setAll(mpGrid);
+        managedPoolForm.setVisible(false);
+        managedPoolForm.setManaged(false);
+
         VBox strategyBlock = new VBox(4, strategyHead, strategyHint,
                 strategyNoneRadio, strategyNodePoolRadio, nodePoolForm,
-                strategyKarpenterRadio, karpenterForm, strategyManagedRadio);
+                strategyKarpenterRadio, karpenterForm,
+                strategyManagedRadio, managedPoolForm);
         strategyBlock.setPadding(new Insets(0, 0, 10, 0));
 
         Label pfHead = new Label("Pre-flight");
@@ -444,14 +525,7 @@ public final class ProvisionDialog extends Dialog<Void> {
             return new ComputeStrategy.Karpenter(buildKarpenterSpec());
         }
         if (picked == StrategyId.MANAGED_POOL) {
-            // Alpha: defaults land on the EKS stub; real credentials
-            // wiring arrives with the Cloud-credentials pane. The
-            // managed-pool preflight fails with a clear message when
-            // no credential row exists.
-            return new ComputeStrategy.ManagedPool(
-                    com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec
-                            .sensibleEksDefaults(1L, "us-east-1",
-                                    deploymentNameField.getText().trim()));
+            return new ComputeStrategy.ManagedPool(buildManagedPoolSpec());
         }
         if (picked != StrategyId.NODE_POOL) return ComputeStrategy.NONE;
         String labelKey = poolLabelKeyField.getText().trim();
@@ -492,6 +566,54 @@ public final class ProvisionDialog extends Dialog<Void> {
                 blankToNull(kpExpireAfterField.getText()),
                 blankToNull(kpLimitCpuField.getText()),
                 blankToNull(kpLimitMemField.getText()));
+    }
+
+    private com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec buildManagedPoolSpec() {
+        com.kubrik.mex.k8s.compute.managedpool.CloudCredential cred =
+                mpCredentialBox.getValue();
+        com.kubrik.mex.k8s.compute.managedpool.CloudProvider provider =
+                cred == null ? com.kubrik.mex.k8s.compute.managedpool.CloudProvider.AWS
+                        : cred.provider();
+        long credId = cred == null ? 0L : cred.id();
+        int min = parseInt(mpMinNodesField.getText(), 1);
+        int desired = parseInt(mpDesiredNodesField.getText(), Math.max(1, min));
+        int max = parseInt(mpMaxNodesField.getText(), Math.max(desired, min));
+        // Re-shape to satisfy the record's invariants if the user typed
+        // an out-of-order pair; the preflight surfaces the real shape
+        // mismatch with a hint, not a stack trace.
+        if (desired < min) desired = min;
+        if (max < desired) max = desired;
+        String poolName = "mex-" + deploymentNameField.getText().trim()
+                .toLowerCase().replaceAll("[^a-z0-9-]", "-").replaceAll("-+", "-");
+        try {
+            return new com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec(
+                    provider, credId,
+                    blankToDefault(mpRegionField.getText(), "us-east-1"),
+                    poolName,
+                    blankToDefault(mpInstanceTypeField.getText(), "m6i.large"),
+                    mpCapacityBox.getValue() == null
+                            ? com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec.CapacityType.ON_DEMAND
+                            : mpCapacityBox.getValue(),
+                    min, desired, max,
+                    mpArchBox.getValue() == null ? "amd64" : mpArchBox.getValue(),
+                    splitCsv(mpZonesField.getText()),
+                    splitCsv(mpSubnetsField.getText()));
+        } catch (IllegalArgumentException iae) {
+            return com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec
+                    .sensibleEksDefaults(credId,
+                            blankToDefault(mpRegionField.getText(), "us-east-1"),
+                            deploymentNameField.getText().trim());
+        }
+    }
+
+    private static int parseInt(String raw, int fallback) {
+        if (raw == null || raw.isBlank()) return fallback;
+        try { return Integer.parseInt(raw.trim()); }
+        catch (NumberFormatException nfe) { return fallback; }
+    }
+
+    private static String blankToDefault(String raw, String fallback) {
+        return raw == null || raw.isBlank() ? fallback : raw.trim();
     }
 
     private static List<String> splitCsv(String raw) {

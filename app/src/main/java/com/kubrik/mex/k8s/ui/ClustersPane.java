@@ -62,6 +62,7 @@ public final class ClustersPane extends BorderPane {
     private final DiscoveryPanel discoveryPanel;
     private final ProvisioningService provisioningService;
     private final ProvisionsPanel provisionsPanel;
+    private com.kubrik.mex.k8s.compute.managedpool.CloudCredentialDao cloudCredentialDao;
 
     private final ObservableList<K8sClusterRef> rows = FXCollections.observableArrayList();
     private final TableView<K8sClusterRef> table = new TableView<>(rows);
@@ -69,6 +70,11 @@ public final class ClustersPane extends BorderPane {
     private final TextArea detailArea = new TextArea();
     private final Map<Long, ClusterProbeResult> probeByCluster = new ConcurrentHashMap<>();
     private EventBus.Subscription busSubscription;
+
+    public void setCloudCredentialDao(
+            com.kubrik.mex.k8s.compute.managedpool.CloudCredentialDao dao) {
+        this.cloudCredentialDao = dao;
+    }
 
     public ClustersPane(KubeClusterService service, EventBus events,
                          DiscoveryService discoveryService,
@@ -294,7 +300,8 @@ public final class ClustersPane extends BorderPane {
             statusLabel.setText("Provisioning service is not wired.");
             return;
         }
-        ProvisionDialog dlg = new ProvisionDialog(provisioningService, events, sel);
+        ProvisionDialog dlg = new ProvisionDialog(provisioningService, events, sel,
+                cloudCredentialDao);
         if (getScene() != null && getScene().getWindow() != null) {
             dlg.initOwner(getScene().getWindow());
         }

@@ -916,6 +916,11 @@ public class MainView extends BorderPane {
                 kubePortForwardService, connectionStore,
                 kubeProvisioningService,
                 kubeProvisioningDao, kubeTearDownService);
+        if (cloudCredentialDao == null) {
+            cloudCredentialDao =
+                    new com.kubrik.mex.k8s.compute.managedpool.CloudCredentialDao(database);
+        }
+        clustersPane.setCloudCredentialDao(cloudCredentialDao);
         clustersTab = new Tab("Clusters", clustersPane);
         clustersTab.setOnClosed(e -> {
             if (clustersPane != null) clustersPane.close();
