@@ -54,8 +54,8 @@ public final class AksAdapter implements ManagedPoolAdapter {
     public PoolOperationResult createPool(CloudCredential credential, ManagedPoolSpec spec) {
         try {
             ContainerServiceManager mgr = managerFor(credential);
-            String rg = resourceGroup();
-            String cluster = clusterName();
+            String rg = resourceGroup(spec);
+            String cluster = clusterName(spec);
             AgentPoolInner pool = buildAgentPool(spec);
             AgentPoolInner created = mgr.serviceClient().getAgentPools()
                     .createOrUpdate(rg, cluster, spec.poolName(), pool);
@@ -72,6 +72,9 @@ public final class AksAdapter implements ManagedPoolAdapter {
      *  assert the wire shape (vm size, scale-set priority, OS type,
      *  autoscale bounds). */
     static AgentPoolInner buildAgentPool(ManagedPoolSpec spec) {
+        OSType osType = "windows".equalsIgnoreCase(
+                spec.extra(ManagedPoolSpec.EXTRA_AKS_OS_TYPE))
+                ? OSType.WINDOWS : OSType.LINUX;
         return new AgentPoolInner()
                 .withCount(spec.desiredNodes())
                 .withMinCount(spec.minNodes())
@@ -79,7 +82,7 @@ public final class AksAdapter implements ManagedPoolAdapter {
                 .withEnableAutoScaling(true)
                 .withVmSize(spec.instanceType())
                 .withMode(AgentPoolMode.USER)
-                .withOsType(OSType.LINUX)
+                .withOsType(osType)
                 .withScaleSetPriority(spec.capacityType()
                         == ManagedPoolSpec.CapacityType.SPOT
                         ? ScaleSetPriority.SPOT : ScaleSetPriority.REGULAR);
@@ -90,8 +93,12 @@ public final class AksAdapter implements ManagedPoolAdapter {
                                                 String region, String poolName) {
         try {
             ContainerServiceManager mgr = managerFor(credential);
+            // describe/delete can't read spec.cloudExtras (the
+            // ManagedPoolAdapter API doesn't carry the spec here);
+            // they fall back to the legacy system properties. Set
+            // them at JVM start when running soak / IT tests.
             AgentPoolInner pool = mgr.serviceClient().getAgentPools()
-                    .get(resourceGroup(), clusterName(), poolName);
+                    .get(resourceGroupFromProperty(), clusterFromProperty(), poolName);
             if (pool == null) return Optional.empty();
             String state = pool.provisioningState();
             return Optional.of(new PoolDescription(poolName,
@@ -109,12 +116,32 @@ public final class AksAdapter implements ManagedPoolAdapter {
         try {
             ContainerServiceManager mgr = managerFor(credential);
             mgr.serviceClient().getAgentPools()
-                    .delete(resourceGroup(), clusterName(), poolName);
+                    .delete(resourceGroupFromProperty(), clusterFromProperty(), poolName);
             return PoolOperationResult.accepted("aks-delete-" + poolName);
         } catch (Exception e) {
             log.warn("AKS delete failed: {}", e.toString());
             return PoolOperationResult.rejected(e.getMessage());
         }
+    }
+
+    private static String resourceGroupFromProperty() {
+        String rg = System.getProperty("mex.aks.resource_group");
+        if (rg == null || rg.isBlank()) {
+            throw new IllegalStateException(
+                    "AKS describe/delete needs mex.aks.resource_group "
+                    + "system property (the ManagedPoolAdapter API doesn't "
+                    + "carry the spec on these calls).");
+        }
+        return rg;
+    }
+
+    private static String clusterFromProperty() {
+        String c = System.getProperty("mex.aks.cluster");
+        if (c == null || c.isBlank()) {
+            throw new IllegalStateException(
+                    "AKS describe/delete needs mex.aks.cluster system property.");
+        }
+        return c;
     }
 
     /* ============================ wiring helpers ============================ */
@@ -168,22 +195,33 @@ public final class AksAdapter implements ManagedPoolAdapter {
         return new DefaultAzureCredentialBuilder().build();
     }
 
-    private static String resourceGroup() {
-        String rg = System.getProperty("mex.aks.resource_group");
-        if (rg == null || rg.isBlank()) {
+    /** Resolve the AKS resource group: prefer the spec's cloudExtras
+     *  (set by the wizard sub-form), fall back to the legacy
+     *  {@code mex.aks.resource_group} system property. */
+    private static String resourceGroup(ManagedPoolSpec spec) {
+        String fromSpec = spec.extra(ManagedPoolSpec.EXTRA_AKS_RESOURCE_GROUP);
+        if (fromSpec != null && !fromSpec.isBlank()) return fromSpec;
+        String fromProp = System.getProperty("mex.aks.resource_group");
+        if (fromProp == null || fromProp.isBlank()) {
             throw new IllegalStateException(
-                    "mex.aks.resource_group system property required");
+                    "AKS adapter needs the resource group — set the wizard's "
+                    + "AKS sub-form or pass mex.aks.resource_group system property.");
         }
-        return rg;
+        return fromProp;
     }
 
-    private static String clusterName() {
-        String c = System.getProperty("mex.aks.cluster");
-        if (c == null || c.isBlank()) {
+    /** Same fallback chain as {@link #resourceGroup} but for the
+     *  cluster name. */
+    private static String clusterName(ManagedPoolSpec spec) {
+        String fromSpec = spec.extra(ManagedPoolSpec.EXTRA_AKS_CLUSTER);
+        if (fromSpec != null && !fromSpec.isBlank()) return fromSpec;
+        String fromProp = System.getProperty("mex.aks.cluster");
+        if (fromProp == null || fromProp.isBlank()) {
             throw new IllegalStateException(
-                    "mex.aks.cluster system property required");
+                    "AKS adapter needs the cluster name — set the wizard's "
+                    + "AKS sub-form or pass mex.aks.cluster system property.");
         }
-        return c;
+        return fromProp;
     }
 
     private static PoolPhase mapPhase(String provisioningState) {

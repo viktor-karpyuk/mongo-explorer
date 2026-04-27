@@ -1,6 +1,7 @@
 package com.kubrik.mex.k8s.compute.managedpool;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -26,9 +27,21 @@ public record ManagedPoolSpec(
         int maxNodes,
         String arch,
         List<String> zones,
-        List<String> subnetIds
+        List<String> subnetIds,
+        Map<String, String> cloudExtras
 ) {
     public enum CapacityType { ON_DEMAND, SPOT }
+
+    /** Per-cloud key suffixes for {@link #cloudExtras}. The adapters
+     *  read these via {@link #extra(String)} with system-property
+     *  fallbacks for backwards-compat. */
+    public static final String EXTRA_AKS_RESOURCE_GROUP = "aks.resource_group";
+    public static final String EXTRA_AKS_CLUSTER         = "aks.cluster";
+    public static final String EXTRA_AKS_OS_TYPE         = "aks.os_type";
+    public static final String EXTRA_EKS_CLUSTER         = "eks.cluster";
+    public static final String EXTRA_EKS_NODE_ROLE_ARN   = "eks.node_role_arn";
+    public static final String EXTRA_GKE_CLUSTER         = "gke.cluster";
+    public static final String EXTRA_GKE_PROJECT         = "gke.project";
 
     public ManagedPoolSpec {
         Objects.requireNonNull(provider, "provider");
@@ -44,6 +57,34 @@ public record ManagedPoolSpec(
         arch = arch == null ? "amd64" : arch;
         zones = zones == null ? List.of() : List.copyOf(zones);
         subnetIds = subnetIds == null ? List.of() : List.copyOf(subnetIds);
+        cloudExtras = cloudExtras == null ? Map.of() : Map.copyOf(cloudExtras);
+    }
+
+    /** Backwards-compat constructor — pre-v2.8.4-bug-pass callers
+     *  built specs without the cloudExtras map. */
+    public ManagedPoolSpec(CloudProvider provider, long credentialId, String region,
+                            String poolName, String instanceType,
+                            CapacityType capacityType,
+                            int minNodes, int desiredNodes, int maxNodes,
+                            String arch,
+                            List<String> zones, List<String> subnetIds) {
+        this(provider, credentialId, region, poolName, instanceType,
+                capacityType, minNodes, desiredNodes, maxNodes, arch,
+                zones, subnetIds, Map.of());
+    }
+
+    /** Read a per-cloud extra. Returns {@code null} if the key is
+     *  absent — adapters layer their own system-property fallback
+     *  on top so a build that hasn't filled the wizard sub-form yet
+     *  keeps working. */
+    public String extra(String key) {
+        return cloudExtras.get(key);
+    }
+
+    public ManagedPoolSpec withCloudExtras(Map<String, String> extras) {
+        return new ManagedPoolSpec(provider, credentialId, region, poolName,
+                instanceType, capacityType, minNodes, desiredNodes, maxNodes,
+                arch, zones, subnetIds, extras);
     }
 
     /** Sensible AWS EKS starter — matches milestone §2.2's defaults
@@ -55,7 +96,7 @@ public record ManagedPoolSpec(
                 "mex-" + safeName(deploymentName),
                 "m6i.large", CapacityType.ON_DEMAND,
                 3, 3, 5, "amd64",
-                List.of(), List.of());
+                List.of(), List.of(), Map.of());
     }
 
     private static String safeName(String raw) {

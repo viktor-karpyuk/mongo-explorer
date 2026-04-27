@@ -110,6 +110,19 @@ public final class ProvisionDialog extends Dialog<Void> {
             mpCredentialBox = new ComboBox<>();
     private final TextField mpRegionField = new TextField("us-east-1");
     private final TextField mpInstanceTypeField = new TextField("m6i.large");
+    // v2.8.4 Q2.8.4-A — Per-cloud extras. Visible only for the
+    // matching provider when the credential picker resolves; values
+    // round-trip through ManagedPoolSpec.cloudExtras.
+    private final TextField mpAksResourceGroupField = new TextField();
+    private final TextField mpAksClusterField = new TextField();
+    private final ComboBox<String> mpAksOsTypeBox = new ComboBox<>();
+    private final TextField mpEksClusterField = new TextField();
+    private final TextField mpEksNodeRoleArnField = new TextField();
+    private final TextField mpGkeClusterField = new TextField();
+    private final TextField mpGkeProjectField = new TextField();
+    private final VBox mpAksRow = new VBox(4);
+    private final VBox mpEksRow = new VBox(4);
+    private final VBox mpGkeRow = new VBox(4);
     private final ComboBox<com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec.CapacityType>
             mpCapacityBox = new ComboBox<>();
     private final TextField mpMinNodesField = new TextField("3");
@@ -270,9 +283,16 @@ public final class ProvisionDialog extends Dialog<Void> {
                 });
         for (TextField tf : List.of(mpRegionField, mpInstanceTypeField,
                 mpMinNodesField, mpDesiredNodesField, mpMaxNodesField,
-                mpZonesField, mpSubnetsField)) {
+                mpZonesField, mpSubnetsField,
+                mpAksResourceGroupField, mpAksClusterField,
+                mpEksClusterField, mpEksNodeRoleArnField,
+                mpGkeClusterField, mpGkeProjectField)) {
             tf.textProperty().addListener((o, a, b) -> invalidatePreflight());
         }
+        mpCredentialBox.valueProperty().addListener((o, a, b) -> {
+            refreshPerCloudRows();
+            invalidatePreflight();
+        });
     }
 
     private void refreshCredentialBox() {
@@ -284,6 +304,41 @@ public final class ProvisionDialog extends Dialog<Void> {
                 mpCredentialBox.getSelectionModel().selectFirst();
             }
         } catch (java.sql.SQLException ignored) { /* best effort */ }
+        refreshPerCloudRows();
+    }
+
+    /** Show only the per-cloud extras row that matches the picked
+     *  credential's provider. Called whenever the credential picker
+     *  changes its selection. */
+    private void refreshPerCloudRows() {
+        var sel = mpCredentialBox.getValue();
+        com.kubrik.mex.k8s.compute.managedpool.CloudProvider p = sel == null
+                ? null : sel.provider();
+        boolean aks = p == com.kubrik.mex.k8s.compute.managedpool.CloudProvider.AZURE;
+        boolean eks = p == com.kubrik.mex.k8s.compute.managedpool.CloudProvider.AWS;
+        boolean gke = p == com.kubrik.mex.k8s.compute.managedpool.CloudProvider.GCP;
+        mpAksRow.setVisible(aks); mpAksRow.setManaged(aks);
+        mpEksRow.setVisible(eks); mpEksRow.setManaged(eks);
+        mpGkeRow.setVisible(gke); mpGkeRow.setManaged(gke);
+    }
+
+    private static javafx.scene.layout.HBox labelled(String label,
+            javafx.scene.Node ctrl) {
+        Label l = new Label(label);
+        l.setStyle("-fx-text-fill: -color-fg-muted; -fx-font-size: 11px;");
+        javafx.scene.layout.HBox h = new javafx.scene.layout.HBox(6, l, ctrl);
+        h.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        return h;
+    }
+
+    private static void populatePerCloudRow(VBox target, String head,
+            javafx.scene.layout.HBox... entries) {
+        Label header = new Label(head + " sub-form");
+        header.setStyle("-fx-font-weight: 600; -fx-font-size: 11px;");
+        target.setPadding(new Insets(6, 0, 0, 24));
+        target.getChildren().clear();
+        target.getChildren().add(header);
+        for (var e : entries) target.getChildren().add(e);
     }
 
     private Region buildContent() {
@@ -359,7 +414,26 @@ public final class ProvisionDialog extends Dialog<Void> {
         mpGrid.add(new Label("Max nodes"), 0, mr); mpGrid.add(mpMaxNodesField, 1, mr++);
         mpGrid.add(new Label("Zones (CSV)"), 0, mr); mpGrid.add(mpZonesField, 1, mr, 3, 1); mr++;
         mpGrid.add(new Label("Subnet IDs (CSV)"), 0, mr); mpGrid.add(mpSubnetsField, 1, mr, 3, 1); mr++;
-        managedPoolForm.getChildren().setAll(mpGrid);
+
+        // Per-cloud extras — only the row matching the picked
+        // credential's provider is visible at any time.
+        mpAksOsTypeBox.getItems().setAll("Linux", "Windows");
+        mpAksOsTypeBox.getSelectionModel().select("Linux");
+        populatePerCloudRow(mpAksRow, "AKS",
+                labelled("Resource group", mpAksResourceGroupField),
+                labelled("Cluster", mpAksClusterField),
+                labelled("OS type", mpAksOsTypeBox));
+        populatePerCloudRow(mpEksRow, "EKS",
+                labelled("Cluster", mpEksClusterField),
+                labelled("Node-role ARN", mpEksNodeRoleArnField));
+        populatePerCloudRow(mpGkeRow, "GKE",
+                labelled("Cluster", mpGkeClusterField),
+                labelled("Project", mpGkeProjectField));
+        mpAksRow.setVisible(false); mpAksRow.setManaged(false);
+        mpEksRow.setVisible(false); mpEksRow.setManaged(false);
+        mpGkeRow.setVisible(false); mpGkeRow.setManaged(false);
+
+        managedPoolForm.getChildren().setAll(mpGrid, mpAksRow, mpEksRow, mpGkeRow);
         managedPoolForm.setVisible(false);
         managedPoolForm.setManaged(false);
 
@@ -585,6 +659,7 @@ public final class ProvisionDialog extends Dialog<Void> {
         if (max < desired) max = desired;
         String poolName = "mex-" + deploymentNameField.getText().trim()
                 .toLowerCase().replaceAll("[^a-z0-9-]", "-").replaceAll("-+", "-");
+        java.util.Map<String, String> extras = collectCloudExtras(provider);
         try {
             return new com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec(
                     provider, credId,
@@ -597,13 +672,53 @@ public final class ProvisionDialog extends Dialog<Void> {
                     min, desired, max,
                     mpArchBox.getValue() == null ? "amd64" : mpArchBox.getValue(),
                     splitCsv(mpZonesField.getText()),
-                    splitCsv(mpSubnetsField.getText()));
+                    splitCsv(mpSubnetsField.getText()),
+                    extras);
         } catch (IllegalArgumentException iae) {
             return com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec
                     .sensibleEksDefaults(credId,
                             blankToDefault(mpRegionField.getText(), "us-east-1"),
                             deploymentNameField.getText().trim());
         }
+    }
+
+    /** Pull the per-cloud extras row's values into the map shape
+     *  ManagedPoolSpec.cloudExtras expects. Empty / blank fields are
+     *  omitted so the spec stays clean. */
+    private java.util.Map<String, String> collectCloudExtras(
+            com.kubrik.mex.k8s.compute.managedpool.CloudProvider provider) {
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+        if (provider == null) return out;
+        switch (provider) {
+            case AZURE -> {
+                putIfPresent(out, com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec
+                        .EXTRA_AKS_RESOURCE_GROUP, mpAksResourceGroupField.getText());
+                putIfPresent(out, com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec
+                        .EXTRA_AKS_CLUSTER, mpAksClusterField.getText());
+                putIfPresent(out, com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec
+                        .EXTRA_AKS_OS_TYPE,
+                        mpAksOsTypeBox.getValue() == null ? null
+                                : mpAksOsTypeBox.getValue().toLowerCase());
+            }
+            case AWS -> {
+                putIfPresent(out, com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec
+                        .EXTRA_EKS_CLUSTER, mpEksClusterField.getText());
+                putIfPresent(out, com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec
+                        .EXTRA_EKS_NODE_ROLE_ARN, mpEksNodeRoleArnField.getText());
+            }
+            case GCP -> {
+                putIfPresent(out, com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec
+                        .EXTRA_GKE_CLUSTER, mpGkeClusterField.getText());
+                putIfPresent(out, com.kubrik.mex.k8s.compute.managedpool.ManagedPoolSpec
+                        .EXTRA_GKE_PROJECT, mpGkeProjectField.getText());
+            }
+        }
+        return out;
+    }
+
+    private static void putIfPresent(java.util.Map<String, String> m,
+            String key, String value) {
+        if (value != null && !value.isBlank()) m.put(key, value.trim());
     }
 
     private static int parseInt(String raw, int fallback) {
