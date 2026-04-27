@@ -27,10 +27,13 @@ public final class ManagedPoolAdapterRegistry {
         return Optional.ofNullable(adapters.get(provider));
     }
 
-    /** GA default — the EKS stub. Production bootstraps can replace
-     *  this with a real SDK-backed implementation before wiring the
-     *  Managed-pool radio on. */
+    /** GA default — three stubs covering AWS / GCP / Azure. Production
+     *  bootstraps replace each with the SDK-backed implementation as
+     *  the per-cloud point releases land. */
     public static ManagedPoolAdapterRegistry defaultRegistry() {
-        return new ManagedPoolAdapterRegistry().register(new EksAdapterStub());
+        return new ManagedPoolAdapterRegistry()
+                .register(new EksAdapterStub())
+                .register(new GkeAdapterStub())
+                .register(new AksAdapterStub());
     }
 }

@@ -122,10 +122,10 @@ class ManagedPoolJsonAndAdapterTest {
     }
 
     @Test
-    void registry_looks_up_registered_adapter() {
+    void registry_covers_all_three_clouds_at_alpha() {
         ManagedPoolAdapterRegistry reg = ManagedPoolAdapterRegistry.defaultRegistry();
         assertTrue(reg.lookup(CloudProvider.AWS).isPresent());
-        assertTrue(reg.lookup(CloudProvider.GCP).isEmpty());
-        assertTrue(reg.lookup(CloudProvider.AZURE).isEmpty());
+        assertTrue(reg.lookup(CloudProvider.GCP).isPresent());
+        assertTrue(reg.lookup(CloudProvider.AZURE).isPresent());
     }
 }
