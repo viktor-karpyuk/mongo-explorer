@@ -63,6 +63,14 @@ dependencies {
         exclude(group = "software.amazon.awssdk", module = "apache-client")
     }
 
+    // v2.8.4.1 — Real GKE adapter for managed-pool provisioning.
+    // google-cloud-container brings in gRPC + auth; the grpc-netty-
+    // shaded transport is excluded (we already excluded it from
+    // google-cloud-storage above for the same reason).
+    implementation("com.google.cloud:google-cloud-container:2.43.0") {
+        exclude(group = "io.grpc", module = "grpc-netty-shaded")
+    }
+
     // v2.6.1 Q2.6.1-A — Google Cloud Storage backup sink. Uses the
     // HTTP / JSON transport; we exclude the gRPC-shaded client which
     // pulls a separate Netty (~30 MB) we don't need for occasional
