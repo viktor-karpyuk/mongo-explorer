@@ -6,6 +6,7 @@ import com.kubrik.mex.k8s.rollout.RolloutEvent;
 import io.kubernetes.client.openapi.ApiClient;
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesApi;
 import io.kubernetes.client.util.generic.dynamic.DynamicKubernetesObject;
+import io.kubernetes.client.util.generic.options.ListOptions;
 
 import java.util.HashMap;
 import java.util.List;
@@ -55,7 +56,14 @@ public final class KarpenterEventProbe {
      *  cost is dominated by the API round-trip anyway. */
     public synchronized void poll(Consumer<RolloutEvent> sink) {
         try {
-            var list = nodeClaimsApi.list().getObject();
+            // Server-side label-selector filter — narrows the list
+            // to just our NodePool's claims so a busy cluster with
+            // thousands of unrelated NodeClaims doesn't paginate over
+            // every poll. The matchesPool() check below stays as a
+            // defence-in-depth (covers the empty-selector edge case).
+            ListOptions opts = new ListOptions();
+            opts.setLabelSelector(nodePoolLabel);
+            var list = nodeClaimsApi.list(opts).getObject();
             if (list == null || list.getItems() == null) return;
 
             Set<String> seen = new java.util.HashSet<>();

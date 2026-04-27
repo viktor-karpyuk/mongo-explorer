@@ -1144,8 +1144,13 @@ public class MainView extends BorderPane {
         if (connectionId == null) return null;
         long now = System.currentTimeMillis();
         if (now - labBadgeCacheAt > LAB_BADGE_TTL_MS) {
-            rebuildLabBadgeCache();
+            // Stamp the timestamp BEFORE the rebuild so a concurrent
+            // burst of cell-render calls (the JavaFX TableView fires
+            // updateItem N times per scroll) doesn't all queue up
+            // through the rebuild's synchronized lock — only the
+            // first wins.
             labBadgeCacheAt = now;
+            rebuildLabBadgeCache();
         }
         return labBadgeCache.get(connectionId);
     }

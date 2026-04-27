@@ -52,36 +52,70 @@ public final class NodePoolLookupService {
      * job to enforce at least one label before calling us.
      */
     public PoolSnapshot snapshot(List<LabelPair> selector) throws ApiException {
-        V1NodeList list = new CoreV1Api(client).listNode().execute();
+        // Push the selector to the server side via a labelSelector
+        // expression — a busy cluster (>500 nodes) shouldn't paginate
+        // every node into the JVM just to filter to a few. The
+        // client-side matches() check below stays as defence-in-depth
+        // (covers the empty-selector + edge cases the server may
+        // not).
+        String labelSelector = renderLabelSelector(selector);
+        CoreV1Api api = new CoreV1Api(client);
         List<String> matchedNames = new ArrayList<>();
         int ready = 0;
         Set<String> zones = new java.util.LinkedHashSet<>();
         List<V1Taint> commonTaints = null;
 
-        for (V1Node n : list.getItems()) {
-            Map<String, String> labels = n.getMetadata() == null
-                    ? Map.of() : n.getMetadata().getLabels() == null
-                    ? Map.of() : n.getMetadata().getLabels();
-            if (!matches(labels, selector)) continue;
-            matchedNames.add(n.getMetadata().getName());
-            if (isReady(n)) ready++;
-            String zone = labels.get("topology.kubernetes.io/zone");
-            if (zone != null) zones.add(zone);
+        // Manual pagination — listNode().continueX().execute() loops
+        // until the server returns no continue token. Single page
+        // (continue == null) is the common case for clusters under a
+        // few hundred nodes.
+        String continueToken = null;
+        do {
+            CoreV1Api.APIlistNodeRequest req = api.listNode();
+            if (labelSelector != null) req = req.labelSelector(labelSelector);
+            if (continueToken != null) req = req._continue(continueToken);
+            req = req.limit(500);
+            V1NodeList list = req.execute();
+            for (V1Node n : list.getItems()) {
+                Map<String, String> labels = n.getMetadata() == null
+                        ? Map.of() : n.getMetadata().getLabels() == null
+                        ? Map.of() : n.getMetadata().getLabels();
+                if (!matches(labels, selector)) continue;
+                matchedNames.add(n.getMetadata().getName());
+                if (isReady(n)) ready++;
+                String zone = labels.get("topology.kubernetes.io/zone");
+                if (zone != null) zones.add(zone);
 
-            List<V1Taint> taints = n.getSpec() == null || n.getSpec().getTaints() == null
-                    ? Collections.emptyList()
-                    : n.getSpec().getTaints();
-            if (commonTaints == null) {
-                commonTaints = new ArrayList<>(taints);
-            } else {
-                commonTaints.retainAll(taints);
+                List<V1Taint> taints = n.getSpec() == null || n.getSpec().getTaints() == null
+                        ? Collections.emptyList()
+                        : n.getSpec().getTaints();
+                if (commonTaints == null) {
+                    commonTaints = new ArrayList<>(taints);
+                } else {
+                    commonTaints.retainAll(taints);
+                }
             }
-        }
+            continueToken = list.getMetadata() == null ? null
+                    : list.getMetadata().getContinue();
+        } while (continueToken != null && !continueToken.isEmpty());
+
         return new PoolSnapshot(
                 List.copyOf(matchedNames),
                 ready,
                 commonTaints == null ? List.of() : List.copyOf(commonTaints),
                 Set.copyOf(zones));
+    }
+
+    /** Render an AND-of-equalities label selector for the K8s API.
+     *  Returns null for an empty selector (matches every node). */
+    private static String renderLabelSelector(List<LabelPair> selector) {
+        if (selector == null || selector.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder();
+        for (LabelPair p : selector) {
+            if (sb.length() > 0) sb.append(',');
+            sb.append(p.key()).append('=').append(p.value());
+        }
+        return sb.toString();
     }
 
     /** Visible for tests — AND-match node labels against a selector. */
