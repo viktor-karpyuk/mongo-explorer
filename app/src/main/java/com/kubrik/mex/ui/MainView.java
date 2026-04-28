@@ -991,15 +991,20 @@ public class MainView extends BorderPane {
     }
 
     private static boolean isK8sEnabled() {
-        String v = System.getProperty("k8s.enabled");
-        return v != null && (v.equalsIgnoreCase("true") || v.equals("1")
-                || v.equalsIgnoreCase("yes"));
+        // v2.8.4-alpha: K8s integration is on by default. Set
+        // -Dk8s.enabled=false to opt out (e.g. minimal builds that
+        // don't need the Clusters tab).
+        String v = System.getProperty("k8s.enabled", "true");
+        return v.equalsIgnoreCase("true") || v.equals("1")
+                || v.equalsIgnoreCase("yes");
     }
 
     private static boolean isLabsK8sEnabled() {
-        String v = System.getProperty("labs.k8s.enabled");
-        return v != null && (v.equalsIgnoreCase("true") || v.equals("1")
-                || v.equalsIgnoreCase("yes"));
+        // v2.8.4-alpha: Local K8s Labs is on by default. Set
+        // -Dlabs.k8s.enabled=false to opt out.
+        String v = System.getProperty("labs.k8s.enabled", "true");
+        return v.equalsIgnoreCase("true") || v.equals("1")
+                || v.equalsIgnoreCase("yes");
     }
 
     /**
