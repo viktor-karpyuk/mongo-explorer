@@ -1,0 +1,109 @@
+schema_version: 1
+id: rs-5
+display_name: "Replica set — 5 nodes"
+description: "Exercises elections, priority/votes/hidden scenarios. Useful for reconfig training."
+est_memory_mib: 1400
+est_startup_seconds: 45
+default_mongo_tag: "mongo:latest"
+containers:
+  - rs1a
+  - rs1b
+  - rs1c
+  - rs1d
+  - rs1e
+  - init
+compose_template: |
+  name: {{projectName}}
+  services:
+    rs1a:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-rs1a
+      command: mongod --replSet rs1 --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.rs1a}}:27017"]
+      volumes: [data1a:/data/db]
+      labels: {com.kubrik.mex.lab: rs-5}
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 20
+    rs1b:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-rs1b
+      command: mongod --replSet rs1 --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.rs1b}}:27017"]
+      volumes: [data1b:/data/db]
+      labels: {com.kubrik.mex.lab: rs-5}
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 20
+    rs1c:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-rs1c
+      command: mongod --replSet rs1 --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.rs1c}}:27017"]
+      volumes: [data1c:/data/db]
+      labels: {com.kubrik.mex.lab: rs-5}
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 20
+    rs1d:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-rs1d
+      command: mongod --replSet rs1 --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.rs1d}}:27017"]
+      volumes: [data1d:/data/db]
+      labels: {com.kubrik.mex.lab: rs-5}
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 20
+    rs1e:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-rs1e
+      command: mongod --replSet rs1 --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.rs1e}}:27017"]
+      volumes: [data1e:/data/db]
+      labels: {com.kubrik.mex.lab: rs-5}
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 20
+    init:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-init
+      depends_on:
+        rs1a: {condition: service_healthy}
+        rs1b: {condition: service_healthy}
+        rs1c: {condition: service_healthy}
+        rs1d: {condition: service_healthy}
+        rs1e: {condition: service_healthy}
+      restart: "no"
+      labels: {com.kubrik.mex.lab: rs-5}
+      entrypoint: ["bash", "-c"]
+      command:
+        - |
+          set -e
+          for i in $$(seq 1 60); do
+            if mongosh --quiet --host rs1a --eval 'try { rs.status().ok } catch (e) { e.code }' 2>/dev/null | grep -q '^1$$'; then
+              echo "rs1 already initiated"; exit 0
+            fi
+            if mongosh --quiet --host rs1a --eval 'db.adminCommand("ping").ok' >/dev/null 2>&1; then
+              mongosh --quiet --host rs1a --eval 'rs.initiate({_id:"rs1",members:[{_id:0,host:"rs1a:27017"},{_id:1,host:"rs1b:27017"},{_id:2,host:"rs1c:27017"},{_id:3,host:"rs1d:27017"},{_id:4,host:"rs1e:27017"}]})'
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "rs1a never answered ping"; exit 1
+  volumes:
+    data1a:
+    data1b:
+    data1c:
+    data1d:
+    data1e:

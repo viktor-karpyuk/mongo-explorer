@@ -77,6 +77,7 @@ public class ConnectionStore {
                     app_name=excluded.app_name, manual_uri_options=excluded.manual_uri_options,
                     updated_at=excluded.updated_at
                 """;
+        synchronized (db.writeLock()) {
         try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
             int i = 1;
             ps.setString(i++, id);
@@ -122,15 +123,137 @@ public class ConnectionStore {
         } catch (SQLException e) {
             throw new RuntimeException(e);
         }
+        }  // synchronized (db.writeLock())
         return get(id);
     }
 
+    /**
+     * v2.8.4 LAB-CONN-1 — Inserts a minimal Lab-origin connection
+     * row and returns its id. Kept separate from {@link #upsert} so
+     * the 35-column general path doesn't need to know about the
+     * lab-specific fields.
+     *
+     * @param name   user-visible name ({@code display_name} in the
+     *               lab_deployments row).
+     * @param uri    {@code mongodb://localhost:<port>[/?replicaSet=X]}.
+     * @param labDeploymentId FK back-pointer to lab_deployments.id.
+     * @return the new connection's UUID.
+     */
+    public String insertLabOrigin(String name, String uri, long labDeploymentId) {
+        long now = System.currentTimeMillis();
+        String id = UUID.randomUUID().toString();
+        // First insert the row via a minimal raw INSERT so we don't
+        // depend on upsert's column-by-column ritual; then stamp the
+        // two labs-only columns (origin, lab_deployment_id) that
+        // upsert doesn't know about.
+        String sql = """
+                INSERT INTO connections(id, name, mode, uri, tls, allow_invalid_certs,
+                    connection_type, hosts, auth_mode, ssh_auth_mode,
+                    ssh_port, proxy_type, proxy_port, read_preference,
+                    tls_allow_invalid_hostnames, ssh_enabled,
+                    created_at, updated_at, origin, lab_deployment_id)
+                VALUES (?, ?, 'FORM', ?, 0, 0, 'STANDALONE', '',
+                    'NONE', 'PASSWORD', 22, 'NONE', 1080, 'primary',
+                    0, 0, ?, ?, 'LAB', ?)
+                """;
+        synchronized (db.writeLock()) {
+            try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+                ps.setString(1, id);
+                ps.setString(2, name);
+                ps.setString(3, uri);
+                ps.setLong(4, now);
+                ps.setLong(5, now);
+                ps.setLong(6, labDeploymentId);
+                ps.executeUpdate();
+                return id;
+            } catch (SQLException e) {
+                throw new RuntimeException("lab-origin connection insert failed", e);
+            }
+        }
+    }
+
+    /**
+     * v2.8.1 Q2.8.1-B3 — Minimal {@code origin='K8S'} insert for the
+     * "connect to existing" flow.
+     *
+     * <p>Mirrors {@link #insertLabOrigin} in style: skips the upsert
+     * ritual and just writes the columns that matter. The URI
+     * initially points at the in-cluster Service name; once
+     * Q2.8.1-C ships the port-forward service the wiring rewrites it
+     * to {@code mongodb://127.0.0.1:<localPort>} for the duration of
+     * the session. Persisting the Service-name form keeps the row
+     * recognizable and re-openable in future sessions.</p>
+     */
+    public String insertK8sOrigin(String name, String uri) {
+        long now = System.currentTimeMillis();
+        String id = UUID.randomUUID().toString();
+        String sql = """
+                INSERT INTO connections(id, name, mode, uri, tls, allow_invalid_certs,
+                    connection_type, hosts, auth_mode, ssh_auth_mode,
+                    ssh_port, proxy_type, proxy_port, read_preference,
+                    tls_allow_invalid_hostnames, ssh_enabled,
+                    created_at, updated_at, origin)
+                VALUES (?, ?, 'FORM', ?, 0, 0, 'STANDALONE', '',
+                    'NONE', 'PASSWORD', 22, 'NONE', 1080, 'primary',
+                    0, 0, ?, ?, 'K8S')
+                """;
+        synchronized (db.writeLock()) {
+            try (PreparedStatement ps = db.connection().prepareStatement(sql)) {
+                ps.setString(1, id);
+                ps.setString(2, name);
+                ps.setString(3, uri);
+                ps.setLong(4, now);
+                ps.setLong(5, now);
+                ps.executeUpdate();
+                return id;
+            } catch (SQLException e) {
+                throw new RuntimeException("k8s-origin connection insert failed", e);
+            }
+        }
+    }
+
     public void delete(String id) {
-        try (PreparedStatement ps = db.connection().prepareStatement("DELETE FROM connections WHERE id=?")) {
+        // Cascade delete: SQLite's FK constraints are off by default, so we
+        // perform the v2.4 cluster-table cleanup manually inside a single
+        // transaction (spec §3.1 AUD-RET / TOPO / ROLE). Older tables that
+        // reference the connection id (migrations, monitoring) are expected
+        // to cope with stale rows pointing at a removed id — none of them
+        // treats the id as a foreign key.
+        //
+        // The whole block is held under db.writeLock() because
+        // setAutoCommit(false) mutates the SHARED JDBC connection; without
+        // the lock, a concurrent monitoring-sampler write would be pulled
+        // into this transaction (its commit would commit our deletes, or
+        // its rollback would roll them back).
+        synchronized (db.writeLock()) {
+            java.sql.Connection c = db.connection();
+            try {
+                boolean prevAuto = c.getAutoCommit();
+                c.setAutoCommit(false);
+                try {
+                    deleteFrom(c, "ops_audit", id);
+                    deleteFrom(c, "topology_snapshots", id);
+                    deleteFrom(c, "role_cache", id);
+                    deleteFrom(c, "connections", id);
+                    c.commit();
+                } catch (SQLException inner) {
+                    try { c.rollback(); } catch (SQLException ignored) {}
+                    throw inner;
+                } finally {
+                    c.setAutoCommit(prevAuto);
+                }
+            } catch (SQLException e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    private static void deleteFrom(java.sql.Connection c, String table, String id) throws SQLException {
+        String sql = "DELETE FROM " + table + " WHERE "
+                + ("connections".equals(table) ? "id" : "connection_id") + " = ?";
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, id);
             ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
         }
     }
 

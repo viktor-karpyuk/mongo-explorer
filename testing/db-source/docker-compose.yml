@@ -1,0 +1,18 @@
+services:
+  mongo-source:
+    image: mongo:latest
+    container_name: mex-mongo-source
+    ports:
+      - "27018:27017"
+    volumes:
+      - mex-source-data:/data/db
+      - ./init:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mex-source-data:

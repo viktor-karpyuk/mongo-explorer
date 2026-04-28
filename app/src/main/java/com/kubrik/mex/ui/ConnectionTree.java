@@ -3,6 +3,9 @@ package com.kubrik.mex.ui;
 import com.kubrik.mex.core.ConnectionManager;
 import com.kubrik.mex.core.MongoService;
 import com.kubrik.mex.events.EventBus;
+import com.kubrik.mex.migration.JobId;
+import com.kubrik.mex.migration.events.CollectionProgress;
+import com.kubrik.mex.migration.events.JobEvent;
 import com.kubrik.mex.model.ConnectionState;
 import com.kubrik.mex.model.MongoConnection;
 import com.kubrik.mex.store.ConnectionStore;
@@ -13,6 +16,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
@@ -27,6 +31,8 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Studio-3T-style left sidebar tree:
@@ -45,6 +51,13 @@ public class ConnectionTree extends VBox {
         void openManageConnections();
         void openConnectionEditor(MongoConnection existing);
         void openLogs();
+        /** Opens the migration wizard, pre-filled with the clicked connection/db/coll (any
+         *  may be null depending on where the context menu was invoked). */
+        default void openMigrate(String connectionId, String db, String coll) {}
+        /** Opens the Monitoring tab. v2.1.0 — see docs/v2/v2.1/functional-spec.md §3.2. */
+        default void openMonitoring(String connectionId) {}
+        /** Opens the Cluster tab for the selected connection. v2.4.0 UI-OPS-1. */
+        default void openCluster(String connectionId) {}
     }
 
     public record Node(String type, String connectionId, String db, String coll, String label) {
@@ -53,6 +66,23 @@ public class ConnectionTree extends VBox {
         public static Node coll(String id, String d, String c) { return new Node("coll", id, d,    c,    c); }
         public static Node loading()                            { return new Node("loading", null, null, null, "loading…"); }
         @Override public String toString() { return label; }
+    }
+
+    /** v2.8.1 Q2.8-N6 — Composite Lab/K8s provenance chip shown next
+     *  to a connection node. {@link Kind#DOCKER_LAB} means the
+     *  connection was created by a v2.8.0 Docker Lab; {@link Kind#K8S_LAB}
+     *  means a v2.8.1 Local K8s Lab provisioned a Mongo deployment
+     *  that this connection points to. */
+    public record LabBadge(Kind kind, String tooltip) {
+        public enum Kind { DOCKER_LAB, K8S_LAB }
+    }
+
+    /** Resolves a {@link LabBadge} for a given connection id, or
+     *  returns {@code null} if the connection has no Lab provenance.
+     *  Called on the FX thread during cell rendering — implementations
+     *  must be fast (cache in front of any DB lookups). */
+    public interface LabBadgeProvider {
+        LabBadge forConnection(String connectionId);
     }
 
     public enum SortOrder {
@@ -73,8 +103,18 @@ public class ConnectionTree extends VBox {
     private final EventBus events;
     private final TreeView<Node> tree = new TreeView<>();
     private OpenHandler openHandler;
+    private volatile LabBadgeProvider labBadgeProvider;
     private final Map<String, TreeItem<Node>> connectionItems = new HashMap<>();
     private SortOrder sortOrder = SortOrder.AZ;
+
+    // OBS-4 — live migration-progress badges. Populated from JobEvent.Progress, cleared on
+    // Completed / Failed / Cancelled. Keyed by the *target* namespace — that's where the writes
+    // (and the progress the user cares about) land.
+    private record BadgeKey(String connectionId, String db, String coll) {}
+    private record BadgeState(JobId jobId, String status, long docsCopied, long docsTotal) {}
+    private final Map<BadgeKey, BadgeState> liveBadges = new ConcurrentHashMap<>();
+    private final Map<JobId, String> jobTargetConn = new ConcurrentHashMap<>();
+    private final AtomicBoolean refreshScheduled = new AtomicBoolean(false);
 
     public ConnectionTree(ConnectionManager manager, ConnectionStore store, EventBus events) {
         this.manager = manager;
@@ -187,7 +227,54 @@ public class ConnectionTree extends VBox {
             }
         }));
 
+        events.onJob(this::onJobEvent);
+
         reloadAll();
+    }
+
+    /** OBS-4 — translate migration events into per-collection badge state and schedule a cell
+     *  refresh. Runs on the bus thread; state is mutated via concurrent maps so we can repaint
+     *  safely from the FX thread. */
+    private void onJobEvent(JobEvent e) {
+        switch (e) {
+            case JobEvent.Started started -> {
+                String targetConn = started.spec().target().connectionId();
+                if (targetConn != null) jobTargetConn.put(started.jobId(), targetConn);
+            }
+            case JobEvent.Progress prog -> {
+                String targetConn = jobTargetConn.get(prog.jobId());
+                if (targetConn == null) return;
+                for (CollectionProgress cp : prog.snapshot().perCollection()) {
+                    String ns = cp.target();
+                    if (ns == null) continue;
+                    int dot = ns.indexOf('.');
+                    if (dot <= 0 || dot == ns.length() - 1) continue;
+                    BadgeKey key = new BadgeKey(targetConn, ns.substring(0, dot), ns.substring(dot + 1));
+                    liveBadges.put(key, new BadgeState(
+                            prog.jobId(), cp.status(), cp.docsCopied(), cp.docsTotal()));
+                }
+                scheduleBadgeRefresh();
+            }
+            case JobEvent.Completed c -> clearJobBadges(c.jobId());
+            case JobEvent.Failed f    -> clearJobBadges(f.jobId());
+            case JobEvent.Cancelled x -> clearJobBadges(x.jobId());
+            default -> {} // LogLine / StatusChanged don't affect badges
+        }
+    }
+
+    private void clearJobBadges(JobId jobId) {
+        liveBadges.entrySet().removeIf(entry -> jobId.equals(entry.getValue().jobId()));
+        jobTargetConn.remove(jobId);
+        scheduleBadgeRefresh();
+    }
+
+    private void scheduleBadgeRefresh() {
+        if (refreshScheduled.compareAndSet(false, true)) {
+            Platform.runLater(() -> {
+                refreshScheduled.set(false);
+                tree.refresh();
+            });
+        }
     }
 
     private static void applyToolbarHover(javafx.scene.control.Button btn) {
@@ -196,6 +283,30 @@ public class ConnectionTree extends VBox {
     }
 
     public void setOpenHandler(OpenHandler h) { this.openHandler = h; }
+
+    /** Inject a Lab provenance resolver; repaints the tree so the new
+     *  chips appear immediately. Passing {@code null} hides all chips. */
+    public void setLabBadgeProvider(LabBadgeProvider p) {
+        this.labBadgeProvider = p;
+        refreshLabBadges();
+    }
+
+    /** Force-repaint connection rows after the badge provider's backing
+     *  state has mutated (e.g. a Lab was created / destroyed). Safe to
+     *  call from any thread. */
+    public void refreshLabBadges() {
+        Platform.runLater(tree::refresh);
+    }
+
+    /** Returns the connection id currently selected in the tree (either a
+     *  connection row or any of its descendants), or {@code null} if no
+     *  connection context is selected. */
+    public String selectedConnectionId() {
+        TreeItem<Node> sel = tree.getSelectionModel().getSelectedItem();
+        if (sel == null) return null;
+        Node n = sel.getValue();
+        return n == null ? null : n.connectionId;
+    }
 
     public void reloadAll() {
         TreeItem<Node> root = new TreeItem<>(Node.connection("root", "root"));
@@ -292,6 +403,9 @@ public class ConnectionTree extends VBox {
     private final MenuItem miRenameColl = new MenuItem("Rename collection…");
     private final MenuItem miDropColl = new MenuItem("Drop collection");
     private final MenuItem miIndexes = new MenuItem("Indexes…");
+    private final MenuItem miMigrate = new MenuItem("Migrate…");
+    private final MenuItem miMonitor = new MenuItem("Monitor this connection");
+    private final MenuItem miCluster = new MenuItem("Open cluster view…");
 
     private void rebuildContextMenuItems(ContextMenu m) {
         TreeItem<Node> sel = tree.getSelectionModel().getSelectedItem();
@@ -310,6 +424,9 @@ public class ConnectionTree extends VBox {
                 items.add(miReloadDbs);
                 items.add(miCreateDb);
                 items.add(miServerInfo);
+                items.add(miMigrate);
+                items.add(miMonitor);
+                items.add(miCluster);
             }
             items.add(new SeparatorMenuItem());
             items.add(miEdit);
@@ -319,12 +436,14 @@ public class ConnectionTree extends VBox {
         } else if (isDb) {
             items.add(miNewColl);
             items.add(miUsers);
+            items.add(miMigrate);
             items.add(miDropDb);
             items.add(miRunCmd);
         } else if (isColl) {
             items.add(miOpenColl);
             items.add(miRenameColl);
             items.add(miIndexes);
+            items.add(miMigrate);
             items.add(miDropColl);
         }
         if (!items.isEmpty()) items.add(new SeparatorMenuItem());
@@ -395,26 +514,12 @@ public class ConnectionTree extends VBox {
             });
         }));
         miServerInfo.setOnAction(e -> withSel(n -> {
-            Thread.startVirtualThread(() -> {
-                try {
-                    var doc = manager.service(n.connectionId).runCommand("admin", "{ \"serverStatus\": 1 }");
-                    String json = doc.toJson(MongoService.JSON_RELAXED);
-                    Platform.runLater(() -> {
-                        javafx.scene.control.TextArea ta = new javafx.scene.control.TextArea(json);
-                        ta.setEditable(false);
-                        ta.setStyle("-fx-font-family: 'Menlo','Monaco',monospace;");
-                        ta.setPrefSize(720, 520);
-                        javafx.scene.control.Dialog<Void> d = new javafx.scene.control.Dialog<>();
-                        d.initOwner(getScene().getWindow());
-                        d.setTitle("Server status · " + n.label);
-                        d.getDialogPane().setContent(ta);
-                        d.getDialogPane().getButtonTypes().add(javafx.scene.control.ButtonType.CLOSE);
-                        d.showAndWait();
-                    });
-                } catch (Exception ex) {
-                    Platform.runLater(() -> UiHelpers.error(getScene().getWindow(), ex.getMessage()));
-                }
-            });
+            var svc = manager.service(n.connectionId);
+            if (svc == null) {
+                UiHelpers.error(getScene().getWindow(), "Connect to " + n.label + " first.");
+                return;
+            }
+            ClusterInfoDialog.show(getScene().getWindow(), svc, n.label);
         }));
         miCopyUri.setOnAction(e -> withSel(n -> {
             MongoConnection c = store.get(n.connectionId);
@@ -498,6 +603,15 @@ public class ConnectionTree extends VBox {
 
         miOpenColl.setOnAction(e -> withSel(n -> {
             if (openHandler != null) openHandler.openCollection(n.connectionId, n.db, n.coll);
+        }));
+        miMigrate.setOnAction(e -> withSel(n -> {
+            if (openHandler != null) openHandler.openMigrate(n.connectionId, n.db, n.coll);
+        }));
+        miMonitor.setOnAction(e -> withSel(n -> {
+            if (openHandler != null) openHandler.openMonitoring(n.connectionId);
+        }));
+        miCluster.setOnAction(e -> withSel(n -> {
+            if (openHandler != null) openHandler.openCluster(n.connectionId);
         }));
         miRenameColl.setOnAction(e -> withSel(n -> {
             TextInputDialog d = new TextInputDialog(n.coll);
@@ -592,10 +706,81 @@ public class ConnectionTree extends VBox {
             HBox row = new HBox(6, graphic, lbl);
             row.setAlignment(Pos.CENTER_LEFT);
             row.setMinWidth(Region.USE_PREF_SIZE);
+
+            // Q2.8-N6 — Lab provenance chip for connection rows.
+            if ("conn".equals(item.type)) {
+                LabBadgeProvider p = labBadgeProvider;
+                LabBadge lb = p == null ? null : p.forConnection(item.connectionId);
+                if (lb != null) row.getChildren().add(buildLabBadge(lb));
+            }
+
+            // OBS-4 — migration-progress badge for target-side collection nodes.
+            if ("coll".equals(item.type)) {
+                BadgeState bs = liveBadges.get(new BadgeKey(item.connectionId, item.db, item.coll));
+                if (bs != null) row.getChildren().add(buildMigrationBadge(bs));
+            }
+
             setGraphic(row);
             setText(null);
             setMinWidth(Region.USE_PREF_SIZE);
             setPrefWidth(Region.USE_COMPUTED_SIZE);
+        }
+
+        private Label buildMigrationBadge(BadgeState bs) {
+            String text;
+            if (bs.docsTotal() > 0) {
+                int pct = (int) Math.min(100, (bs.docsCopied() * 100L) / bs.docsTotal());
+                text = "▶ " + pct + "%";
+            } else if (bs.docsCopied() > 0) {
+                text = "▶ " + compactDocs(bs.docsCopied());
+            } else {
+                text = "▶";
+            }
+            Label badge = new Label(text);
+            badge.setStyle(
+                    "-fx-background-color: #dbeafe;"
+                  + "-fx-text-fill: #1d4ed8;"
+                  + "-fx-font-size: 10px;"
+                  + "-fx-font-weight: bold;"
+                  + "-fx-background-radius: 8;"
+                  + "-fx-padding: 0 6 0 6;");
+            badge.setTooltip(new Tooltip(
+                    "Migration " + (bs.status() == null ? "running" : bs.status().toLowerCase())
+                  + ": " + bs.docsCopied()
+                  + (bs.docsTotal() > 0 ? " / " + bs.docsTotal() : "")
+                  + " documents"));
+            return badge;
+        }
+
+        private Label buildLabBadge(LabBadge lb) {
+            String text = lb.kind() == LabBadge.Kind.K8S_LAB ? "Lab•K8s" : "Lab";
+            String bg, fg;
+            if (lb.kind() == LabBadge.Kind.K8S_LAB) {
+                // violet — matches the K8s pane's accent
+                bg = "#ede9fe"; fg = "#6d28d9";
+            } else {
+                // amber — matches the Docker Labs pane's accent
+                bg = "#fef3c7"; fg = "#92400e";
+            }
+            Label badge = new Label(text);
+            badge.setStyle(
+                    "-fx-background-color: " + bg + ";"
+                  + "-fx-text-fill: " + fg + ";"
+                  + "-fx-font-size: 10px;"
+                  + "-fx-font-weight: bold;"
+                  + "-fx-background-radius: 8;"
+                  + "-fx-padding: 0 6 0 6;");
+            if (lb.tooltip() != null && !lb.tooltip().isBlank()) {
+                badge.setTooltip(new Tooltip(lb.tooltip()));
+            }
+            return badge;
+        }
+
+        private String compactDocs(long n) {
+            if (n < 1_000) return Long.toString(n);
+            if (n < 1_000_000) return (n / 1_000) + "k";
+            if (n < 1_000_000_000L) return (n / 1_000_000) + "M";
+            return (n / 1_000_000_000L) + "B";
         }
     }
 }

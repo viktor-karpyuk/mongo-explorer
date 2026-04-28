@@ -1,0 +1,162 @@
+package com.kubrik.mex.ui.cluster;
+
+import com.kubrik.mex.cluster.model.ClusterKind;
+import com.kubrik.mex.cluster.model.TopologySnapshot;
+import com.kubrik.mex.cluster.service.OpsExecutor;
+import com.kubrik.mex.cluster.store.OpsAuditDao;
+import com.kubrik.mex.core.ConnectionManager;
+import com.kubrik.mex.events.EventBus;
+import javafx.application.Platform;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.geometry.Orientation;
+import javafx.scene.control.Label;
+import javafx.scene.control.SplitPane;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
+
+/**
+ * v2.4 UI-OPS-1..6 — per-connection Cluster tab shell. Hosts the Topology /
+ * Ops / Balancer / Oplog / Audit / Pools sub-tabs. Balancer only appears on
+ * sharded clusters; the tab visibility flips in response to the first
+ * {@link TopologySnapshot} arriving on the bus. Sub-tabs other than Topology
+ * carry a "coming in v2.4-D…H" placeholder in this phase and will light up as
+ * their workstreams land.
+ */
+public final class ClusterTab extends BorderPane implements AutoCloseable {
+
+    private final String connectionId;
+    private final EventBus bus;
+    private final ConnectionManager connManager;
+
+    private final TabPane tabPane = new TabPane();
+    private final Tab topologyTab;
+    private final Tab opsTab;
+    private final Tab balancerTab;
+    private final Tab oplogTab;
+    private final Tab auditTab;
+    private final Tab poolsTab;
+
+    private final TopologyPane topologyPane;
+    private final CurrentOpPane currentOpPane;
+    private final LockInfoPane lockInfoPane;
+    private final ConnPoolPane connPoolPane;
+    private final OplogPane oplogPane;
+    private final AuditPane auditPane;
+    private final BalancerPane balancerPane;
+    private final ChunkDistributionPane chunkPane;
+    private final ZonesPane zonesPane;
+    private final EventBus.Subscription topoSub;
+
+    public ClusterTab(String connectionId, EventBus bus, ConnectionManager connManager,
+                      OpsAuditDao auditDao, OpsExecutor opsExecutor,
+                      BalancerPane.BalancerHandler balancerHandler,
+                      ZonesPane.ZonesHandler zonesHandler,
+                      CurrentOpPane.KillOpHandler killHandler,
+                      TopologyPane.RsAdminHandler adminHandler) {
+        this.connectionId = connectionId;
+        this.bus = bus;
+        this.connManager = connManager;
+
+        this.topologyPane = new TopologyPane(connectionId, bus, connManager, adminHandler);
+        this.currentOpPane = new CurrentOpPane(connectionId, connManager, killHandler);
+        this.lockInfoPane = new LockInfoPane(connectionId, connManager);
+        this.connPoolPane = new ConnPoolPane(connectionId, connManager);
+        this.oplogPane = new OplogPane(connectionId, connManager);
+        this.auditPane = new AuditPane(connectionId, auditDao, bus);
+        this.balancerPane = new BalancerPane(connectionId, connManager, opsExecutor, balancerHandler);
+        this.chunkPane = new ChunkDistributionPane(connectionId, connManager);
+        this.zonesPane = new ZonesPane(connectionId, connManager, opsExecutor, zonesHandler);
+        // Nested TabPane inside the Balancer sub-tab keeps the three surfaces
+        // legible without a triple vertical split that squeezes every section.
+        TabPane balancerTabs = new TabPane(
+                closableOff("Controls", balancerPane),
+                closableOff("Chunks", chunkPane),
+                closableOff("Zones", zonesPane));
+        balancerTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        SplitPane opsSplit = new SplitPane(currentOpPane, lockInfoPane);
+        opsSplit.setOrientation(Orientation.VERTICAL);
+        opsSplit.setDividerPositions(0.72);
+        this.topologyTab = tab("Topology", topologyPane);
+        this.opsTab      = tab("Ops",       opsSplit);
+        this.balancerTab = tab("Balancer",  balancerTabs);
+        this.oplogTab    = tab("Oplog",     oplogPane);
+        this.auditTab    = tab("Audit",     auditPane);
+        this.poolsTab    = tab("Pools",     connPoolPane);
+
+        tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        tabPane.getTabs().addAll(topologyTab, opsTab, oplogTab, auditTab, poolsTab);
+
+        setCenter(tabPane);
+        setStyle("-fx-background-color: #f9fafb;");
+
+        // Balancer tab is sharded-only; flip visibility based on live topology kind.
+        // Replay semantics on onTopology deliver the current snapshot immediately.
+        this.topoSub = bus.onTopology((id, snap) -> {
+            if (!connectionId.equals(id) || snap == null) return;
+            Platform.runLater(() -> applyKind(snap.clusterKind()));
+        });
+        TopologySnapshot pre = bus.latestTopology(connectionId);
+        if (pre != null) applyKind(pre.clusterKind());
+    }
+
+    /** v2.4 UI-OPS-8 — called by the {@code Cmd/Ctrl+Alt+O} accelerator to
+     *  focus the Ops sub-tab and preset the "secs ≥ 10" filter. */
+    public void focusOpsWithLongRunningPreset() {
+        tabPane.getSelectionModel().select(opsTab);
+        currentOpPane.presetMinSecs(10);
+    }
+
+    @Override
+    public void close() {
+        try { topoSub.close(); } catch (Exception ignored) {}
+        try { topologyPane.close(); } catch (Exception ignored) {}
+        try { currentOpPane.close(); } catch (Exception ignored) {}
+        try { lockInfoPane.close(); } catch (Exception ignored) {}
+        try { connPoolPane.close(); } catch (Exception ignored) {}
+        try { oplogPane.close(); } catch (Exception ignored) {}
+        try { auditPane.close(); } catch (Exception ignored) {}
+        try { balancerPane.close(); } catch (Exception ignored) {}
+        try { chunkPane.close(); } catch (Exception ignored) {}
+        try { zonesPane.close(); } catch (Exception ignored) {}
+    }
+
+    /* =========================== internals ============================== */
+
+    private void applyKind(ClusterKind kind) {
+        boolean sharded = kind == ClusterKind.SHARDED;
+        boolean present = tabPane.getTabs().contains(balancerTab);
+        if (sharded && !present) {
+            int idx = tabPane.getTabs().indexOf(opsTab) + 1;
+            tabPane.getTabs().add(Math.max(0, idx), balancerTab);
+        } else if (!sharded && present) {
+            tabPane.getTabs().remove(balancerTab);
+        }
+    }
+
+    private static Tab tab(String name, javafx.scene.Node content) {
+        Tab t = new Tab(name, content);
+        t.setClosable(false);
+        return t;
+    }
+
+    /** Alias for {@link #tab} used by the nested balancer TabPane. */
+    private static Tab closableOff(String name, javafx.scene.Node content) {
+        return tab(name, content);
+    }
+
+    private static VBox placeholder(String message) {
+        Label title = new Label(message);
+        title.setStyle("-fx-font-size: 14px; -fx-text-fill: #374151; -fx-font-weight: 600;");
+        Label sub = new Label("Check the milestone doc for the target date.");
+        sub.setStyle("-fx-font-size: 12px; -fx-text-fill: #9ca3af;");
+        VBox v = new VBox(8, title, sub);
+        v.setAlignment(Pos.CENTER);
+        v.setPadding(new Insets(80, 40, 80, 40));
+        StackPane.setAlignment(v, Pos.CENTER);
+        return v;
+    }
+}

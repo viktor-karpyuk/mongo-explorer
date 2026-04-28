@@ -1,0 +1,74 @@
+#
+# v2.8.1 Q2.8-L2 — Blessed-matrix kind smoke.
+#
+# Spins up a kind cluster at every blessed Kubernetes minor in the
+# v2.8.1 §7.8 matrix (1.29 / 1.30 / 1.31), installs cert-manager +
+# MongoDB Community Operator + Percona PSMDB Operator via the
+# scripted fixture, and runs ./gradlew :app:k8sKindTest. K8sBlessedMatrixIT
+# asserts the live cluster is on the blessed set so a kindest/node
+# image rolling forward (e.g. 1.32) fails CI with a clear pointer to
+# the matrix definition.
+#
+# Manual + scheduled trigger so it doesn't block PR turnaround on
+# every push; nightly cron run keeps the matrix alive against
+# upstream operator releases.
+#
+
+name: blessed-matrix
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 03:17 UTC every day — between the upstream Karpenter + cert-
+    # manager release windows we've seen on weekdays.
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    name: kind ${{ matrix.k8s }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        k8s:
+          - "1.29.14"
+          - "1.30.10"
+          - "1.31.6"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install kind + kubectl
+        run: |
+          curl -Lo ./kind \
+            https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
+          chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
+          curl -Lo ./kubectl \
+            https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl
+          chmod +x ./kubectl && sudo mv ./kubectl /usr/local/bin/kubectl
+
+      - name: Create kind cluster (kindest/node:v${{ matrix.k8s }})
+        run: |
+          kind create cluster --name mex-k8s-it \
+            --image "kindest/node:v${{ matrix.k8s }}" \
+            --wait 120s
+
+      - name: Install operators
+        run: ./testing/kind/install-operators.sh
+
+      - name: Run k8sKindTest
+        env:
+          MEX_K8S_IT: kind
+        run: ./gradlew :app:k8sKindTest --no-daemon --info
+
+      - name: Tear kind cluster down
+        if: always()
+        run: kind delete cluster --name mex-k8s-it || true

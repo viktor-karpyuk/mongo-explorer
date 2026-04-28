@@ -10,19 +10,44 @@ import java.sql.Statement;
 public class Database implements AutoCloseable {
 
     private final Connection connection;
+    private final Object writeLock = new Object();
 
     public Database() throws SQLException, IOException {
         Files.createDirectories(AppPaths.dataDir());
         String url = "jdbc:sqlite:" + AppPaths.databaseFile().toAbsolutePath();
-        this.connection = DriverManager.getConnection(url);
-        try (Statement st = connection.createStatement()) {
-            st.execute("PRAGMA journal_mode=WAL");
-            st.execute("PRAGMA foreign_keys=ON");
+        Connection c = DriverManager.getConnection(url);
+        try {
+            try (Statement st = c.createStatement()) {
+                st.execute("PRAGMA journal_mode=WAL");
+                st.execute("PRAGMA foreign_keys=ON");
+                // Without busy_timeout any SQLITE_BUSY (a writer lock
+                // conflict during a WAL checkpoint, or a read racing a
+                // still-in-flight write) throws immediately. 5s matches the
+                // sqlite CLI default and absorbs the short bursts the app's
+                // samplers + UI writes produce without masking real
+                // deadlocks. Many DAOs in the app write without the
+                // writeLock() contract; this pragma protects them.
+                st.execute("PRAGMA busy_timeout=5000");
+            }
+            this.connection = c;
+            migrate();
+        } catch (RuntimeException | SQLException e) {
+            // A failed pragma or migration would have leaked the JDBC
+            // connection (and its 1-2 MB SQLite handle) for the JVM's
+            // lifetime — close it before propagating.
+            try { c.close(); } catch (SQLException ignored) {}
+            throw e;
         }
-        migrate();
     }
 
     public Connection connection() { return connection; }
+
+    /** Canonical write-serialization lock for the shared SQLite connection.
+     *  SQLite's default JDBC connection is not thread-safe; components that
+     *  write from multiple threads synchronize on this object so their
+     *  transaction boundaries don't interleave. See
+     *  {@code docs/v2/v2.5/fixes-v2.3-recording-hardening.md} B1/B3. */
+    public Object writeLock() { return writeLock; }
 
     private void migrate() throws SQLException {
         try (Statement st = connection.createStatement()) {
@@ -91,6 +116,879 @@ public class Database implements AutoCloseable {
                 CREATE TABLE IF NOT EXISTS app_settings (
                     key TEXT PRIMARY KEY,
                     value TEXT
+                )
+                """);
+
+            // Migration feature (v1.1.0) — see docs/mvp-technical-spec.md §4.1
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS migration_jobs (
+                    id              TEXT PRIMARY KEY,
+                    kind            TEXT NOT NULL,
+                    source_conn_id  TEXT,
+                    target_conn_id  TEXT NOT NULL,
+                    spec_json       TEXT NOT NULL,
+                    spec_hash       TEXT NOT NULL,
+                    status          TEXT NOT NULL,
+                    execution_mode  TEXT NOT NULL DEFAULT 'RUN',
+                    started_at      INTEGER,
+                    ended_at        INTEGER,
+                    docs_copied     INTEGER NOT NULL DEFAULT 0,
+                    bytes_copied    INTEGER NOT NULL DEFAULT 0,
+                    errors          INTEGER NOT NULL DEFAULT 0,
+                    error_message   TEXT,
+                    resume_path     TEXT,
+                    artifact_dir    TEXT,
+                    created_at      INTEGER NOT NULL,
+                    updated_at      INTEGER NOT NULL
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_migration_jobs_started_at ON migration_jobs(started_at DESC)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_migration_jobs_status ON migration_jobs(status)");
+
+            // v1.2.0 — owner-PID + heartbeat for startup reconciliation of orphaned RUNNING rows,
+            // plus connection names (UX-11, preserved so deleted connections still render readably),
+            // dry-run docs counter (OBS-5), and pause-aware active-time tracking (OBS-7).
+            String[] migrationJobAlters = {
+                    "ALTER TABLE migration_jobs ADD COLUMN owner_pid INTEGER",
+                    "ALTER TABLE migration_jobs ADD COLUMN last_heartbeat_at INTEGER",
+                    "ALTER TABLE migration_jobs ADD COLUMN source_connection_name TEXT",
+                    "ALTER TABLE migration_jobs ADD COLUMN target_connection_name TEXT",
+                    "ALTER TABLE migration_jobs ADD COLUMN docs_processed INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE migration_jobs ADD COLUMN active_millis INTEGER NOT NULL DEFAULT 0",
+                    // v2.0 VER-8 — environment tag on job rows. Null means "applies everywhere".
+                    "ALTER TABLE migration_jobs ADD COLUMN environment TEXT"
+            };
+            for (String sql : migrationJobAlters) {
+                try { st.execute(sql); } catch (SQLException ignored) {}
+            }
+
+            // v1.2.0 OBS-7 — per-collection start/end timings for the Job Details view.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS migration_collection_timings (
+                    job_id     TEXT NOT NULL,
+                    source_ns  TEXT NOT NULL,
+                    started_at INTEGER NOT NULL,
+                    ended_at   INTEGER,
+                    PRIMARY KEY (job_id, source_ns),
+                    FOREIGN KEY (job_id) REFERENCES migration_jobs(id) ON DELETE CASCADE
+                )
+                """);
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS migration_profiles (
+                    id          TEXT PRIMARY KEY,
+                    name        TEXT NOT NULL,
+                    kind        TEXT NOT NULL,
+                    spec_json   TEXT NOT NULL,
+                    created_at  INTEGER NOT NULL,
+                    updated_at  INTEGER NOT NULL
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_migration_profiles_name ON migration_profiles(name)");
+
+            // v2.0 VER-8 — environment tag on saved profiles.
+            try { st.execute("ALTER TABLE migration_profiles ADD COLUMN environment TEXT"); }
+            catch (SQLException ignored) {}
+
+            // v2.0 UX-7 — local scheduler rows. The user picks a profile, writes a cron-
+            // or interval-expression, and a background worker runs it on that schedule while
+            // the app is open. No cross-instance coordination (single-box product).
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS migration_schedules (
+                    id           TEXT PRIMARY KEY,
+                    profile_id   TEXT NOT NULL,
+                    cron         TEXT NOT NULL,
+                    enabled      INTEGER NOT NULL DEFAULT 1,
+                    last_run_at  INTEGER,
+                    next_run_at  INTEGER,
+                    created_at   INTEGER NOT NULL,
+                    FOREIGN KEY (profile_id) REFERENCES migration_profiles(id) ON DELETE CASCADE
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_migration_schedules_next_run " +
+                    "ON migration_schedules(enabled, next_run_at)");
+
+            // v2.1.0 Monitoring — see docs/v2/v2.1/milestone-v2.1.0.md §3.1.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS monitoring_profiles (
+                    connection_id            TEXT PRIMARY KEY,
+                    enabled                  INTEGER NOT NULL DEFAULT 1,
+                    poll_interval_ms         INTEGER NOT NULL DEFAULT 1000,
+                    storage_poll_ms          INTEGER NOT NULL DEFAULT 60000,
+                    index_poll_ms            INTEGER NOT NULL DEFAULT 300000,
+                    read_preference          TEXT    NOT NULL DEFAULT 'secondaryPreferred',
+                    profiler_enabled         INTEGER NOT NULL DEFAULT 0,
+                    profiler_slowms          INTEGER NOT NULL DEFAULT 100,
+                    profiler_auto_disable_ms INTEGER NOT NULL DEFAULT 3600000,
+                    topn_colls_per_db        INTEGER NOT NULL DEFAULT 50,
+                    retention_raw_ms         INTEGER NOT NULL DEFAULT 86400000,
+                    retention_s10_ms         INTEGER NOT NULL DEFAULT 604800000,
+                    retention_m1_ms          INTEGER NOT NULL DEFAULT 7776000000,
+                    retention_h1_ms          INTEGER NOT NULL DEFAULT 31536000000,
+                    created_at               INTEGER NOT NULL,
+                    updated_at               INTEGER NOT NULL
+                )
+                """);
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS metric_samples_raw (
+                    connection_id TEXT    NOT NULL,
+                    metric        TEXT    NOT NULL,
+                    labels_json   TEXT    NOT NULL,
+                    ts            INTEGER NOT NULL,
+                    value         REAL    NOT NULL,
+                    PRIMARY KEY (connection_id, metric, labels_json, ts)
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_samples_raw_ts ON metric_samples_raw(connection_id, metric, ts)");
+
+            for (String tier : new String[] { "10s", "1m", "1h" }) {
+                st.execute("""
+                    CREATE TABLE IF NOT EXISTS metric_samples_%s (
+                        connection_id TEXT    NOT NULL,
+                        metric        TEXT    NOT NULL,
+                        labels_json   TEXT    NOT NULL,
+                        ts            INTEGER NOT NULL,
+                        min_v         REAL,
+                        max_v         REAL,
+                        avg_v         REAL,
+                        p95_v         REAL,
+                        p99_v         REAL,
+                        cnt           INTEGER NOT NULL,
+                        PRIMARY KEY (connection_id, metric, labels_json, ts)
+                    )
+                    """.formatted(tier));
+                st.execute("CREATE INDEX IF NOT EXISTS idx_samples_%s_ts ON metric_samples_%s(connection_id, metric, ts)"
+                        .formatted(tier, tier));
+            }
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS alert_rules (
+                    id             TEXT PRIMARY KEY,
+                    connection_id  TEXT,
+                    metric         TEXT NOT NULL,
+                    label_filter   TEXT,
+                    comparator     TEXT NOT NULL,
+                    warn_threshold REAL,
+                    crit_threshold REAL,
+                    for_seconds    INTEGER NOT NULL DEFAULT 60,
+                    enabled        INTEGER NOT NULL DEFAULT 1,
+                    source         TEXT,
+                    created_at     INTEGER NOT NULL
+                )
+                """);
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS alert_events (
+                    id             TEXT PRIMARY KEY,
+                    rule_id        TEXT NOT NULL,
+                    connection_id  TEXT NOT NULL,
+                    fired_at       INTEGER NOT NULL,
+                    cleared_at     INTEGER,
+                    severity       TEXT NOT NULL,
+                    value_at_fire  REAL NOT NULL,
+                    message        TEXT NOT NULL,
+                    FOREIGN KEY (rule_id) REFERENCES alert_rules(id)
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_alert_events_fired_at ON alert_events(fired_at DESC)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS profiler_samples (
+                    connection_id   TEXT NOT NULL,
+                    ts              INTEGER NOT NULL,
+                    ns              TEXT NOT NULL,
+                    op              TEXT NOT NULL,
+                    millis          INTEGER NOT NULL,
+                    plan_summary    TEXT,
+                    docs_examined   INTEGER,
+                    docs_returned   INTEGER,
+                    keys_examined   INTEGER,
+                    num_yield       INTEGER,
+                    response_length INTEGER,
+                    query_hash      TEXT,
+                    plan_cache_key  TEXT,
+                    command_json    TEXT NOT NULL,
+                    PRIMARY KEY (connection_id, ts, ns, query_hash)
+                )
+                """);
+
+            // v2.3.0 Monitoring Recording & Analysis — see docs/v2/v2.3/technical-spec.md §3.2.
+            // Retention-exempt storage — the janitor never touches these tables.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS recordings (
+                    id               TEXT PRIMARY KEY,
+                    connection_id    TEXT NOT NULL,
+                    name             TEXT NOT NULL,
+                    note             TEXT,
+                    tags_json        TEXT,
+                    state            TEXT NOT NULL,      -- ACTIVE | PAUSED | STOPPED
+                    stop_reason      TEXT,               -- MANUAL | AUTO_DURATION | AUTO_SIZE | CONNECTION_LOST | INTERRUPTED
+                    started_at       INTEGER NOT NULL,
+                    ended_at         INTEGER,
+                    paused_millis    INTEGER NOT NULL DEFAULT 0,
+                    max_duration_ms  INTEGER,
+                    max_size_bytes   INTEGER,
+                    capture_profiler INTEGER NOT NULL DEFAULT 0,
+                    schema_version   INTEGER NOT NULL DEFAULT 1,
+                    created_at       INTEGER NOT NULL
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_recordings_connection ON recordings(connection_id)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_recordings_started    ON recordings(started_at DESC)");
+
+            // v2.5 hardening — running byte counter so the auto-stop tick doesn't re-scan
+            // recording_samples every 5 s. See docs/v2/v2.5/fixes-v2.3-recording-hardening.md P2.
+            try { st.execute("ALTER TABLE recordings ADD COLUMN bytes_approx INTEGER NOT NULL DEFAULT 0"); }
+            catch (SQLException ignored) { /* column already present */ }
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS recording_samples (
+                    recording_id  TEXT    NOT NULL,
+                    connection_id TEXT    NOT NULL,
+                    metric        TEXT    NOT NULL,
+                    labels_json   TEXT    NOT NULL,
+                    ts            INTEGER NOT NULL,
+                    value         REAL    NOT NULL,
+                    PRIMARY KEY (recording_id, metric, labels_json, ts),
+                    FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_rec_samples_rec_ts        ON recording_samples(recording_id, ts)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_rec_samples_rec_metric_ts ON recording_samples(recording_id, metric, ts)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS recording_profile_samples (
+                    recording_id    TEXT NOT NULL,
+                    connection_id   TEXT NOT NULL,
+                    ts              INTEGER NOT NULL,
+                    ns              TEXT NOT NULL,
+                    op              TEXT NOT NULL,
+                    millis          INTEGER NOT NULL,
+                    plan_summary    TEXT,
+                    docs_examined   INTEGER,
+                    docs_returned   INTEGER,
+                    keys_examined   INTEGER,
+                    num_yield       INTEGER,
+                    response_length INTEGER,
+                    query_hash      TEXT,
+                    plan_cache_key  TEXT,
+                    command_json    TEXT NOT NULL,
+                    PRIMARY KEY (recording_id, ts, ns, query_hash),
+                    FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
+                )
+                """);
+
+            // v2.3.1 Recording Annotations — see docs/v2/v2.3/v2.3.1/technical-spec.md §3.1.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS recording_annotations (
+                    id            TEXT PRIMARY KEY,
+                    recording_id  TEXT    NOT NULL,
+                    ts_ms         INTEGER NOT NULL,
+                    label         TEXT    NOT NULL,
+                    note          TEXT,
+                    variant       TEXT    NOT NULL DEFAULT 'INFO',
+                    created_at    INTEGER NOT NULL,
+                    updated_at    INTEGER NOT NULL,
+                    FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_ann_recording_ts ON recording_annotations(recording_id, ts_ms)");
+
+            // v2.4.0 Cluster Operations — see docs/v2/v2.4/milestone-v2.4.0.md §3.1.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS topology_snapshots (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    captured_at     INTEGER NOT NULL,
+                    cluster_kind    TEXT    NOT NULL,
+                    snapshot_json   TEXT    NOT NULL,
+                    sha256          TEXT    NOT NULL,
+                    version_major   INTEGER NOT NULL,
+                    version_minor   INTEGER NOT NULL,
+                    member_count    INTEGER NOT NULL,
+                    shard_count     INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE (connection_id, captured_at, sha256)
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_topology_conn_time " +
+                    "ON topology_snapshots(connection_id, captured_at)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_topology_sha256 " +
+                    "ON topology_snapshots(sha256)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS ops_audit (
+                    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id         TEXT    NOT NULL,
+                    db                    TEXT,
+                    coll                  TEXT,
+                    command_name          TEXT    NOT NULL,
+                    command_json_redacted TEXT    NOT NULL,
+                    preview_hash          TEXT    NOT NULL,
+                    outcome               TEXT    NOT NULL,
+                    server_message        TEXT,
+                    role_used             TEXT,
+                    started_at            INTEGER NOT NULL,
+                    finished_at           INTEGER,
+                    latency_ms            INTEGER,
+                    caller_host           TEXT,
+                    caller_user           TEXT,
+                    ui_source             TEXT    NOT NULL,
+                    paste                 INTEGER NOT NULL DEFAULT 0,
+                    kill_switch           INTEGER NOT NULL DEFAULT 0
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_ops_audit_conn_time " +
+                    "ON ops_audit(connection_id, started_at)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_ops_audit_command " +
+                    "ON ops_audit(command_name, started_at)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_ops_audit_outcome " +
+                    "ON ops_audit(outcome, started_at)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS role_cache (
+                    connection_id TEXT PRIMARY KEY,
+                    roles_json    TEXT NOT NULL,
+                    probed_at     INTEGER NOT NULL
+                )
+                """);
+
+            // v2.5 Q2.5-A — storage sinks + backup policies. Cloud sinks
+            // (S3/GCS/Azure/SFTP) land in Q2.5-H and will write credentials_enc
+            // through Crypto; LocalFsTarget leaves credentials_enc null.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS storage_sinks (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind            TEXT    NOT NULL,
+                    name            TEXT    NOT NULL UNIQUE,
+                    root_path       TEXT    NOT NULL,
+                    credentials_enc BLOB,
+                    extras_json     TEXT,
+                    created_at      INTEGER NOT NULL,
+                    updated_at      INTEGER NOT NULL
+                )
+                """);
+
+            // v2.6.1 review round 4 — sink_id now carries an ON DELETE
+            // RESTRICT FK so SQLite (with foreign_keys=ON) refuses a
+            // storage_sinks delete that would leave policies orphan-
+            // ed. Existing tables from v2.5 / v2.6 don't get the FK
+            // (CREATE TABLE IF NOT EXISTS is a no-op on existing
+            // tables); SinksPane.onDelete also runs an application-
+            // level pre-check so the guarantee holds for upgraded
+            // installs too.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS backup_policies (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    name            TEXT    NOT NULL,
+                    enabled         INTEGER NOT NULL DEFAULT 1,
+                    schedule_cron   TEXT,
+                    scope_json      TEXT    NOT NULL,
+                    archive_json    TEXT    NOT NULL,
+                    retention_json  TEXT    NOT NULL,
+                    sink_id         INTEGER NOT NULL REFERENCES storage_sinks(id) ON DELETE RESTRICT,
+                    include_oplog   INTEGER NOT NULL DEFAULT 1,
+                    created_at      INTEGER NOT NULL,
+                    updated_at      INTEGER NOT NULL,
+                    UNIQUE (connection_id, name)
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_backup_policies_conn " +
+                    "ON backup_policies(connection_id, enabled)");
+
+            // v2.5 Q2.5-B — backup runs + per-file artefact inventory. Catalog
+            // rows carry the manifest SHA-256 + verification state; file rows
+            // are cascade-deleted when the catalog row is purged by the Q2.5-D
+            // retention janitor.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS backup_catalog (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    policy_id           INTEGER REFERENCES backup_policies(id) ON DELETE SET NULL,
+                    connection_id       TEXT    NOT NULL,
+                    started_at          INTEGER NOT NULL,
+                    finished_at         INTEGER,
+                    status              TEXT    NOT NULL,
+                    sink_id             INTEGER NOT NULL,
+                    sink_path           TEXT    NOT NULL,
+                    manifest_sha256     TEXT,
+                    total_bytes         INTEGER,
+                    doc_count           INTEGER,
+                    oplog_first_ts      INTEGER,
+                    oplog_last_ts       INTEGER,
+                    verified_at         INTEGER,
+                    verify_outcome      TEXT,
+                    notes               TEXT
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_backup_catalog_conn_started " +
+                    "ON backup_catalog(connection_id, started_at)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_backup_catalog_policy " +
+                    "ON backup_catalog(policy_id, started_at)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS backup_files (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    catalog_id      INTEGER NOT NULL REFERENCES backup_catalog(id) ON DELETE CASCADE,
+                    relative_path   TEXT    NOT NULL,
+                    bytes           INTEGER NOT NULL,
+                    sha256          TEXT    NOT NULL,
+                    db              TEXT,
+                    coll            TEXT,
+                    kind            TEXT    NOT NULL
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_backup_files_catalog " +
+                    "ON backup_files(catalog_id)");
+
+            // v2.6 Q2.6-A1 — security baselines, drift acks, cert inventory
+            // cache, CIS suppressions + reports. FTS table for native audit
+            // lands with Q2.6-C once the parser is in.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS sec_baselines (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    captured_at     INTEGER NOT NULL,
+                    captured_by     TEXT    NOT NULL,
+                    notes           TEXT,
+                    snapshot_json   TEXT    NOT NULL,
+                    sha256          TEXT    NOT NULL
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_sec_baselines_conn_time " +
+                    "ON sec_baselines(connection_id, captured_at)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS sec_drift_acks (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    baseline_id     INTEGER NOT NULL REFERENCES sec_baselines(id) ON DELETE CASCADE,
+                    path            TEXT    NOT NULL,
+                    acked_at        INTEGER NOT NULL,
+                    acked_by        TEXT    NOT NULL,
+                    mode            TEXT    NOT NULL,
+                    note            TEXT
+                )
+                """);
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS sec_cert_cache (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    host            TEXT    NOT NULL,
+                    subject_cn      TEXT,
+                    issuer_cn       TEXT,
+                    sans_json       TEXT,
+                    not_before      INTEGER,
+                    not_after       INTEGER,
+                    serial_hex      TEXT,
+                    fingerprint_sha256 TEXT NOT NULL,
+                    captured_at     INTEGER NOT NULL,
+                    UNIQUE (connection_id, host, fingerprint_sha256)
+                )
+                """);
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS cis_suppressions (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    rule_id         TEXT    NOT NULL,
+                    scope           TEXT    NOT NULL,
+                    reason          TEXT    NOT NULL,
+                    created_at      INTEGER NOT NULL,
+                    created_by      TEXT    NOT NULL,
+                    expires_at      INTEGER
+                )
+                """);
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS cis_reports (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    ran_at          INTEGER NOT NULL,
+                    benchmark_version TEXT NOT NULL,
+                    total           INTEGER NOT NULL,
+                    pass            INTEGER NOT NULL,
+                    fail            INTEGER NOT NULL,
+                    na              INTEGER NOT NULL,
+                    suppressed      INTEGER NOT NULL,
+                    report_json     TEXT    NOT NULL,
+                    report_html_path TEXT,
+                    evidence_sig    TEXT NOT NULL
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_cis_reports_conn_time " +
+                    "ON cis_reports(connection_id, ran_at)");
+
+            // Stores the install's HMAC-SHA-256 evidence-signing key, AES-wrapped
+            // via Crypto. Exactly one row (id = 1). Distinct from the connection-
+            // password AES key so signed reports can be shared with auditors
+            // without leaking other secrets.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS evidence_key (
+                    id              INTEGER PRIMARY KEY CHECK (id = 1),
+                    wrapped_key     BLOB    NOT NULL,
+                    created_at      INTEGER NOT NULL
+                )
+                """);
+
+            // v2.6 Q2.6-C3 — FTS5 virtual table for the native MongoDB audit
+            // log. Deferred from the Q2.6-A1 migration because the parser and
+            // FTS path land together. Unindexed columns (connection_id, ts)
+            // drive the pane's per-connection filter + time-range queries
+            // without bloating the FTS index.
+            st.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS audit_native_fts
+                    USING fts5(
+                        connection_id UNINDEXED,
+                        atype,
+                        ts UNINDEXED,
+                        who,
+                        from_host,
+                        param_json,
+                        raw_json,
+                        tokenize = 'porter ascii'
+                    )
+                """);
+
+            // v2.7 Q2.7-A1 — Maintenance & Change Management schema. Five
+            // tables drive the v2.7 surfaces: config snapshots for the
+            // drift tracker, approvals for two-person gates, rollback
+            // plans attached to ops_audit rows, runbooks emitted by the
+            // upgrade planner, and parameter-tuning proposals. All
+            // additive — the tab itself is gated by the
+            // `maintenance.enabled` flag so downgrades leave the data
+            // quiescent (see milestone §6.1 / §16).
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS config_snapshots (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id   TEXT    NOT NULL,
+                    captured_at     INTEGER NOT NULL,
+                    host            TEXT,
+                    kind            TEXT    NOT NULL,
+                    snapshot_json   TEXT    NOT NULL,
+                    sha256          TEXT    NOT NULL
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_config_snap_conn_time " +
+                    "ON config_snapshots(connection_id, captured_at)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS approvals (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    action_uuid        TEXT    NOT NULL UNIQUE,
+                    connection_id      TEXT    NOT NULL,
+                    action_name        TEXT    NOT NULL,
+                    payload_json       TEXT    NOT NULL,
+                    payload_hash       TEXT    NOT NULL,
+                    requested_at       INTEGER NOT NULL,
+                    requested_by       TEXT    NOT NULL,
+                    mode               TEXT    NOT NULL,
+                    approver           TEXT,
+                    approved_at        INTEGER,
+                    approval_sig       TEXT,
+                    status             TEXT    NOT NULL,
+                    expires_at         INTEGER
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_approvals_status_time " +
+                    "ON approvals(status, requested_at)");
+            // v2.7 review GA — preserve the reviewer's original JWS
+            // for TOKEN-mode approvals. approval_sig holds the
+            // install-local descriptor signature (uniform across
+            // modes); reviewer_jws holds the raw token the reviewer
+            // produced so an auditor can later verify chain-of-trust
+            // against the reviewer's install key.
+            try { st.execute("ALTER TABLE approvals ADD COLUMN reviewer_jws TEXT"); }
+            catch (SQLException ignored) { /* column already present */ }
+            // v2.7 review GA — sweepExpired scans approvals by
+            // (status='PENDING' AND expires_at < now). Without a
+            // partial index on expires_at, every sweep is O(n) in
+            // total approvals — fine for a dev cluster but scales
+            // badly once the queue has thousands of rows. The
+            // idx_approvals_status_time index above helps narrow to
+            // PENDING but then still scans every PENDING row for
+            // the expiry comparison.
+            st.execute("CREATE INDEX IF NOT EXISTS idx_approvals_expires_at " +
+                    "ON approvals(expires_at) WHERE status = 'PENDING'");
+
+            // rollback_plans.audit_id references ops_audit(id) — no FK
+            // (ops_audit pre-dates FK discipline; adding one here would
+            // fight upgrade paths). The RollbackPlanWriter pre-checks
+            // the audit row exists before persisting.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS rollback_plans (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    audit_id           INTEGER NOT NULL,
+                    plan_kind          TEXT    NOT NULL,
+                    plan_json          TEXT    NOT NULL,
+                    applied_at         INTEGER,
+                    applied_outcome    TEXT,
+                    notes              TEXT
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_rollback_audit " +
+                    "ON rollback_plans(audit_id)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS maintenance_runbooks (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id      TEXT    NOT NULL,
+                    kind               TEXT    NOT NULL,
+                    created_at         INTEGER NOT NULL,
+                    content_md_path    TEXT    NOT NULL,
+                    content_html_path  TEXT    NOT NULL,
+                    evidence_sig       TEXT
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_runbooks_conn_time " +
+                    "ON maintenance_runbooks(connection_id, created_at)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS param_tuning_proposals (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id      TEXT    NOT NULL,
+                    host               TEXT    NOT NULL,
+                    param              TEXT    NOT NULL,
+                    current_value      TEXT    NOT NULL,
+                    proposed_value     TEXT    NOT NULL,
+                    rationale          TEXT    NOT NULL,
+                    severity           TEXT    NOT NULL,
+                    created_at         INTEGER NOT NULL,
+                    status             TEXT    NOT NULL
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_param_proposals_conn " +
+                    "ON param_tuning_proposals(connection_id, status)");
+
+            // v2.8.4 Q2.8.4-A — Local Sandbox Labs schema. Separate
+            // from ops_audit on purpose: Lab lifecycle is demo/
+            // training noise and must not pollute the compliance
+            // audit trail a DBA relies on.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS lab_deployments (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    template_id         TEXT    NOT NULL,
+                    template_version    TEXT    NOT NULL,
+                    display_name        TEXT    NOT NULL,
+                    compose_project     TEXT    NOT NULL UNIQUE,
+                    compose_file_path   TEXT    NOT NULL,
+                    port_map_json       TEXT    NOT NULL,
+                    status              TEXT    NOT NULL,
+                    keep_data_on_stop   INTEGER NOT NULL,
+                    auth_enabled        INTEGER NOT NULL,
+                    created_at          INTEGER NOT NULL,
+                    last_started_at     INTEGER,
+                    last_stopped_at     INTEGER,
+                    destroyed_at        INTEGER,
+                    mongo_version       TEXT    NOT NULL,
+                    connection_id       TEXT
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_lab_status " +
+                    "ON lab_deployments(status)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS lab_events (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lab_id              INTEGER NOT NULL
+                                        REFERENCES lab_deployments(id)
+                                        ON DELETE CASCADE,
+                    at                  INTEGER NOT NULL,
+                    kind                TEXT    NOT NULL,
+                    message             TEXT
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_lab_events_lab_time " +
+                    "ON lab_events(lab_id, at)");
+
+            // connections.lab_deployment_id — nullable FK-ish back
+            // pointer. ON DELETE SET NULL in Lab destruction via the
+            // DAO (SQLite doesn't retro-fit FKs on existing tables,
+            // so the DAO enforces the clear).
+            try { st.execute("ALTER TABLE connections ADD COLUMN lab_deployment_id INTEGER"); }
+            catch (SQLException ignored) { /* column already present */ }
+            // connections.origin — discriminates LOCAL (default pre-
+            // v2.8) / K8S (v2.8.0) / LAB (v2.8.4). Default text is
+            // backwards-compat: any row without origin is treated as
+            // LOCAL.
+            try { st.execute("ALTER TABLE connections ADD COLUMN origin TEXT NOT NULL DEFAULT 'LOCAL'"); }
+            catch (SQLException ignored) { /* column already present */ }
+
+            // v2.8.1 Q2.8.1-A1 — Kubernetes Integration schema.
+            // Four tables: k8s_clusters, provisioning_records,
+            // portforward_audit, rollout_events. See milestone §3.1.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS k8s_clusters (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    display_name        TEXT    NOT NULL,
+                    kubeconfig_path     TEXT    NOT NULL,
+                    context_name        TEXT    NOT NULL,
+                    default_namespace   TEXT,
+                    server_url          TEXT,
+                    added_at            INTEGER NOT NULL,
+                    last_used_at        INTEGER,
+                    UNIQUE(kubeconfig_path, context_name)
+                )
+                """);
+
+            // RESTRICT on the parent FK blocks a forget-cluster attempt
+            // while any provisioning_records still point here — matches
+            // milestone §3.1 semantics. Application-level check in
+            // KubeClusterService.remove tightens this further (refuses
+            // even for FAILED/DELETED rows unless the user opts in).
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS provisioning_records (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    k8s_cluster_id      INTEGER NOT NULL
+                                        REFERENCES k8s_clusters(id)
+                                        ON DELETE RESTRICT,
+                    namespace           TEXT    NOT NULL,
+                    name                TEXT    NOT NULL,
+                    operator            TEXT    NOT NULL,
+                    operator_version    TEXT    NOT NULL,
+                    mongo_version       TEXT    NOT NULL,
+                    topology            TEXT    NOT NULL,
+                    profile             TEXT    NOT NULL,
+                    cr_yaml             TEXT    NOT NULL,
+                    cr_sha256           TEXT    NOT NULL,
+                    deletion_protection INTEGER NOT NULL,
+                    created_at          INTEGER NOT NULL,
+                    applied_at          INTEGER,
+                    status              TEXT    NOT NULL,
+                    connection_id       TEXT,
+                    UNIQUE(k8s_cluster_id, namespace, name)
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_prov_status_time " +
+                    "ON provisioning_records(status, applied_at)");
+
+            // portforward_audit retains rows through cluster-forget so
+            // forensics survive the pane: SET NULL the FK instead of
+            // cascade-delete. Absence of a FK to `connections` is
+            // deliberate (connection_id is a UUID-string, not an
+            // integer row id).
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS portforward_audit (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connection_id       TEXT    NOT NULL,
+                    k8s_cluster_id      INTEGER
+                                        REFERENCES k8s_clusters(id)
+                                        ON DELETE SET NULL,
+                    namespace           TEXT    NOT NULL,
+                    target_kind         TEXT    NOT NULL,
+                    target_name         TEXT    NOT NULL,
+                    remote_port         INTEGER NOT NULL,
+                    local_port          INTEGER NOT NULL,
+                    opened_at           INTEGER NOT NULL,
+                    closed_at           INTEGER,
+                    reason_closed       TEXT
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_pfwd_conn_time " +
+                    "ON portforward_audit(connection_id, opened_at)");
+
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS rollout_events (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provisioning_id     INTEGER NOT NULL
+                                        REFERENCES provisioning_records(id)
+                                        ON DELETE CASCADE,
+                    at                  INTEGER NOT NULL,
+                    source              TEXT    NOT NULL,
+                    severity            TEXT    NOT NULL,
+                    raw_reason          TEXT,
+                    raw_message         TEXT,
+                    diagnosis_hint      TEXT
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_rollout_prov_time " +
+                    "ON rollout_events(provisioning_id, at)");
+
+            // v2.8.1 Q2.8-N1 — Local K8s Labs: distro-managed local
+            // clusters (minikube / k3d) that host the Lab's Mongo
+            // deployment. The provisioning pipeline from Q2.8.1-A..L
+            // is reused verbatim — a LabK8sCluster just surfaces a
+            // K8sClusterRef the existing pipeline picks up. The
+            // identifier is the distro profile/cluster name the CLI
+            // tool uses.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS lab_k8s_clusters (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    distro              TEXT    NOT NULL,
+                    identifier          TEXT    NOT NULL,
+                    context_name        TEXT    NOT NULL,
+                    kubeconfig_path     TEXT    NOT NULL,
+                    status              TEXT    NOT NULL,
+                    created_at          INTEGER NOT NULL,
+                    last_started_at     INTEGER,
+                    last_stopped_at     INTEGER,
+                    destroyed_at        INTEGER,
+                    k8s_cluster_id      INTEGER
+                                        REFERENCES k8s_clusters(id)
+                                        ON DELETE SET NULL,
+                    UNIQUE(distro, identifier)
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_lab_k8s_status " +
+                    "ON lab_k8s_clusters(status)");
+
+            // provisioning_records.lab_k8s_cluster_id — nullable back-
+            // pointer. NULL for a production provision, non-NULL for
+            // a provision that ran inside a local K8s Lab. SQLite's
+            // ALTER TABLE doesn't enforce FK for legacy rows, so the
+            // DAO carries an app-level guard.
+            try { st.execute("ALTER TABLE provisioning_records ADD COLUMN lab_k8s_cluster_id INTEGER"); }
+            catch (SQLException ignored) { /* column already present */ }
+
+            // v2.8.2 Q2.8.2-A — Dedicated compute strategy JSON blob.
+            // NULL means "v2.8.0 default scheduler"; non-NULL values
+            // are shaped per ComputeStrategyJson.toJson.
+            try { st.execute("ALTER TABLE provisioning_records ADD COLUMN compute_strategy_json TEXT"); }
+            catch (SQLException ignored) { /* column already present */ }
+
+            // v2.8.4 Q2.8.4-A — Cloud credentials. Secret bodies are
+            // NEVER stored here per milestone §2.1; only a reference
+            // to the OS keychain + metadata the UI needs to enumerate
+            // + pick credentials without touching the secret.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS cloud_credentials (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    display_name    TEXT    NOT NULL,
+                    provider        TEXT    NOT NULL,
+                    auth_mode       TEXT    NOT NULL,
+                    keychain_ref    TEXT    NOT NULL,
+                    aws_account_id  TEXT,
+                    gcp_project     TEXT,
+                    azure_subscription TEXT,
+                    default_region  TEXT,
+                    created_at      INTEGER NOT NULL,
+                    last_probed_at  INTEGER,
+                    probe_status    TEXT,
+                    UNIQUE(display_name, provider)
+                )
+                """);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_cloud_creds_provider "
+                    + "ON cloud_credentials(provider)");
+
+            // v2.8.4 Q2.8.4-B — Managed pool operations audit. Every
+            // cloud API call rings through here with a cloud-side call
+            // id so CloudTrail / Activity Logs can be correlated.
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS managed_pool_operations (
+                    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provisioning_record_id  INTEGER REFERENCES provisioning_records(id)
+                                             ON DELETE SET NULL,
+                    provider                TEXT    NOT NULL,
+                    action                  TEXT    NOT NULL,
+                    region                  TEXT,
+                    account_id              TEXT,
+                    pool_name               TEXT,
+                    cloud_call_id           TEXT,
+                    started_at              INTEGER NOT NULL,
+                    ended_at                INTEGER,
+                    status                  TEXT    NOT NULL,
+                    error_message           TEXT
                 )
                 """);
         }

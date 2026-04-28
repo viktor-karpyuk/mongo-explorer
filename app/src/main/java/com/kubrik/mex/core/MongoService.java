@@ -8,6 +8,7 @@ import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import org.bson.BsonDocument;
 import org.bson.Document;
+import org.bson.RawBsonDocument;
 import org.bson.json.JsonMode;
 import org.bson.json.JsonWriterSettings;
 
@@ -21,10 +22,12 @@ public class MongoService implements AutoCloseable {
             JsonWriterSettings.builder().outputMode(JsonMode.RELAXED).indent(true).build();
 
     private final MongoClient client;
+    private final ConnectionString cs;
     private final String serverVersion;
+    private volatile Document cachedHello;
 
     public MongoService(String uri) {
-        ConnectionString cs = new ConnectionString(uri);
+        this.cs = new ConnectionString(uri);
         MongoClientSettings settings = MongoClientSettings.builder()
                 .applyConnectionString(cs)
                 .applyToSocketSettings(b -> {
@@ -39,6 +42,116 @@ public class MongoService implements AutoCloseable {
         this.serverVersion = String.valueOf(buildInfo.get("version"));
     }
 
+    /**
+     * v2.4 Q2.4-A follow-up — opens a short-lived client against a direct peer
+     * (e.g., one shard's replica-set seeds) reusing this service's credentials
+     * and TLS settings. {@code rsHostSpec} is the {@code rsName/h1:p,h2:p,...}
+     * format returned by {@code listShards.host}; only the host list after the
+     * slash is used by the driver, but the replica-set name is set on the
+     * settings so hello routes straight to the primary.
+     *
+     * <p>Caller owns the returned client and must close it. Timeouts are tight
+     * (caller-controlled) so a down shard doesn't stall the topology tick.</p>
+     */
+    public MongoClient openPeerClient(String rsHostSpec, int timeoutMs) {
+        if (rsHostSpec == null || rsHostSpec.isBlank()) {
+            throw new IllegalArgumentException("rsHostSpec");
+        }
+        String rsName = null;
+        String hostList = rsHostSpec;
+        int slash = rsHostSpec.indexOf('/');
+        if (slash > 0) {
+            rsName = rsHostSpec.substring(0, slash);
+            hostList = rsHostSpec.substring(slash + 1);
+        }
+        java.util.List<com.mongodb.ServerAddress> addrs = new java.util.ArrayList<>();
+        for (String h : hostList.split(",")) {
+            String trimmed = h.trim();
+            if (trimmed.isEmpty()) continue;
+            int colon = trimmed.lastIndexOf(':');
+            if (colon > 0) {
+                addrs.add(new com.mongodb.ServerAddress(trimmed.substring(0, colon),
+                        Integer.parseInt(trimmed.substring(colon + 1))));
+            } else {
+                addrs.add(new com.mongodb.ServerAddress(trimmed));
+            }
+        }
+        if (addrs.isEmpty()) throw new IllegalArgumentException("no hosts in " + rsHostSpec);
+
+        String replicaSetName = rsName;
+        MongoClientSettings.Builder b = MongoClientSettings.builder()
+                .applyToClusterSettings(c -> {
+                    c.hosts(addrs);
+                    if (replicaSetName != null) c.requiredReplicaSetName(replicaSetName);
+                    c.serverSelectionTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+                })
+                .applyToSocketSettings(c -> {
+                    c.connectTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    c.readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+                })
+                .applyToSslSettings(c -> c.enabled(Boolean.TRUE.equals(cs.getSslEnabled())))
+                .applyToConnectionPoolSettings(c -> c.maxSize(2));
+        if (cs.getCredential() != null) b.credential(cs.getCredential());
+        return MongoClients.create(b.build());
+    }
+
+    /**
+     * v2.7 Q2.7-C/E — opens a single-host direct-connection client
+     * reusing this service's credentials + TLS settings. Used by the
+     * rolling index + compact wizards to dispatch commands node-local
+     * to a specific replset member.
+     *
+     * <p>Distinct from {@link #openPeerClient}: that takes a replset
+     * spec and lets the driver pick a primary; this pins a single
+     * {@code host:port} with {@code directConnection=true} so admin
+     * commands like {@code compact} / {@code createIndexes} (with
+     * {@code commitQuorum=0}) actually fire against the named node
+     * rather than being bounced to the primary.</p>
+     *
+     * <p>Caller owns the returned client and must close it.</p>
+     */
+    public MongoClient openMemberClient(String hostPort, int timeoutMs) {
+        if (hostPort == null || hostPort.isBlank()) {
+            throw new IllegalArgumentException("hostPort");
+        }
+        String trimmed = hostPort.trim();
+        int colon = trimmed.lastIndexOf(':');
+        com.mongodb.ServerAddress addr = colon > 0
+                ? new com.mongodb.ServerAddress(trimmed.substring(0, colon),
+                        Integer.parseInt(trimmed.substring(colon + 1)))
+                : new com.mongodb.ServerAddress(trimmed);
+
+        // Start from the full connection string so retryWrites,
+        // retryReads, appName, compressors, readPreference, and any
+        // other URI options carry through. THEN override cluster
+        // settings to pin the single host with SINGLE mode + the
+        // caller's timeout. Without applyConnectionString the earlier
+        // draft dropped every URI option silently.
+        MongoClientSettings.Builder b = MongoClientSettings.builder()
+                .applyConnectionString(cs)
+                .applyToClusterSettings(c -> {
+                    c.hosts(java.util.List.of(addr));
+                    c.mode(com.mongodb.connection.ClusterConnectionMode.SINGLE);
+                    c.serverSelectionTimeout(timeoutMs,
+                            java.util.concurrent.TimeUnit.MILLISECONDS);
+                })
+                .applyToSocketSettings(c -> {
+                    c.connectTimeout(timeoutMs,
+                            java.util.concurrent.TimeUnit.MILLISECONDS);
+                    c.readTimeout(timeoutMs,
+                            java.util.concurrent.TimeUnit.MILLISECONDS);
+                })
+                .applyToConnectionPoolSettings(c -> c.maxSize(2));
+        return MongoClients.create(b.build());
+    }
+
+    /** The primary {@link MongoClient} this service wraps. Callers
+     *  that need direct access (v2.7 maintenance panes that run
+     *  cluster-wide commands) go through this accessor; peer / single-
+     *  host access uses {@link #openPeerClient} / {@link
+     *  #openMemberClient} instead. */
+    public MongoClient client() { return client; }
+
     public String serverVersion() { return serverVersion; }
 
     public List<String> listDatabaseNames() {
@@ -52,6 +165,18 @@ public class MongoService implements AutoCloseable {
         client.getDatabase(db).listCollectionNames().forEach(names::add);
         names.sort(String.CASE_INSENSITIVE_ORDER);
         return names;
+    }
+
+    /** Full {@code listCollections} entry for a single namespace — used by SCOPE-5 (options)
+     *  and SCOPE-6 (views) which need both the {@code options} sub-document and the
+     *  {@code type} field ({@code "collection"} vs {@code "view"}). Returns an empty Document
+     *  when the collection doesn't exist. */
+    public Document collectionInfo(String db, String coll) {
+        for (Document d : client.getDatabase(db).listCollections()
+                .filter(new Document("name", coll))) {
+            return d;
+        }
+        return new Document();
     }
 
     public Document dbStats(String db) {
@@ -144,6 +269,25 @@ public class MongoService implements AutoCloseable {
     public MongoDatabase database(String db) { return client.getDatabase(db); }
     public MongoCollection<Document> collection(String db, String coll) {
         return client.getDatabase(db).getCollection(coll);
+    }
+
+    /** RawBson view of a collection — used by the migration engine to preserve BSON fidelity
+     *  (see docs/mvp-technical-spec.md §15.2). */
+    public MongoCollection<RawBsonDocument> rawCollection(String db, String coll) {
+        return client.getDatabase(db).getCollection(coll, RawBsonDocument.class);
+    }
+
+    /** Cached `hello` output — used by preflight to determine topology and version without
+     *  hammering the cluster when the wizard navigates between steps. */
+    public Document hello() {
+        Document h = cachedHello;
+        if (h != null) return h;
+        synchronized (this) {
+            if (cachedHello == null) {
+                cachedHello = client.getDatabase("admin").runCommand(new Document("hello", 1));
+            }
+            return cachedHello;
+        }
     }
 
     @Override

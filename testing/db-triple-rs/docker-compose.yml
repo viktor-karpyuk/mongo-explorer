@@ -1,0 +1,185 @@
+# Three independent 5-node replica sets (rsA, rsB, rsC). Useful for
+# testing multi-cluster features in Mongo Explorer: cross-cluster
+# migrations (v2.5), per-connection monitoring (v2.2), fleet-style
+# topology + health roll-up (v2.4 / planned whitespace), historical-
+# agent scoping (v2.9).
+#
+# Host port map (picked to avoid collision with db-source 27018,
+# db-target 27019/27020, db-target-sample 28000, db-sharded 27100 /
+# 27101-27103 / 27111-27113):
+#   rsA: 27201 / 27202 / 27203 / 27204 / 27205
+#   rsB: 27211 / 27212 / 27213 / 27214 / 27215
+#   rsC: 27221 / 27222 / 27223 / 27224 / 27225
+#
+# Each member listens on 27017 inside the compose network and is
+# reachable by service name (rsA-n1 … rsC-n5) — those names are what
+# the rs.initiate members list uses, so what you see in the Mongo
+# Explorer topology matches what mongod reports in rs.conf().
+#
+# YAML anchors collapse the repeated image + healthcheck boilerplate
+# — every mongod service still spells out its own --replSet, port
+# mapping, and volume.
+
+name: mex-triple-rs
+
+x-mongod: &mongod
+  image: mongo:latest
+  healthcheck:
+    test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+
+services:
+  # ================================ rsA ================================
+  rsA-n1:
+    <<: *mongod
+    container_name: mex-rsA-n1
+    command: mongod --replSet rsA --port 27017 --bind_ip_all
+    ports: ["27201:27017"]
+    volumes: [mex-rsA-n1-data:/data/db]
+
+  rsA-n2:
+    <<: *mongod
+    container_name: mex-rsA-n2
+    command: mongod --replSet rsA --port 27017 --bind_ip_all
+    ports: ["27202:27017"]
+    volumes: [mex-rsA-n2-data:/data/db]
+
+  rsA-n3:
+    <<: *mongod
+    container_name: mex-rsA-n3
+    command: mongod --replSet rsA --port 27017 --bind_ip_all
+    ports: ["27203:27017"]
+    volumes: [mex-rsA-n3-data:/data/db]
+
+  rsA-n4:
+    <<: *mongod
+    container_name: mex-rsA-n4
+    command: mongod --replSet rsA --port 27017 --bind_ip_all
+    ports: ["27204:27017"]
+    volumes: [mex-rsA-n4-data:/data/db]
+
+  rsA-n5:
+    <<: *mongod
+    container_name: mex-rsA-n5
+    command: mongod --replSet rsA --port 27017 --bind_ip_all
+    ports: ["27205:27017"]
+    volumes: [mex-rsA-n5-data:/data/db]
+
+  # ================================ rsB ================================
+  rsB-n1:
+    <<: *mongod
+    container_name: mex-rsB-n1
+    command: mongod --replSet rsB --port 27017 --bind_ip_all
+    ports: ["27211:27017"]
+    volumes: [mex-rsB-n1-data:/data/db]
+
+  rsB-n2:
+    <<: *mongod
+    container_name: mex-rsB-n2
+    command: mongod --replSet rsB --port 27017 --bind_ip_all
+    ports: ["27212:27017"]
+    volumes: [mex-rsB-n2-data:/data/db]
+
+  rsB-n3:
+    <<: *mongod
+    container_name: mex-rsB-n3
+    command: mongod --replSet rsB --port 27017 --bind_ip_all
+    ports: ["27213:27017"]
+    volumes: [mex-rsB-n3-data:/data/db]
+
+  rsB-n4:
+    <<: *mongod
+    container_name: mex-rsB-n4
+    command: mongod --replSet rsB --port 27017 --bind_ip_all
+    ports: ["27214:27017"]
+    volumes: [mex-rsB-n4-data:/data/db]
+
+  rsB-n5:
+    <<: *mongod
+    container_name: mex-rsB-n5
+    command: mongod --replSet rsB --port 27017 --bind_ip_all
+    ports: ["27215:27017"]
+    volumes: [mex-rsB-n5-data:/data/db]
+
+  # ================================ rsC ================================
+  rsC-n1:
+    <<: *mongod
+    container_name: mex-rsC-n1
+    command: mongod --replSet rsC --port 27017 --bind_ip_all
+    ports: ["27221:27017"]
+    volumes: [mex-rsC-n1-data:/data/db]
+
+  rsC-n2:
+    <<: *mongod
+    container_name: mex-rsC-n2
+    command: mongod --replSet rsC --port 27017 --bind_ip_all
+    ports: ["27222:27017"]
+    volumes: [mex-rsC-n2-data:/data/db]
+
+  rsC-n3:
+    <<: *mongod
+    container_name: mex-rsC-n3
+    command: mongod --replSet rsC --port 27017 --bind_ip_all
+    ports: ["27223:27017"]
+    volumes: [mex-rsC-n3-data:/data/db]
+
+  rsC-n4:
+    <<: *mongod
+    container_name: mex-rsC-n4
+    command: mongod --replSet rsC --port 27017 --bind_ip_all
+    ports: ["27224:27017"]
+    volumes: [mex-rsC-n4-data:/data/db]
+
+  rsC-n5:
+    <<: *mongod
+    container_name: mex-rsC-n5
+    command: mongod --replSet rsC --port 27017 --bind_ip_all
+    ports: ["27225:27017"]
+    volumes: [mex-rsC-n5-data:/data/db]
+
+  # ============================== bootstrap ==============================
+  # Runs once: initiates all three replsets and waits for primary
+  # election on each. Exits 0 on success. Safe to re-run — rs.initiate
+  # is guarded by a "NotYetInitialized" pre-check.
+  init:
+    image: mongo:latest
+    container_name: mex-triple-rs-init
+    depends_on:
+      rsA-n1: { condition: service_healthy }
+      rsA-n2: { condition: service_healthy }
+      rsA-n3: { condition: service_healthy }
+      rsA-n4: { condition: service_healthy }
+      rsA-n5: { condition: service_healthy }
+      rsB-n1: { condition: service_healthy }
+      rsB-n2: { condition: service_healthy }
+      rsB-n3: { condition: service_healthy }
+      rsB-n4: { condition: service_healthy }
+      rsB-n5: { condition: service_healthy }
+      rsC-n1: { condition: service_healthy }
+      rsC-n2: { condition: service_healthy }
+      rsC-n3: { condition: service_healthy }
+      rsC-n4: { condition: service_healthy }
+      rsC-n5: { condition: service_healthy }
+    volumes:
+      - ./init:/init:ro
+    entrypoint: ["bash", "/init/init-triple.sh"]
+    restart: "no"
+
+volumes:
+  mex-rsA-n1-data:
+  mex-rsA-n2-data:
+  mex-rsA-n3-data:
+  mex-rsA-n4-data:
+  mex-rsA-n5-data:
+  mex-rsB-n1-data:
+  mex-rsB-n2-data:
+  mex-rsB-n3-data:
+  mex-rsB-n4-data:
+  mex-rsB-n5-data:
+  mex-rsC-n1-data:
+  mex-rsC-n2-data:
+  mex-rsC-n3-data:
+  mex-rsC-n4-data:
+  mex-rsC-n5-data:

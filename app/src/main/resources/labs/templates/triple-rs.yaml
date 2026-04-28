@@ -1,0 +1,125 @@
+schema_version: 1
+id: triple-rs
+display_name: "Triple replica set"
+description: "Three independent 5-node replica sets. Good for multi-cluster UX training."
+est_memory_mib: 3000
+est_startup_seconds: 120
+default_mongo_tag: "mongo:latest"
+containers:
+  - rs1a
+  - rs1b
+  - rs1c
+  - rs2a
+  - rs2b
+  - rs2c
+  - rs3a
+  - rs3b
+  - rs3c
+  - init
+compose_template: |
+  name: {{projectName}}
+  services:
+    rs1a: &mongodBase
+      image: {{mongoTag}}
+      command: mongod --replSet rs1 --port 27017 --bind_ip_all
+      volumes: [rs1adata:/data/db]
+      labels: {com.kubrik.mex.lab: triple-rs}
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 20
+      container_name: {{projectName}}-rs1a
+      ports: ["127.0.0.1:{{ports.rs1a}}:27017"]
+    rs1b:
+      <<: *mongodBase
+      container_name: {{projectName}}-rs1b
+      command: mongod --replSet rs1 --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.rs1b}}:27017"]
+      volumes: [rs1bdata:/data/db]
+    rs1c:
+      <<: *mongodBase
+      container_name: {{projectName}}-rs1c
+      command: mongod --replSet rs1 --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.rs1c}}:27017"]
+      volumes: [rs1cdata:/data/db]
+    rs2a:
+      <<: *mongodBase
+      container_name: {{projectName}}-rs2a
+      command: mongod --replSet rs2 --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.rs2a}}:27017"]
+      volumes: [rs2adata:/data/db]
+    rs2b:
+      <<: *mongodBase
+      container_name: {{projectName}}-rs2b
+      command: mongod --replSet rs2 --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.rs2b}}:27017"]
+      volumes: [rs2bdata:/data/db]
+    rs2c:
+      <<: *mongodBase
+      container_name: {{projectName}}-rs2c
+      command: mongod --replSet rs2 --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.rs2c}}:27017"]
+      volumes: [rs2cdata:/data/db]
+    rs3a:
+      <<: *mongodBase
+      container_name: {{projectName}}-rs3a
+      command: mongod --replSet rs3 --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.rs3a}}:27017"]
+      volumes: [rs3adata:/data/db]
+    rs3b:
+      <<: *mongodBase
+      container_name: {{projectName}}-rs3b
+      command: mongod --replSet rs3 --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.rs3b}}:27017"]
+      volumes: [rs3bdata:/data/db]
+    rs3c:
+      <<: *mongodBase
+      container_name: {{projectName}}-rs3c
+      command: mongod --replSet rs3 --port 27017 --bind_ip_all
+      ports: ["127.0.0.1:{{ports.rs3c}}:27017"]
+      volumes: [rs3cdata:/data/db]
+    init:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-init
+      depends_on:
+        rs1a: {condition: service_healthy}
+        rs1b: {condition: service_healthy}
+        rs1c: {condition: service_healthy}
+        rs2a: {condition: service_healthy}
+        rs2b: {condition: service_healthy}
+        rs2c: {condition: service_healthy}
+        rs3a: {condition: service_healthy}
+        rs3b: {condition: service_healthy}
+        rs3c: {condition: service_healthy}
+      restart: "no"
+      labels: {com.kubrik.mex.lab: triple-rs}
+      entrypoint: ["bash", "-c"]
+      command:
+        - |
+          set -e
+          init_rs() {
+            local seed=$$1 rs=$$2 a=$$3 b=$$4 c=$$5
+            for i in $$(seq 1 60); do
+              if mongosh --quiet --host $$seed --eval 'try { rs.status().ok } catch (e) { e.code }' 2>/dev/null | grep -q '^1$$'; then return 0; fi
+              if mongosh --quiet --host $$seed --eval 'db.adminCommand("ping").ok' >/dev/null 2>&1; then
+                mongosh --quiet --host $$seed --eval "rs.initiate({_id:\"$$rs\",members:[{_id:0,host:\"$$a:27017\"},{_id:1,host:\"$$b:27017\"},{_id:2,host:\"$$c:27017\"}]})"
+                return 0
+              fi
+              sleep 1
+            done
+            echo "$$seed never answered ping"; return 1
+          }
+          init_rs rs1a rs1 rs1a rs1b rs1c
+          init_rs rs2a rs2 rs2a rs2b rs2c
+          init_rs rs3a rs3 rs3a rs3b rs3c
+  volumes:
+    rs1adata:
+    rs1bdata:
+    rs1cdata:
+    rs2adata:
+    rs2bdata:
+    rs2cdata:
+    rs3adata:
+    rs3bdata:
+    rs3cdata:

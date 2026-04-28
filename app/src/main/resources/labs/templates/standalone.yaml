@@ -1,0 +1,29 @@
+schema_version: 1
+id: standalone
+display_name: "Standalone"
+description: "One mongod, auth off. Fastest path from `I clicked` to `I can write my first query`."
+est_memory_mib: 400
+est_startup_seconds: 15
+default_mongo_tag: "mongo:latest"
+containers:
+  - mongo
+compose_template: |
+  name: {{projectName}}
+  services:
+    mongo:
+      image: {{mongoTag}}
+      container_name: {{projectName}}-mongo
+      command: mongod --bind_ip_all --port 27017
+      ports:
+        - "127.0.0.1:{{ports.mongo}}:27017"
+      volumes:
+        - data:/data/db
+      labels:
+        com.kubrik.mex.lab: standalone
+      healthcheck:
+        test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+        interval: 5s
+        timeout: 3s
+        retries: 20
+  volumes:
+    data:
