@@ -259,9 +259,29 @@ public final class ApplyOrchestrator {
                     e.at()));
         };
 
+        // v2.8.3 Q2.8.3-C — when the strategy is Karpenter, fold a
+        // NodeClaim probe into the watcher's poll loop so the rollout
+        // viewer surfaces NodeClaim phase transitions on the same
+        // cadence as the CR status. Probe is best-effort and shares
+        // the watcher's EventSink (RolloutEvent rows + bus publish).
+        com.kubrik.mex.k8s.rollout.RolloutWatcher.PollExtension extension = null;
+        if (model.computeStrategy()
+                instanceof com.kubrik.mex.k8s.compute.ComputeStrategy.Karpenter) {
+            try {
+                ApiClient probeClient = clientFactory.get(clusterRef);
+                String nodePoolName = com.kubrik.mex.k8s.compute.karpenter.KarpenterRenderer
+                        .nodePoolNameFor(model.deploymentName());
+                var probe = new com.kubrik.mex.k8s.compute.karpenter.KarpenterEventProbe(
+                        probeClient, rowId, nodePoolName);
+                extension = tickSink -> probe.poll(tickSink::emit);
+            } catch (Exception probeEx) {
+                log.debug("karpenter probe init {}: {}", rowId, probeEx.toString());
+            }
+        }
+
         com.kubrik.mex.k8s.rollout.RolloutWatcher.WatchResult wr =
                 watcher.watch(clusterRef, adapter, model.namespace(),
-                        model.deploymentName(), rowId, sink);
+                        model.deploymentName(), rowId, sink, extension);
 
         try {
             if (wr.ok()) {

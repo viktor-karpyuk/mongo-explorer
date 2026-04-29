@@ -65,6 +65,17 @@ public class QueryView extends VBox {
     private org.bson.Document selectedDoc;
     private TabPane queryTabs;
 
+    private Button runBtn;
+    private final org.kordamp.ikonli.javafx.FontIcon runPlayIcon =
+            new org.kordamp.ikonli.javafx.FontIcon("fth-play");
+    private final javafx.scene.control.ProgressIndicator runSpinner =
+            new javafx.scene.control.ProgressIndicator();
+    private static final String RUN_IDLE_STYLE =
+            "-fx-background-color: #16a34a; -fx-text-fill: white; -fx-font-weight: bold; "
+                    + "-fx-padding: 6 14 6 14; -fx-background-radius: 4;";
+    private static final String RUN_BUSY_STYLE =
+            "-fx-background-color: #d97706; -fx-text-fill: white; -fx-font-weight: bold; "
+                    + "-fx-padding: 6 14 6 14; -fx-background-radius: 4;";
     private Button prevPageBtn;
     private Button nextPageBtn;
     private final Label pageInfo = new Label("no results");
@@ -116,11 +127,14 @@ public class QueryView extends VBox {
         header.setStyle("-fx-background-color: #f9fafb; -fx-border-color: #e5e7eb; -fx-border-width: 0 0 1 0;");
 
         /* ============ TOP ACTION TOOLBAR (Run, paging, doc ops, view switcher) ============ */
-        Button runBtn = new Button("Run");
-        org.kordamp.ikonli.javafx.FontIcon playIcon = new org.kordamp.ikonli.javafx.FontIcon("fth-play");
-        playIcon.setIconColor(javafx.scene.paint.Color.WHITE);
-        runBtn.setGraphic(playIcon);
-        runBtn.setStyle("-fx-background-color: #16a34a; -fx-text-fill: white; -fx-font-weight: bold; -fx-padding: 6 14 6 14; -fx-background-radius: 4;");
+        runBtn = new Button("Run");
+        runPlayIcon.setIconColor(javafx.scene.paint.Color.WHITE);
+        runSpinner.setPrefSize(14, 14);
+        runSpinner.setMaxSize(14, 14);
+        // White spinner stroke on the amber busy background.
+        runSpinner.setStyle("-fx-progress-color: white;");
+        runBtn.setGraphic(runPlayIcon);
+        runBtn.setStyle(RUN_IDLE_STYLE);
         runBtn.setTooltip(new javafx.scene.control.Tooltip("Run query  (⌘↵)"));
         runBtn.setOnAction(e -> runActive());
 
@@ -482,6 +496,7 @@ public class QueryView extends VBox {
                 parseLong(maxTime.getText(), 30000));
         history.add(connectionId, req.dbName(), req.collName(), "find", filter.getText());
         statusLabel.setText("Running…");
+        setRunBusy(true);
         Thread.startVirtualThread(() -> {
             QueryResult res = r.find(req);
             Platform.runLater(() -> applyResult(res));
@@ -493,6 +508,7 @@ public class QueryView extends VBox {
         if (r == null || dbBox.getValue() == null || collBox.getValue() == null) return;
         history.add(connectionId, dbBox.getValue(), collBox.getValue(), "aggregate", pipelineJson);
         statusLabel.setText("Running…");
+        setRunBusy(true);
         String d = dbBox.getValue(), c = collBox.getValue();
         long mt = parseLong(maxTime.getText(), 30000);
         Thread.startVirtualThread(() -> {
@@ -501,7 +517,22 @@ public class QueryView extends VBox {
         });
     }
 
+    /**
+     * Toggle the Run button's "in flight" appearance: amber background,
+     * "Running…" label, indeterminate spinner in place of the play icon,
+     * and disabled to prevent double-fires. Called on the FX thread before
+     * submitting and from {@link #applyResult} after the response lands.
+     */
+    private void setRunBusy(boolean busy) {
+        if (runBtn == null) return;
+        runBtn.setDisable(busy);
+        runBtn.setText(busy ? "Running…" : "Run");
+        runBtn.setGraphic(busy ? runSpinner : runPlayIcon);
+        runBtn.setStyle(busy ? RUN_BUSY_STYLE : RUN_IDLE_STYLE);
+    }
+
     private void applyResult(QueryResult res) {
+        setRunBusy(false);
         if (res.error() != null) {
             statusLabel.setStyle("-fx-text-fill: #dc2626;");
             statusLabel.setText("Error — see Error tab");
