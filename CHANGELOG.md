@@ -15,10 +15,11 @@ User-facing polish on the everyday surfaces — query authoring, cluster connect
 - **Enter-to-connect.** Pressing Enter on a selected row in `ConnectionTree` mirrors double-click — connects a disconnected cluster, toggles expand on a connected one, opens a collection tab when the selection is a collection. Shared `activateSelected()` helper keeps both paths in sync.
 - **Connect feedback.** Window-modal `Connecting to X…` dialog with a spinner shown while the connect is in flight, dismissed by a one-shot `events.onState` subscription filtered to that connection id. On `CONNECTED`, a green bottom-right toast announces the server version (auto-dismisses after 2.5 s); on `ERROR`, the standard error dialog is raised with `lastError()`. New `UiHelpers.progressDialog` + `UiHelpers.toast` utilities.
 - **Duplicate-paste fix.** The Edit menu's `Cmd/Ctrl+X/C/V/A` accelerators were double-firing alongside JavaFX's native `TextInputControl` bindings, causing pasted text to land twice. Accelerators removed; the menu items still work from the menu bar, and the native bindings cover the shortcuts.
+- **Karpenter `NodeClaim` events surfaced live.** `KarpenterEventProbe` is now folded into `RolloutWatcher` via a new `PollExtension` hook, called once per status tick when the strategy is `Karpenter`. NodePool name is derived through a single helper (`KarpenterRenderer.nodePoolNameFor`) shared between renderer + probe so the label-selector filter stays in lock-step with the metadata.name actually emitted on the CR. Closes the v2.8.4-alpha2 known-limitation noting the probe was constructed but never scheduled.
 
 ### Scope
 
-UI / UX only. No model, schema, event-bus, or driver changes. Find / Aggregate semantics unchanged. Tag rolled into the v2.8.4 hardening line — GA still waits on the v2.8.4 series completing.
+UI / UX with one rollout-watcher fix. No schema, event-bus, or driver changes. Find / Aggregate semantics unchanged. Tag rolled into the v2.8.4 hardening line — GA still waits on the v2.8.4 series completing.
 
 ## v2.8.0-alpha — Local K8s Labs (Q2.8-N)
 
