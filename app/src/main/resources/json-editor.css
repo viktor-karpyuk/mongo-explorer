@@ -9,6 +9,8 @@
 .json-code-area .json-boolean   { -fx-fill: #9333ea; -fx-font-weight: bold; }
 .json-code-area .json-null      { -fx-fill: #6b7280; -fx-font-style: italic; }
 .json-code-area .json-punct     { -fx-fill: #374151; }
+.json-code-area .json-mongo-fn  { -fx-fill: #c026d3; -fx-font-weight: bold; }
+.json-code-area .json-mongo-op  { -fx-fill: #0891b2; -fx-font-weight: bold; }
 
 .json-code-area .lineno {
     -fx-background-color: #f3f4f6;

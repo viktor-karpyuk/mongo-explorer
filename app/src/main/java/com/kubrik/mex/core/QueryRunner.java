@@ -78,7 +78,14 @@ public class QueryRunner {
 
     private static Bson parseOrEmpty(String s) {
         if (!notBlank(s)) return new BsonDocument();
-        return BsonDocument.parse(s);
+        String t = s.trim();
+        // Compass-style convenience: a bare 24-hex string in the filter is
+        // treated as { _id: ObjectId("…") }.
+        if (t.matches("^[0-9a-fA-F]{24}$")) {
+            return new BsonDocument("_id",
+                    new org.bson.BsonObjectId(new org.bson.types.ObjectId(t)));
+        }
+        return BsonDocument.parse(t);
     }
 
     private static boolean notBlank(String s) { return s != null && !s.isBlank(); }

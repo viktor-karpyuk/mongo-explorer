@@ -194,19 +194,15 @@ public class ConnectionTree extends VBox {
             rebuildContextMenuItems(ctx);
         });
         tree.setOnMouseClicked(e -> {
-            if (e.getClickCount() == 2) {
-                TreeItem<Node> sel = tree.getSelectionModel().getSelectedItem();
-                if (sel == null) return;
-                Node n = sel.getValue();
-                if ("coll".equals(n.type) && openHandler != null) {
-                    openHandler.openCollection(n.connectionId, n.db, n.coll);
-                } else if ("conn".equals(n.type)) {
-                    if (manager.state(n.connectionId).status() != ConnectionState.Status.CONNECTED) {
-                        manager.connect(n.connectionId);
-                    } else {
-                        sel.setExpanded(!sel.isExpanded());
-                    }
-                }
+            if (e.getClickCount() == 2) activateSelected();
+        });
+        // Enter on the selected row mirrors double-click: connect to the
+        // selected cluster (or toggle expand if already connected), and open
+        // the collection tab when the selection is a collection node.
+        tree.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, e -> {
+            if (e.getCode() == javafx.scene.input.KeyCode.ENTER) {
+                activateSelected();
+                e.consume();
             }
         });
 
@@ -662,6 +658,62 @@ public class ConnectionTree extends VBox {
     private void withSel(java.util.function.Consumer<Node> f) {
         TreeItem<Node> sel = tree.getSelectionModel().getSelectedItem();
         if (sel != null) f.accept(sel.getValue());
+    }
+
+    /**
+     * Default activation for the currently selected tree row, shared by
+     * double-click and the Enter shortcut: connect a disconnected cluster,
+     * toggle expand on a connected cluster, or open a collection tab.
+     */
+    private void activateSelected() {
+        TreeItem<Node> sel = tree.getSelectionModel().getSelectedItem();
+        if (sel == null) return;
+        Node n = sel.getValue();
+        if ("coll".equals(n.type) && openHandler != null) {
+            openHandler.openCollection(n.connectionId, n.db, n.coll);
+        } else if ("conn".equals(n.type)) {
+            if (manager.state(n.connectionId).status() != ConnectionState.Status.CONNECTED) {
+                beginConnectWithFeedback(n.connectionId, n.label);
+            } else {
+                sel.setExpanded(!sel.isExpanded());
+            }
+        } else if (sel.getValue() != null && !sel.isLeaf()) {
+            sel.setExpanded(!sel.isExpanded());
+        }
+    }
+
+    /**
+     * Kick off a connect and show user feedback around it: a window-modal
+     * "Connecting…" spinner while the connect is in flight, dismissed when
+     * the next terminal state for this id arrives, and a green toast on
+     * success (or a regular error dialog on failure).
+     */
+    private void beginConnectWithFeedback(String connId, String label) {
+        javafx.stage.Window owner = getScene() == null ? null : getScene().getWindow();
+        javafx.stage.Stage dlg = UiHelpers.progressDialog(owner, "Connecting to " + label + "…");
+        dlg.show();
+        // One-shot subscription: filter on this connection id and dismiss
+        // the modal on the first terminal status (CONNECTED or ERROR).
+        EventBus.Subscription[] holder = new EventBus.Subscription[1];
+        holder[0] = events.onState(s -> {
+            if (!connId.equals(s.connectionId())) return;
+            if (s.status() == ConnectionState.Status.CONNECTING) return;
+            Platform.runLater(() -> {
+                if (dlg.isShowing()) dlg.close();
+                if (s.status() == ConnectionState.Status.CONNECTED) {
+                    UiHelpers.toast(owner,
+                            "Connected to " + label
+                                    + (s.serverVersion() == null ? "" : "  ·  mongo " + s.serverVersion()),
+                            2500);
+                } else if (s.status() == ConnectionState.Status.ERROR) {
+                    UiHelpers.error(owner,
+                            "Failed to connect to " + label
+                                    + (s.lastError() == null ? "" : "\n\n" + s.lastError()));
+                }
+                try { holder[0].close(); } catch (Exception ignored) {}
+            });
+        });
+        manager.connect(connId);
     }
 
     /** Cell with a leading icon / status dot. */

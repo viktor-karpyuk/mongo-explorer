@@ -15,7 +15,10 @@ public class JsonCodeArea extends CodeArea {
 
     private static final Pattern PATTERN = Pattern.compile(
             "(?<KEY>\"(?:\\\\.|[^\"\\\\])*\"\\s*:)"
-                    + "|(?<STRING>\"(?:\\\\.|[^\"\\\\])*\")"
+                    + "|(?<STRING>\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*')"
+                    + "|(?<MONGOFN>\\b(?:ObjectId|ISODate|NumberLong|NumberDecimal|NumberInt|BinData|UUID|Timestamp|Date|MinKey|MaxKey|DBRef|RegExp)\\b)"
+                    + "|(?<MONGOOP>\\$[a-zA-Z][a-zA-Z0-9]*)"
+                    + "|(?<UKEY>[A-Za-z_$][A-Za-z_$0-9]*\\s*(?=:))"
                     + "|(?<NUMBER>-?\\b\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b)"
                     + "|(?<BOOL>\\btrue\\b|\\bfalse\\b)"
                     + "|(?<NULL>\\bnull\\b)"
@@ -43,6 +46,9 @@ public class JsonCodeArea extends CodeArea {
         while (m.find()) {
             String style = m.group("KEY") != null ? "json-key"
                     : m.group("STRING") != null ? "json-string"
+                    : m.group("MONGOFN") != null ? "json-mongo-fn"
+                    : m.group("MONGOOP") != null ? "json-mongo-op"
+                    : m.group("UKEY") != null ? "json-key"
                     : m.group("NUMBER") != null ? "json-number"
                     : m.group("BOOL") != null ? "json-boolean"
                     : m.group("NULL") != null ? "json-null"

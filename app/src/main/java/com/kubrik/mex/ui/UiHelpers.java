@@ -18,6 +18,55 @@ import java.util.Optional;
 public final class UiHelpers {
     private UiHelpers() {}
 
+    /**
+     * Small, undecorated, window-modal "Working…" dialog with a spinner
+     * and a message. Caller is responsible for {@code stage.close()} when
+     * the work finishes (typically from a state-change callback). The
+     * spinner runs in indeterminate mode.
+     */
+    public static javafx.stage.Stage progressDialog(Window owner, String message) {
+        javafx.scene.control.ProgressIndicator pi = new javafx.scene.control.ProgressIndicator();
+        pi.setPrefSize(28, 28);
+        Label msg = new Label(message);
+        msg.setStyle("-fx-font-size: 13px; -fx-text-fill: #1f2937;");
+        HBox row = new HBox(12, pi, msg);
+        row.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        row.setPadding(new javafx.geometry.Insets(16, 22, 16, 18));
+        row.setStyle("-fx-background-color: white; -fx-background-radius: 8; "
+                + "-fx-border-color: #e5e7eb; -fx-border-radius: 8;");
+        javafx.scene.Scene sc = new javafx.scene.Scene(row);
+        sc.setFill(javafx.scene.paint.Color.TRANSPARENT);
+        javafx.stage.Stage st = new javafx.stage.Stage(javafx.stage.StageStyle.TRANSPARENT);
+        st.initModality(javafx.stage.Modality.WINDOW_MODAL);
+        if (owner != null) st.initOwner(owner);
+        st.setScene(sc);
+        st.setResizable(false);
+        return st;
+    }
+
+    /**
+     * Bottom-right transient notification that auto-dismisses after
+     * {@code millis}. Non-modal; doesn't steal focus. Safe no-op if the
+     * owner is null or has no scene yet.
+     */
+    public static void toast(Window owner, String message, long millis) {
+        if (owner == null) return;
+        Label l = new Label(message);
+        l.setStyle("-fx-text-fill: white; -fx-font-size: 13px; -fx-padding: 10 16 10 16; "
+                + "-fx-background-color: #16a34a; -fx-background-radius: 6;");
+        javafx.stage.Popup p = new javafx.stage.Popup();
+        p.setAutoFix(true);
+        p.getContent().add(l);
+        // Anchor to bottom-right of the owner window with a small margin.
+        double x = owner.getX() + owner.getWidth() - 360;
+        double y = owner.getY() + owner.getHeight() - 80;
+        p.show(owner, Math.max(0, x), Math.max(0, y));
+        javafx.animation.PauseTransition pt =
+                new javafx.animation.PauseTransition(javafx.util.Duration.millis(millis));
+        pt.setOnFinished(e -> p.hide());
+        pt.play();
+    }
+
     public static Button iconButton(String iconLiteral, String tooltip) {
         FontIcon icon = new FontIcon(iconLiteral);
         icon.setIconSize(16);

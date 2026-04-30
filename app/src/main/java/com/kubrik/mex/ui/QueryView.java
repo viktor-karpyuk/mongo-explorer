@@ -40,10 +40,18 @@ public class QueryView extends VBox {
     private final ComboBox<String> dbBox = new ComboBox<>();
     private final ComboBox<String> collBox = new ComboBox<>();
 
-    private final TextArea filter = monoArea("{ }");
-    private final TextArea projection = monoArea("");
-    private final TextArea sort = monoArea("");
-    { filter.setPrefRowCount(2); projection.setPrefRowCount(2); sort.setPrefRowCount(2); }
+    private final JsonCodeArea filter = new JsonCodeArea("{ }");
+    private final JsonCodeArea projection = new JsonCodeArea("");
+    private final JsonCodeArea sort = new JsonCodeArea("");
+    private final org.fxmisc.flowless.VirtualizedScrollPane<JsonCodeArea> filterScroll =
+            new org.fxmisc.flowless.VirtualizedScrollPane<>(filter);
+    private final org.fxmisc.flowless.VirtualizedScrollPane<JsonCodeArea> projectionScroll =
+            new org.fxmisc.flowless.VirtualizedScrollPane<>(projection);
+    private final org.fxmisc.flowless.VirtualizedScrollPane<JsonCodeArea> sortScroll =
+            new org.fxmisc.flowless.VirtualizedScrollPane<>(sort);
+    /** Editor font size for the find-form code areas; bumped with the A−/A+ buttons. */
+    private final javafx.beans.property.IntegerProperty editorFontPx =
+            new javafx.beans.property.SimpleIntegerProperty(12);
     private final TextField skip = new TextField("0");
     private final TextField limit = new TextField("50");
     private final TextField maxTime = new TextField("30000");
@@ -57,6 +65,17 @@ public class QueryView extends VBox {
     private org.bson.Document selectedDoc;
     private TabPane queryTabs;
 
+    private Button runBtn;
+    private final org.kordamp.ikonli.javafx.FontIcon runPlayIcon =
+            new org.kordamp.ikonli.javafx.FontIcon("fth-play");
+    private final javafx.scene.control.ProgressIndicator runSpinner =
+            new javafx.scene.control.ProgressIndicator();
+    private static final String RUN_IDLE_STYLE =
+            "-fx-background-color: #16a34a; -fx-text-fill: white; -fx-font-weight: bold; "
+                    + "-fx-padding: 6 14 6 14; -fx-background-radius: 4;";
+    private static final String RUN_BUSY_STYLE =
+            "-fx-background-color: #d97706; -fx-text-fill: white; -fx-font-weight: bold; "
+                    + "-fx-padding: 6 14 6 14; -fx-background-radius: 4;";
     private Button prevPageBtn;
     private Button nextPageBtn;
     private final Label pageInfo = new Label("no results");
@@ -74,6 +93,20 @@ public class QueryView extends VBox {
         setPadding(new Insets(0));
         setSpacing(0);
         setStyle("-fx-background-color: white;");
+
+        // Inherit JSON-highlight stylesheet for the embedded code editors.
+        try {
+            String css = getClass().getResource("/json-editor.css").toExternalForm();
+            getStylesheets().add(css);
+        } catch (Exception ignored) {}
+
+        // Apply editor font size live to all three find-form code areas.
+        editorFontPx.addListener((o, a, b) -> {
+            String s = "-fx-font-size: " + b.intValue() + "px;";
+            filter.setStyle(s);
+            projection.setStyle(s);
+            sort.setStyle(s);
+        });
 
         dbBox.setPrefWidth(160);
         collBox.setPrefWidth(200);
@@ -94,11 +127,14 @@ public class QueryView extends VBox {
         header.setStyle("-fx-background-color: #f9fafb; -fx-border-color: #e5e7eb; -fx-border-width: 0 0 1 0;");
 
         /* ============ TOP ACTION TOOLBAR (Run, paging, doc ops, view switcher) ============ */
-        Button runBtn = new Button("Run");
-        org.kordamp.ikonli.javafx.FontIcon playIcon = new org.kordamp.ikonli.javafx.FontIcon("fth-play");
-        playIcon.setIconColor(javafx.scene.paint.Color.WHITE);
-        runBtn.setGraphic(playIcon);
-        runBtn.setStyle("-fx-background-color: #16a34a; -fx-text-fill: white; -fx-font-weight: bold; -fx-padding: 6 14 6 14; -fx-background-radius: 4;");
+        runBtn = new Button("Run");
+        runPlayIcon.setIconColor(javafx.scene.paint.Color.WHITE);
+        runSpinner.setPrefSize(14, 14);
+        runSpinner.setMaxSize(14, 14);
+        // White spinner stroke on the amber busy background.
+        runSpinner.setStyle("-fx-progress-color: white;");
+        runBtn.setGraphic(runPlayIcon);
+        runBtn.setStyle(RUN_IDLE_STYLE);
         runBtn.setTooltip(new javafx.scene.control.Tooltip("Run query  (⌘↵)"));
         runBtn.setOnAction(e -> runActive());
 
@@ -188,16 +224,33 @@ public class QueryView extends VBox {
         GridPane findForm = new GridPane();
         findForm.setHgap(8); findForm.setVgap(6);
         findForm.setPadding(new Insets(12, 16, 12, 16));
-        // Make the filter/projection/sort areas vertically resizable.
-        GridPane.setVgrow(filter, Priority.SOMETIMES);
-        GridPane.setVgrow(projection, Priority.SOMETIMES);
-        GridPane.setVgrow(sort, Priority.SOMETIMES);
-        filter.setMinHeight(40);
-        projection.setMinHeight(40);
-        sort.setMinHeight(40);
-        findForm.addRow(0, formLabel("Filter"), filter);
-        findForm.addRow(1, formLabel("Projection"), projection);
-        findForm.addRow(2, formLabel("Sort"), sort);
+        // Make the filter/projection/sort areas vertically resizable. The
+        // GridPane child is the VirtualizedScrollPane wrapper; the JsonCodeArea
+        // inside it provides syntax highlighting for Mongo shell tokens.
+        for (var sp : new org.fxmisc.flowless.VirtualizedScrollPane<?>[]{filterScroll, projectionScroll, sortScroll}) {
+            GridPane.setVgrow(sp, Priority.SOMETIMES);
+            sp.setMinHeight(40);
+            sp.setStyle("-fx-border-color: #d1d5db; -fx-border-width: 1;");
+        }
+        // Row constraints so filter/projection/sort expand when the Find tab gets more space.
+        // Each row gets its own RowConstraints instance so the collapse toggle can flip its
+        // vgrow independently without affecting the other two rows.
+        javafx.scene.layout.RowConstraints rFilter = new javafx.scene.layout.RowConstraints();
+        rFilter.setVgrow(Priority.ALWAYS);
+        javafx.scene.layout.RowConstraints rProj = new javafx.scene.layout.RowConstraints();
+        rProj.setVgrow(Priority.ALWAYS);
+        javafx.scene.layout.RowConstraints rSort = new javafx.scene.layout.RowConstraints();
+        rSort.setVgrow(Priority.ALWAYS);
+        javafx.scene.layout.RowConstraints rFixed = new javafx.scene.layout.RowConstraints();
+        rFixed.setVgrow(Priority.NEVER);
+
+        Button fontMinus = zoomBtn("A−", "Decrease editor font size",
+                () -> editorFontPx.set(Math.max(9, editorFontPx.get() - 1)));
+        Button fontPlus = zoomBtn("A+", "Increase editor font size",
+                () -> editorFontPx.set(Math.min(24, editorFontPx.get() + 1)));
+        findForm.addRow(0, collapseHeader("Filter", filterScroll, rFilter, fontMinus, fontPlus), filterScroll);
+        findForm.addRow(1, collapseHeader("Projection", projectionScroll, rProj), projectionScroll);
+        findForm.addRow(2, collapseHeader("Sort", sortScroll, rSort), sortScroll);
         HBox limits = new HBox(8,
                 new Label("Skip"), skip,
                 new Label("Limit"), limit,
@@ -210,12 +263,7 @@ public class QueryView extends VBox {
         javafx.scene.layout.ColumnConstraints fc = new javafx.scene.layout.ColumnConstraints();
         fc.setHgrow(Priority.ALWAYS); fc.setFillWidth(true);
         findForm.getColumnConstraints().addAll(lc, fc);
-        // Row constraints so filter/projection/sort expand when the Find tab gets more space.
-        javafx.scene.layout.RowConstraints rGrow = new javafx.scene.layout.RowConstraints();
-        rGrow.setVgrow(Priority.ALWAYS);
-        javafx.scene.layout.RowConstraints rFixed = new javafx.scene.layout.RowConstraints();
-        rFixed.setVgrow(Priority.NEVER);
-        findForm.getRowConstraints().addAll(rGrow, rGrow, rGrow, rFixed);
+        findForm.getRowConstraints().addAll(rFilter, rProj, rSort, rFixed);
 
         /* ============ QUERY MODE TABS ============ */
         queryTabs = new TabPane(
@@ -319,6 +367,58 @@ public class QueryView extends VBox {
         return l;
     }
 
+    /**
+     * Clickable header for a collapsible field row. Click toggles the area's
+     * visible/managed state and flips the row's vgrow so the freed space is
+     * given to the remaining rows. Each row owns its own RowConstraints so
+     * collapses are independent.
+     */
+    private static javafx.scene.Node collapseHeader(String text,
+                                                    javafx.scene.Node area,
+                                                    javafx.scene.layout.RowConstraints rc,
+                                                    javafx.scene.Node... leadingExtras) {
+        org.kordamp.ikonli.javafx.FontIcon chev = new org.kordamp.ikonli.javafx.FontIcon("fth-chevron-down");
+        chev.setIconSize(11);
+        chev.setIconColor(javafx.scene.paint.Color.web("#6b7280"));
+        Label lbl = new Label(text);
+        lbl.setStyle("-fx-text-fill: #374151; -fx-font-size: 12px;");
+        // The chevron+label is the click target for collapse; leading extras
+        // (e.g. zoom buttons) sit on the left and handle their own clicks.
+        HBox toggle = new HBox(4, chev, lbl);
+        toggle.setAlignment(Pos.CENTER_RIGHT);
+        toggle.setStyle("-fx-cursor: hand;");
+        toggle.setOnMouseClicked(e -> {
+            boolean collapsing = area.isManaged();
+            area.setManaged(!collapsing);
+            area.setVisible(!collapsing);
+            chev.setIconLiteral(collapsing ? "fth-chevron-right" : "fth-chevron-down");
+            rc.setVgrow(collapsing ? Priority.NEVER : Priority.ALWAYS);
+        });
+        HBox row = new HBox(6);
+        row.setAlignment(Pos.CENTER_RIGHT);
+        if (leadingExtras != null && leadingExtras.length > 0) {
+            row.getChildren().addAll(leadingExtras);
+        }
+        row.getChildren().add(toggle);
+        return row;
+    }
+
+    private static Button zoomBtn(String text, String tooltip, Runnable action) {
+        Button b = new Button(text);
+        b.setTooltip(new javafx.scene.control.Tooltip(tooltip));
+        b.setStyle("-fx-background-color: transparent; -fx-text-fill: #4b5563; "
+                + "-fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 1 6 1 6; "
+                + "-fx-background-radius: 3; -fx-border-color: #d1d5db; -fx-border-radius: 3;");
+        b.setOnMouseEntered(e -> b.setStyle("-fx-background-color: #eef2ff; -fx-text-fill: #1e40af; "
+                + "-fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 1 6 1 6; "
+                + "-fx-background-radius: 3; -fx-border-color: #c7d2fe; -fx-border-radius: 3;"));
+        b.setOnMouseExited(e -> b.setStyle("-fx-background-color: transparent; -fx-text-fill: #4b5563; "
+                + "-fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 1 6 1 6; "
+                + "-fx-background-radius: 3; -fx-border-color: #d1d5db; -fx-border-radius: 3;"));
+        b.setOnAction(e -> action.run());
+        return b;
+    }
+
     private static javafx.scene.control.ToggleButton viewToggle(String iconLit, String tooltip,
                                                                 javafx.scene.control.ToggleGroup group, int index) {
         org.kordamp.ikonli.javafx.FontIcon icon = new org.kordamp.ikonli.javafx.FontIcon(iconLit);
@@ -384,6 +484,11 @@ public class QueryView extends VBox {
     private void doFind() {
         QueryRunner r = runner();
         if (r == null || dbBox.getValue() == null || collBox.getValue() == null) return;
+        String parseErr = validateFindForm();
+        if (parseErr != null) {
+            applyResult(new QueryResult(java.util.List.of(), 0, false, parseErr));
+            return;
+        }
         QueryRequest req = new QueryRequest(
                 dbBox.getValue(), collBox.getValue(),
                 filter.getText(), projection.getText(), sort.getText(),
@@ -391,6 +496,7 @@ public class QueryView extends VBox {
                 parseLong(maxTime.getText(), 30000));
         history.add(connectionId, req.dbName(), req.collName(), "find", filter.getText());
         statusLabel.setText("Running…");
+        setRunBusy(true);
         Thread.startVirtualThread(() -> {
             QueryResult res = r.find(req);
             Platform.runLater(() -> applyResult(res));
@@ -402,6 +508,7 @@ public class QueryView extends VBox {
         if (r == null || dbBox.getValue() == null || collBox.getValue() == null) return;
         history.add(connectionId, dbBox.getValue(), collBox.getValue(), "aggregate", pipelineJson);
         statusLabel.setText("Running…");
+        setRunBusy(true);
         String d = dbBox.getValue(), c = collBox.getValue();
         long mt = parseLong(maxTime.getText(), 30000);
         Thread.startVirtualThread(() -> {
@@ -410,11 +517,27 @@ public class QueryView extends VBox {
         });
     }
 
+    /**
+     * Toggle the Run button's "in flight" appearance: amber background,
+     * "Running…" label, indeterminate spinner in place of the play icon,
+     * and disabled to prevent double-fires. Called on the FX thread before
+     * submitting and from {@link #applyResult} after the response lands.
+     */
+    private void setRunBusy(boolean busy) {
+        if (runBtn == null) return;
+        runBtn.setDisable(busy);
+        runBtn.setText(busy ? "Running…" : "Run");
+        runBtn.setGraphic(busy ? runSpinner : runPlayIcon);
+        runBtn.setStyle(busy ? RUN_BUSY_STYLE : RUN_IDLE_STYLE);
+    }
+
     private void applyResult(QueryResult res) {
+        setRunBusy(false);
         if (res.error() != null) {
             statusLabel.setStyle("-fx-text-fill: #dc2626;");
-            statusLabel.setText("Error: " + res.error());
+            statusLabel.setText("Error — see Error tab");
             results.setDocuments(java.util.List.of());
+            results.setError(res.error());
             selectedDoc = null;
             detail.clear();
             lastHasMore = false;
@@ -422,6 +545,7 @@ public class QueryView extends VBox {
             updatePagination();
             return;
         }
+        results.clearError();
         statusLabel.setStyle("-fx-text-fill: #6b7280;");
         statusLabel.setText(res.documents().size() + " docs · " + res.durationMs() + " ms"
                 + (res.hasMore() ? " · more available" : ""));
@@ -431,6 +555,32 @@ public class QueryView extends VBox {
         lastHasMore = res.hasMore();
         lastResultCount = res.documents().size();
         updatePagination();
+    }
+
+    /**
+     * Validate the find form's three JSON inputs before submitting.
+     * Returns a copyable, multi-line error string if any field fails to
+     * parse, otherwise null. Bare 24-hex in {@code filter} is accepted as
+     * shorthand for {@code {_id: ObjectId("…")}}.
+     */
+    private String validateFindForm() {
+        StringBuilder sb = new StringBuilder();
+        validateField("Filter", filter.getText(), true, sb);
+        validateField("Projection", projection.getText(), false, sb);
+        validateField("Sort", sort.getText(), false, sb);
+        return sb.length() == 0 ? null : sb.toString().trim();
+    }
+
+    private static void validateField(String label, String text, boolean allowBareHexId, StringBuilder out) {
+        if (text == null || text.isBlank()) return;
+        String t = text.trim();
+        if (allowBareHexId && t.matches("^[0-9a-fA-F]{24}$")) return;
+        try {
+            org.bson.BsonDocument.parse(t);
+        } catch (Exception e) {
+            out.append(label).append(" — ").append(e.getMessage()).append("\n\n");
+            out.append("Input:\n").append(text).append("\n\n");
+        }
     }
 
     private void updatePagination() {
@@ -545,7 +695,7 @@ public class QueryView extends VBox {
     public void prefill(String db, String coll, String filterJson) {
         if (db != null) dbBox.setValue(db);
         if (coll != null) collBox.setValue(coll);
-        if (filterJson != null) filter.setText(filterJson);
+        if (filterJson != null) { filter.replaceText(filterJson); filter.refreshHighlight(); }
     }
 
     private static TextArea monoArea(String text) {

@@ -71,4 +71,22 @@ class KarpenterRendererTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new KarpenterRenderer().render(bareType, "x", pod));
     }
+
+    /** The probe filters NodeClaims via the {@code karpenter.sh/nodepool}
+     *  label, which must equal the NodePool's metadata.name the renderer
+     *  emits. Re-deriving the name in two places is exactly the kind of
+     *  drift this assertion catches. */
+    @Test
+    void nodepool_name_helper_matches_rendered_metadata_name() {
+        ComputeStrategy.Karpenter k = new ComputeStrategy.Karpenter(
+                KarpenterSpec.sensibleAwsDefaults("x"));
+        String deployment = "Mongo.Explorer_Dev";
+        Map<String, Object> pod = new LinkedHashMap<>();
+        String yaml = new KarpenterRenderer().render(k, deployment, pod);
+        String expected = KarpenterRenderer.nodePoolNameFor(deployment);
+        assertEquals("mex-mongo-explorer-dev", expected);
+        assertTrue(yaml.contains("name: \"" + expected + "\"")
+                        || yaml.contains("name: " + expected),
+                "rendered NodePool must use nodePoolNameFor(); yaml=\n" + yaml);
+    }
 }

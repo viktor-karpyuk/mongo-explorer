@@ -7,6 +7,7 @@ import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
 import org.fxmisc.flowless.VirtualizedScrollPane;
@@ -36,11 +37,26 @@ public class ResultsPane extends TabPane {
     private final TableView<Document> table = new TableView<>();
     private final TreeView<Object> tree = new TreeView<>();
     private final JsonCodeArea jsonArea = new JsonCodeArea("");
+    private final TextArea errorArea = new TextArea();
+    private final Tab errorTab;
     private Consumer<Document> onSelect = d -> {};
 
     public ResultsPane() {
         jsonArea.setEditable(false);
         VirtualizedScrollPane<JsonCodeArea> jsonScroll = new VirtualizedScrollPane<>(jsonArea);
+
+        // Error tab — pgAdmin-style, populated when a query/parse error occurs.
+        // The TextArea is read-only but selectable so the user can Cmd/Ctrl+C
+        // the message verbatim. Tab is removed from the TabPane while there
+        // is no error so it doesn't clutter the UI.
+        errorArea.setEditable(false);
+        errorArea.setWrapText(true);
+        errorArea.setStyle(
+                "-fx-font-family: 'Menlo','Monaco',monospace; -fx-font-size: 12px; "
+                + "-fx-text-fill: #b91c1c; -fx-control-inner-background: #fef2f2;");
+        errorTab = new Tab("Error", errorArea);
+        errorTab.setClosable(false);
+        errorTab.setStyle("-fx-text-base-color: #b91c1c;");
 
         Tab t1 = new Tab("Table", table);
         Tab t2 = new Tab("Tree", tree);
@@ -94,6 +110,23 @@ public class ResultsPane extends TabPane {
         rebuildTable();
         rebuildTree();
         rebuildJson();
+    }
+
+    /**
+     * Show an error in a dedicated, copyable Error tab and bring it to focus.
+     * The message text is selectable for Cmd/Ctrl+C. Pass {@code null} or
+     * blank to clear/hide the tab.
+     */
+    public void setError(String message) {
+        if (message == null || message.isBlank()) { clearError(); return; }
+        errorArea.setText(message);
+        if (!getTabs().contains(errorTab)) getTabs().add(0, errorTab);
+        getSelectionModel().select(errorTab);
+    }
+
+    public void clearError() {
+        getTabs().remove(errorTab);
+        errorArea.clear();
     }
 
     private void rebuildTable() {

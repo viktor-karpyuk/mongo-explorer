@@ -45,6 +45,14 @@ public final class KarpenterRenderer {
     public static final String NODEPOOL_KIND = "NodePool";
     public static final String DEPLOYMENT_TAINT_KEY = "mex.deployment";
 
+    /** DNS-1123 NodePool name this renderer (and the matching pod mutator)
+     *  will emit for {@code deploymentName}. Exposed so the rollout
+     *  watcher can construct a {@link KarpenterEventProbe} with the same
+     *  label value the renderer stamped on the NodePool. */
+    public static String nodePoolNameFor(String deploymentName) {
+        return "mex-" + safeName(deploymentName);
+    }
+
     /** Jackson YAML mapper construction is non-trivial (factory +
      *  module discovery + thread-local pool init); a static instance
      *  amortises that cost across every renderer call. ObjectMapper
@@ -61,7 +69,7 @@ public final class KarpenterRenderer {
     public static void mutatePodForKarpenter(Map<String, Object> podSpec,
                                               String deploymentName,
                                               String labelSelectorName) {
-        String nodePoolName = "mex-" + safeName(deploymentName);
+        String nodePoolName = nodePoolNameFor(deploymentName);
         ComputeStrategy.NodePool bridge = new ComputeStrategy.NodePool(
                 List.of(new LabelPair("karpenter.sh/nodepool", nodePoolName)),
                 List.of(new Toleration(DEPLOYMENT_TAINT_KEY, deploymentName,
@@ -78,7 +86,7 @@ public final class KarpenterRenderer {
         KarpenterSpec sp = strategy.spec().orElseThrow(() ->
                 new IllegalArgumentException("Karpenter strategy requires a KarpenterSpec"));
 
-        String nodePoolName = "mex-" + safeName(deploymentName);
+        String nodePoolName = nodePoolNameFor(deploymentName);
         String poolLabelValue = nodePoolName;
 
         // --- 1. Mutate the pod so it selects + tolerates the NodePool ---

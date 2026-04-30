@@ -251,17 +251,17 @@ public class MainView extends BorderPane {
         file.getItems().addAll(newConn, manageConns, new SeparatorMenuItem(), closeTab, new SeparatorMenuItem(), quit);
 
         // ----- Edit -----
+        // No accelerators on these — JavaFX TextInputControls already bind
+        // Cmd/Ctrl+X/C/V/A natively. Adding accelerators here causes the
+        // action to fire twice (once natively, once via the accelerator),
+        // which manifests as duplicated text on paste.
         Menu edit = new Menu("Edit");
         edit.getItems().addAll(
-                item("Cut", new KeyCodeCombination(KeyCode.X, KeyCombination.SHORTCUT_DOWN),
-                        () -> fireFocusedTextAction("cut")),
-                item("Copy", new KeyCodeCombination(KeyCode.C, KeyCombination.SHORTCUT_DOWN),
-                        () -> fireFocusedTextAction("copy")),
-                item("Paste", new KeyCodeCombination(KeyCode.V, KeyCombination.SHORTCUT_DOWN),
-                        () -> fireFocusedTextAction("paste")),
+                item("Cut", null, () -> fireFocusedTextAction("cut")),
+                item("Copy", null, () -> fireFocusedTextAction("copy")),
+                item("Paste", null, () -> fireFocusedTextAction("paste")),
                 new SeparatorMenuItem(),
-                item("Select All", new KeyCodeCombination(KeyCode.A, KeyCombination.SHORTCUT_DOWN),
-                        () -> fireFocusedTextAction("selectAll")));
+                item("Select All", null, () -> fireFocusedTextAction("selectAll")));
 
         // ----- View -----
         Menu view = new Menu("View");

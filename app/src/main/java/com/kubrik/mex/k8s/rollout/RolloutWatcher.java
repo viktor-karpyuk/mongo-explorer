@@ -94,6 +94,25 @@ public final class RolloutWatcher {
                               String name,
                               long provisioningId,
                               EventSink sink) {
+        return watch(ref, adapter, namespace, name, provisioningId, sink, null);
+    }
+
+    /**
+     * Same as {@link #watch(K8sClusterRef, OperatorAdapter, String,
+     * String, long, EventSink)} but invokes {@code extension} once per
+     * tick (after the CR-status poll) so callers can fold in side
+     * channels like {@link
+     * com.kubrik.mex.k8s.compute.karpenter.KarpenterEventProbe}.
+     * Extension exceptions are logged + swallowed so an unhealthy side
+     * channel can't stall the main rollout watcher.
+     */
+    public WatchResult watch(K8sClusterRef ref,
+                              OperatorAdapter adapter,
+                              String namespace,
+                              String name,
+                              long provisioningId,
+                              EventSink sink,
+                              PollExtension extension) {
         ApiClient client;
         try {
             client = clientFactory.get(ref);
@@ -127,6 +146,13 @@ public final class RolloutWatcher {
                 sink.emit(info(provisioningId,
                         "StatusChange", lastStatus + " → " + status));
                 lastStatus = status;
+            }
+            if (extension != null) {
+                try { extension.poll(sink); }
+                catch (Exception ext) {
+                    log.debug("watch extension {}/{}: {}",
+                            namespace, name, ext.toString());
+                }
             }
             if (status == DeploymentStatus.READY) {
                 sink.emit(info(provisioningId, "Ready", "deployment is healthy"));
@@ -216,6 +242,14 @@ public final class RolloutWatcher {
     /** Pluggable sink so callers can persist + publish per event. */
     public interface EventSink {
         void emit(RolloutEvent event);
+    }
+
+    /** Per-tick side-channel hook. Invoked once per poll after the
+     *  CR-status read so probes can emit their own
+     *  {@link RolloutEvent}s on the same cadence as the main watcher. */
+    @FunctionalInterface
+    public interface PollExtension {
+        void poll(EventSink sink) throws Exception;
     }
 
     /** Final outcome returned by {@link #watch}. */
