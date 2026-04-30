@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.8.4-alpha3 — Query-tab UX, connect feedback, paste fix
+
+User-facing polish on the everyday surfaces — query authoring, cluster connect, and basic text input. No backend or schema changes.
+
+### Highlights
+
+- **Collapsible find-form rows.** Filter / Projection / Sort each gain a chevron header that toggles row visibility independently; row `vgrow` flips so freed space is reclaimed by the remaining rows. Lets large result sets reclaim the whole tab when the user only needs Filter visible.
+- **Mongo-aware syntax highlighting.** The three find-form text areas are now `JsonCodeArea`s (RichTextFX) wrapped in scroll panes. Highlighter recognises Mongo shell constructors (`ObjectId`, `ISODate`, `NumberLong`, `NumberDecimal`, `NumberInt`, `BinData`, `UUID`, `Timestamp`, `Date`, `MinKey`, `MaxKey`, `DBRef`, `RegExp`), `$`-prefixed query operators (`$gt`, `$in`, `$elemMatch`, …), single-quoted strings, and unquoted keys like `_id`. Stylesheet inherited via `QueryView`'s `getStylesheets()` so the read-only result viewer picks up the same colours.
+- **pgAdmin-style Error tab.** When the find-form fails to parse or the server returns an error, a dedicated red **Error** tab is added to `ResultsPane` and auto-selected. Backed by a read-only `TextArea` so the message is selectable + Cmd/Ctrl+C copyable; the offending input is included for context. Tab is removed from the pane on the next successful run.
+- **Pre-validate before submit.** `Filter` / `Projection` / `Sort` are parsed via `BsonDocument.parse` before the find request goes out; on parse failure the error surfaces immediately with no server roundtrip. Bare 24-hex in `Filter` is accepted as a Compass-style shortcut for `{ _id: ObjectId("…") }`.
+- **Filter font-size controls.** `A−` / `A+` buttons next to the Filter chevron live-resize the editor font for all three code areas (clamped 9–24 px) so the same setting reads consistently across the form.
+- **Run-button busy state.** While a Find / Aggregate is in flight, the Run button switches to amber `#d97706` with an indeterminate `ProgressIndicator` replacing the play icon and a `Running…` label, and is disabled to prevent double-fires. Restored to green play on completion (including on error).
+- **Enter-to-connect.** Pressing Enter on a selected row in `ConnectionTree` mirrors double-click — connects a disconnected cluster, toggles expand on a connected one, opens a collection tab when the selection is a collection. Shared `activateSelected()` helper keeps both paths in sync.
+- **Connect feedback.** Window-modal `Connecting to X…` dialog with a spinner shown while the connect is in flight, dismissed by a one-shot `events.onState` subscription filtered to that connection id. On `CONNECTED`, a green bottom-right toast announces the server version (auto-dismisses after 2.5 s); on `ERROR`, the standard error dialog is raised with `lastError()`. New `UiHelpers.progressDialog` + `UiHelpers.toast` utilities.
+- **Duplicate-paste fix.** The Edit menu's `Cmd/Ctrl+X/C/V/A` accelerators were double-firing alongside JavaFX's native `TextInputControl` bindings, causing pasted text to land twice. Accelerators removed; the menu items still work from the menu bar, and the native bindings cover the shortcuts.
+
+### Scope
+
+UI / UX only. No model, schema, event-bus, or driver changes. Find / Aggregate semantics unchanged. Tag rolled into the v2.8.4 hardening line — GA still waits on the v2.8.4 series completing.
+
 ## v2.8.0-alpha — Local K8s Labs (Q2.8-N)
 
 Additive workstream on top of the v2.8.1 production pipeline: a **local-sandbox profile** of the exact same provisioning path, backed by `minikube` or `k3d` instead of a remote cluster. Decision 11 anchor — no parallel implementation; templates produce `ProvisionModel`s that the unchanged `PROV-*` / `OP-*` / `PRE-*` / `ROLL-*` / `TEAR-*` pipeline renders + applies.
