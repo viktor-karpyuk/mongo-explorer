@@ -192,7 +192,9 @@ public class MainView extends BorderPane {
                 this::openMonitoringTab,
                 c -> {
                     if (manager.state(c.id()).status() != com.kubrik.mex.model.ConnectionState.Status.CONNECTED) {
-                        manager.connect(c.id());
+                        // Same modal + Cancel feedback as the
+                        // connection-tree double-click path.
+                        connTree.connectWithFeedback(c.id(), c.name());
                     }
                     connTree.reloadAll();
                 },
@@ -228,8 +230,54 @@ public class MainView extends BorderPane {
             statusConn.setText(s.connectionId() + ": " + s.status().name()
                     + (s.lastError() != null ? " — " + s.lastError() : ""));
             statusServer.setText(s.serverVersion() != null ? "MongoDB " + s.serverVersion() : "");
-            if (s.status() == com.kubrik.mex.model.ConnectionState.Status.ERROR) openLogsTab();
+            // Single source of truth for "the user just tried to connect
+            // and it failed": surface a modal with the driver error
+            // regardless of which entry-point (tree, WelcomeView, manage
+            // dialog, wizard) triggered the connect. Dedup by tracking
+            // the previous status per connection and only firing on the
+            // transition into ERROR.
+            com.kubrik.mex.model.ConnectionState.Status prev =
+                    lastSeenStatus.put(s.connectionId(), s.status());
+            if (s.status() == com.kubrik.mex.model.ConnectionState.Status.ERROR
+                    && prev != com.kubrik.mex.model.ConnectionState.Status.ERROR) {
+                showConnectionErrorDialog(s);
+            }
         }));
+    }
+
+    /** Per-connection last-seen status — used to dedup the global
+     *  "connect failed" modal so it only fires on the transition into
+     *  ERROR, not on every subsequent ERROR republish. */
+    private final java.util.concurrent.ConcurrentMap<String,
+            com.kubrik.mex.model.ConnectionState.Status> lastSeenStatus =
+                    new java.util.concurrent.ConcurrentHashMap<>();
+
+    private void showConnectionErrorDialog(com.kubrik.mex.model.ConnectionState s) {
+        // Don't stack a modal on top of another one. When the user is in
+        // the connection-edit dialog (or any other modal) a nested
+        // Alert.showAndWait can render behind it and freeze the FX thread
+        // — looks to the user like the edit dialog "hangs" forever.
+        for (javafx.stage.Window w : javafx.stage.Window.getWindows()) {
+            if (!(w instanceof javafx.stage.Stage st)) continue;
+            if (st == (getScene() == null ? null : getScene().getWindow())) continue;
+            if (st.isShowing() && st.getModality() != javafx.stage.Modality.NONE) {
+                // Surface the error in the status bar instead.
+                statusConn.setText(s.connectionId() + ": ERROR — "
+                        + (s.lastError() == null ? "unknown" : s.lastError()));
+                return;
+            }
+        }
+        String name;
+        try {
+            MongoConnection c = connectionStore.get(s.connectionId());
+            name = c != null ? c.name() : s.connectionId();
+        } catch (Exception ignored) {
+            name = s.connectionId();
+        }
+        javafx.stage.Window owner = getScene() == null ? null : getScene().getWindow();
+        UiHelpers.error(owner,
+                "Failed to connect to " + name
+                        + (s.lastError() == null ? "" : "\n\n" + s.lastError()));
     }
 
     private MenuBar buildMenuBar() {
@@ -1357,9 +1405,23 @@ public class MainView extends BorderPane {
         ConnectionEditDialog d = new ConnectionEditDialog(manager, manager.crypto(), Optional.ofNullable(existing));
         d.initOwner(getScene().getWindow());
         d.showAndWait().ifPresent(c -> {
-            connectionStore.upsert(c);
-            connTree.reloadAll();
-            if (welcomeView != null) welcomeView.refresh();
+            // Persist on a virtual thread so a slow SQLite write or
+            // post-save UI refresh can never freeze the dialog
+            // dismissal. The Save click returns immediately; the tree
+            // and Welcome cards repaint as soon as the upsert lands.
+            Thread.startVirtualThread(() -> {
+                try {
+                    connectionStore.upsert(c);
+                } catch (Exception ex) {
+                    Platform.runLater(() -> UiHelpers.error(getScene() == null ? null : getScene().getWindow(),
+                            "Failed to save connection\n\n" + ex.getMessage()));
+                    return;
+                }
+                Platform.runLater(() -> {
+                    connTree.reloadAll();
+                    if (welcomeView != null) welcomeView.refresh();
+                });
+            });
         });
     }
 }

@@ -9,6 +9,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ConnectionManager {
 
@@ -19,6 +21,9 @@ public class ConnectionManager {
     private final Crypto crypto;
     private final Map<String, MongoService> active = new ConcurrentHashMap<>();
     private final Map<String, ConnectionState> states = new ConcurrentHashMap<>();
+    /** Per-id "settled" flag for the most-recent in-flight connect.
+     *  cancelConnect flips this to abort the attempt. */
+    private final Map<String, AtomicBoolean> attempts = new ConcurrentHashMap<>();
 
     public ConnectionManager(ConnectionStore store, EventBus events, Crypto crypto) {
         this.store = store;
@@ -34,20 +39,73 @@ public class ConnectionManager {
 
     public MongoService service(String id) { return active.get(id); }
 
+    /** Hard upper bound on the connect attempt — slightly above the
+     *  driver's 30 s server-selection timeout. If the driver itself
+     *  ever hangs past this (which has happened with broken DNS / TCP
+     *  black-holes), the watchdog publishes ERROR so the UI never sits
+     *  on a CONNECTING spinner forever. */
+    private static final long CONNECT_WATCHDOG_MS = 35_000;
+
     public void connect(String id) {
-        MongoConnection c = store.get(id);
-        if (c == null) return;
-        if (c.sshEnabled()) {
-            publish(new ConnectionState(id, ConnectionState.Status.ERROR, null,
-                    "SSH tunnel is not yet supported"));
-            return;
-        }
-        publish(new ConnectionState(id, ConnectionState.Status.CONNECTING, null, null));
-        events.publishLog(id, "connecting to " + c.name() + "…");
-        String uri = ConnectionUriBuilder.build(c, crypto);
+        // Run the entire connect path off the calling thread so the FX
+        // thread can never block on store I/O, keychain decrypt, or
+        // synchronous EventBus listeners. Always publish a terminal state
+        // on every exit so UI feedback can detach its one-shot
+        // subscription.
+        AtomicBoolean settled = new AtomicBoolean(false);
+        // Replace any previous attempt's settle flag — if the user is
+        // restarting the connect (e.g., after Cancel), the older attempt
+        // can no longer be cancelled but its terminal state is already
+        // discarded by its own settled flag.
+        attempts.put(id, settled);
         Thread.startVirtualThread(() -> {
+            MongoConnection c;
+            try {
+                c = store.get(id);
+            } catch (Exception e) {
+                log.warn("connect: store.get({}) failed", id, e);
+                publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.ERROR, null, describe(e)));
+                return;
+            }
+            if (c == null) {
+                publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.ERROR, null, "connection not found"));
+                return;
+            }
+            if (c.sshEnabled()) {
+                publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.ERROR, null,
+                        "SSH tunnel is not yet supported"));
+                return;
+            }
+            publish(new ConnectionState(id, ConnectionState.Status.CONNECTING, null, null));
+            events.publishLog(id, "connecting to " + c.name() + "…");
+            String uri;
+            try {
+                uri = ConnectionUriBuilder.build(c, crypto);
+            } catch (Exception e) {
+                log.warn("connect: URI build failed for {}", id, e);
+                events.publishLog(id, "ERROR " + describe(e));
+                publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.ERROR, null, describe(e)));
+                return;
+            }
+            // Watchdog: forces a terminal ERROR if the driver hangs past
+            // CONNECT_WATCHDOG_MS. Cancels itself implicitly via
+            // `settled` once we publish a real CONNECTED/ERROR.
+            String connName = c.name();
+            Thread.startVirtualThread(() -> {
+                try { Thread.sleep(CONNECT_WATCHDOG_MS); } catch (InterruptedException ignored) { return; }
+                if (settled.get()) return;
+                String msg = "Timed out after " + (CONNECT_WATCHDOG_MS / 1000) + " s while connecting to " + connName;
+                events.publishLog(id, "ERROR " + msg);
+                publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.ERROR, null, msg));
+            });
             try {
                 MongoService svc = new MongoService(uri);
+                if (settled.get()) {
+                    // The watchdog already declared timeout — discard the
+                    // late client so it doesn't leak.
+                    try { svc.close(); } catch (Exception ignored) {}
+                    return;
+                }
                 // Atomic replace — if a concurrent second connect()
                 // (user double-click, or a retry racing the previous
                 // attempt) wins and writes first, we close the losing
@@ -57,14 +115,37 @@ public class ConnectionManager {
                 if (prior != null && prior != svc) {
                     try { prior.close(); } catch (Exception ignored) {}
                 }
-                publish(new ConnectionState(id, ConnectionState.Status.CONNECTED, svc.serverVersion(), null));
+                publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.CONNECTED, svc.serverVersion(), null));
                 events.publishLog(id, "connected to " + c.name() + " (mongo " + svc.serverVersion() + ")");
             } catch (Exception e) {
                 log.warn("connect failed: {}", e.toString());
                 events.publishLog(id, "ERROR " + describe(e));
-                publish(new ConnectionState(id, ConnectionState.Status.ERROR, null, describe(e)));
+                publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.ERROR, null, describe(e)));
             }
         });
+    }
+
+    private void publishTerminal(AtomicBoolean settled, ConnectionState s) {
+        if (settled.compareAndSet(false, true)) {
+            // Drop the per-id slot only if it still points at this
+            // attempt (a newer connect may have replaced it).
+            attempts.remove(s.connectionId(), settled);
+            publish(s);
+        }
+    }
+
+    /** User-initiated cancel of an in-flight connect. Marks the
+     *  current attempt as settled so its eventual CONNECTED/ERROR
+     *  publish is suppressed and any late-arriving client is closed
+     *  by the connect virtual thread. Publishes DISCONNECTED so UI
+     *  state machines clear out of CONNECTING. No-op if no connect
+     *  is in flight for this id. */
+    public void cancelConnect(String id) {
+        AtomicBoolean settled = attempts.remove(id);
+        if (settled != null && settled.compareAndSet(false, true)) {
+            events.publishLog(id, "connect cancelled");
+            publish(ConnectionState.disconnected(id));
+        }
     }
 
     public void disconnect(String id) {

@@ -683,37 +683,62 @@ public class ConnectionTree extends VBox {
     }
 
     /**
-     * Kick off a connect and show user feedback around it: a window-modal
-     * "Connecting…" spinner while the connect is in flight, dismissed when
-     * the next terminal state for this id arrives, and a green toast on
-     * success (or a regular error dialog on failure).
+     * Kick off a connect with non-blocking feedback: the tree row's status
+     * dot already turns amber for CONNECTING and green for CONNECTED, so we
+     * don't gate the rest of the app behind a modal. We just show a
+     * one-shot toast on success or an error dialog on failure. The
+     * subscription is registered before the connect starts and detaches
+     * itself the first time a terminal state for this id arrives; a safety
+     * timeout detaches it if the connect never publishes one (e.g., a
+     * synchronous throw inside ConnectionUriBuilder).
      */
+    /** Public entry-point so WelcomeView (and any other connect surface)
+     *  can reuse the same modal + Cancel feedback path. */
+    public void connectWithFeedback(String connId, String label) {
+        beginConnectWithFeedback(connId, label);
+    }
+
     private void beginConnectWithFeedback(String connId, String label) {
         javafx.stage.Window owner = getScene() == null ? null : getScene().getWindow();
-        javafx.stage.Stage dlg = UiHelpers.progressDialog(owner, "Connecting to " + label + "…");
-        dlg.show();
-        // One-shot subscription: filter on this connection id and dismiss
-        // the modal on the first terminal status (CONNECTED or ERROR).
+        UiHelpers.ConnectingHandle dlg = UiHelpers.connectingDialog(owner, label,
+                () -> manager.cancelConnect(connId));
         EventBus.Subscription[] holder = new EventBus.Subscription[1];
+        AtomicBoolean done = new AtomicBoolean(false);
+        Runnable detach = () -> {
+            if (done.compareAndSet(false, true)) {
+                try { if (holder[0] != null) holder[0].close(); } catch (Exception ignored) {}
+            }
+        };
         holder[0] = events.onState(s -> {
             if (!connId.equals(s.connectionId())) return;
             if (s.status() == ConnectionState.Status.CONNECTING) return;
+            if (done.get()) return;
             Platform.runLater(() -> {
-                if (dlg.isShowing()) dlg.close();
+                if (done.get()) return;
+                detach.run();
+                dlg.close();
                 if (s.status() == ConnectionState.Status.CONNECTED) {
                     UiHelpers.toast(owner,
                             "Connected to " + label
                                     + (s.serverVersion() == null ? "" : "  ·  mongo " + s.serverVersion()),
                             2500);
-                } else if (s.status() == ConnectionState.Status.ERROR) {
-                    UiHelpers.error(owner,
-                            "Failed to connect to " + label
-                                    + (s.lastError() == null ? "" : "\n\n" + s.lastError()));
                 }
-                try { holder[0].close(); } catch (Exception ignored) {}
+                // ERROR / DISCONNECTED: MainView's global listener
+                // surfaces the modal (DISCONNECTED is the cancel path —
+                // no error needed).
             });
         });
+        dlg.show();
         manager.connect(connId);
+        // Safety net: if no terminal state arrives within the connect
+        // timeout window, drop the listener AND the dialog so neither
+        // lingers forever. Slightly longer than the 35 s connect
+        // watchdog in ConnectionManager so a real timeout still
+        // surfaces through the listener first.
+        javafx.animation.PauseTransition guard =
+                new javafx.animation.PauseTransition(javafx.util.Duration.seconds(45));
+        guard.setOnFinished(e -> { detach.run(); dlg.close(); });
+        guard.play();
     }
 
     /** Cell with a leading icon / status dot. */

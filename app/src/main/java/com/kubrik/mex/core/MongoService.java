@@ -30,11 +30,15 @@ public class MongoService implements AutoCloseable {
         this.cs = new ConnectionString(uri);
         MongoClientSettings settings = MongoClientSettings.builder()
                 .applyConnectionString(cs)
+                // Driver defaults: 10s TCP connect, 30s server selection.
+                // 8s server selection was too aggressive for SRV / Atlas /
+                // remote replica-set discovery — a slow DNS SRV lookup
+                // alone can burn 1–3 s before any TCP work begins.
                 .applyToSocketSettings(b -> {
-                    b.connectTimeout(8000, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    b.connectTimeout(10000, java.util.concurrent.TimeUnit.MILLISECONDS);
                     b.readTimeout(30000, java.util.concurrent.TimeUnit.MILLISECONDS);
                 })
-                .applyToClusterSettings(b -> b.serverSelectionTimeout(8000, java.util.concurrent.TimeUnit.MILLISECONDS))
+                .applyToClusterSettings(b -> b.serverSelectionTimeout(30000, java.util.concurrent.TimeUnit.MILLISECONDS))
                 .applyToConnectionPoolSettings(b -> b.maxWaitTime(10000, java.util.concurrent.TimeUnit.MILLISECONDS))
                 .build();
         this.client = MongoClients.create(settings);

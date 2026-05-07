@@ -10,6 +10,7 @@ import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.stage.Window;
 import org.kordamp.ikonli.javafx.FontIcon;
 
@@ -19,29 +20,95 @@ public final class UiHelpers {
     private UiHelpers() {}
 
     /**
-     * Small, undecorated, window-modal "Working…" dialog with a spinner
-     * and a message. Caller is responsible for {@code stage.close()} when
-     * the work finishes (typically from a state-change callback). The
-     * spinner runs in indeterminate mode.
+     * Decorated, window-modal "Connecting…" dialog with a spinner, a
+     * status label, and a Cancel button. Uses {@code Stage.show()} (NOT
+     * showAndWait) so the FX thread continues to dispatch — the spinner
+     * animates and the Cancel click fires while the underlying connect
+     * runs on a virtual thread.
+     *
+     * <p>The caller closes the returned {@link ConnectingHandle} when
+     * the connect terminates (success or failure); the Cancel button
+     * invokes the {@code onCancel} runnable then closes the stage.
      */
-    public static javafx.stage.Stage progressDialog(Window owner, String message) {
+    public static ConnectingHandle connectingDialog(Window owner, String label, Runnable onCancel) {
         javafx.scene.control.ProgressIndicator pi = new javafx.scene.control.ProgressIndicator();
         pi.setPrefSize(28, 28);
-        Label msg = new Label(message);
-        msg.setStyle("-fx-font-size: 13px; -fx-text-fill: #1f2937;");
-        HBox row = new HBox(12, pi, msg);
+        Label header = new Label("Connecting to " + label + "…");
+        header.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #1f2937;");
+        Label status = new Label("Resolving server and negotiating…");
+        status.setStyle("-fx-font-size: 12px; -fx-text-fill: #6b7280;");
+        status.setWrapText(true);
+        status.setMaxWidth(360);
+        javafx.scene.layout.VBox texts = new javafx.scene.layout.VBox(4, header, status);
+
+        HBox row = new HBox(14, pi, texts);
         row.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
-        row.setPadding(new javafx.geometry.Insets(16, 22, 16, 18));
-        row.setStyle("-fx-background-color: white; -fx-background-radius: 8; "
-                + "-fx-border-color: #e5e7eb; -fx-border-radius: 8;");
-        javafx.scene.Scene sc = new javafx.scene.Scene(row);
-        sc.setFill(javafx.scene.paint.Color.TRANSPARENT);
-        javafx.stage.Stage st = new javafx.stage.Stage(javafx.stage.StageStyle.TRANSPARENT);
+
+        javafx.scene.control.Button cancel = new javafx.scene.control.Button("Cancel");
+        cancel.setStyle("-fx-background-color: white; -fx-text-fill: #1f2937; -fx-border-color: #d1d5db; "
+                + "-fx-border-radius: 4; -fx-background-radius: 4; -fx-padding: 6 14 6 14;");
+        Region sp = new Region();
+        HBox.setHgrow(sp, Priority.ALWAYS);
+        HBox footer = new HBox(8, sp, cancel);
+
+        javafx.scene.layout.VBox content = new javafx.scene.layout.VBox(16, row, footer);
+        content.setPadding(new javafx.geometry.Insets(20, 22, 16, 22));
+        content.setStyle("-fx-background-color: white;");
+        content.setMinWidth(420);
+
+        javafx.scene.Scene sc = new javafx.scene.Scene(content);
+        javafx.stage.Stage st = new javafx.stage.Stage(javafx.stage.StageStyle.UTILITY);
+        st.setTitle("Connecting");
         st.initModality(javafx.stage.Modality.WINDOW_MODAL);
         if (owner != null) st.initOwner(owner);
         st.setScene(sc);
         st.setResizable(false);
-        return st;
+
+        ConnectingHandle handle = new ConnectingHandle(st, status);
+        cancel.setOnAction(e -> {
+            if (handle.closed.compareAndSet(false, true)) {
+                if (onCancel != null) {
+                    try { onCancel.run(); } catch (Exception ignored) {}
+                }
+                st.close();
+            }
+        });
+        // Closing the window via OS chrome (× / ESC) behaves like Cancel.
+        st.setOnCloseRequest(e -> {
+            if (handle.closed.compareAndSet(false, true)) {
+                if (onCancel != null) {
+                    try { onCancel.run(); } catch (Exception ignored) {}
+                }
+            }
+        });
+        return handle;
+    }
+
+    /** Returned by {@link #connectingDialog}; lets the caller close the
+     *  dialog cleanly when the connect terminates. {@link #close()} is
+     *  idempotent and safe to call from any thread (re-posts to FX). */
+    public static final class ConnectingHandle {
+        private final javafx.stage.Stage stage;
+        private final Label statusLabel;
+        private final java.util.concurrent.atomic.AtomicBoolean closed =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        private ConnectingHandle(javafx.stage.Stage stage, Label statusLabel) {
+            this.stage = stage;
+            this.statusLabel = statusLabel;
+        }
+        public void show() {
+            if (javafx.application.Platform.isFxApplicationThread()) stage.show();
+            else javafx.application.Platform.runLater(stage::show);
+        }
+        public void setStatus(String text) {
+            javafx.application.Platform.runLater(() -> statusLabel.setText(text));
+        }
+        public void close() {
+            if (!closed.compareAndSet(false, true)) return;
+            javafx.application.Platform.runLater(() -> {
+                if (stage.isShowing()) stage.close();
+            });
+        }
     }
 
     /**
