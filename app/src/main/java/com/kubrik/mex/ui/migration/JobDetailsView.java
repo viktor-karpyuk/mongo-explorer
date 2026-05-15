@@ -46,6 +46,9 @@ public final class JobDetailsView extends VBox {
     private final ProgressPane progress = new ProgressPane();
     private final Label headerLine = new Label();
     private final Label timingsLine = new Label();
+    /** Active live-progress subscription for active jobs; null for
+     *  terminal rows. Closed on scene-detach. */
+    private EventBus.Subscription jobSub;
 
     public JobDetailsView(MigrationService service, EventBus bus, MigrationJobRecord record) {
         this.service = service;
@@ -77,7 +80,17 @@ public final class JobDetailsView extends VBox {
         // Progress pane — live mode subscribes; terminal rows render the persisted snapshot.
         progress.setJobId(record.id());
         if (record.status().isActive()) {
-            bus.onJob(progress::onEvent);
+            jobSub = bus.onJob(progress::onEvent);
+            // Auto-detach when the view leaves the scene graph (host
+            // closes the tab / dialog). Without this, every re-open of
+            // a job's details left a permanent listener pinning the
+            // ProgressPane and the entire view subtree.
+            sceneProperty().addListener((o, oldScene, newScene) -> {
+                if (newScene == null && jobSub != null) {
+                    try { jobSub.close(); } catch (Exception ignored) {}
+                    jobSub = null;
+                }
+            });
         } else {
             // Terminal-row "replay": synthesise a minimal Progress event from the final record
             // so the counters and per-collection table show up without a live subscription.

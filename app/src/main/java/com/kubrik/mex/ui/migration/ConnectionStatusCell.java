@@ -28,10 +28,23 @@ public final class ConnectionStatusCell extends ListCell<MongoConnection> {
         row.setStyle("-fx-alignment: center-left;");
         setTooltip(tip);
 
-        bus.onState(s -> {
-            MongoConnection cur = getItem();
+        // ListCells are recycled freely as the user scrolls; subscribing
+        // unconditionally would retain every cell instance forever via
+        // the bus listener map. WeakReference + self-detach lets the
+        // GC reclaim cells normally and the next state event after a
+        // collection cleans up the dead listener.
+        java.lang.ref.WeakReference<ConnectionStatusCell> ref =
+                new java.lang.ref.WeakReference<>(this);
+        EventBus.Subscription[] holder = new EventBus.Subscription[1];
+        holder[0] = bus.onState(s -> {
+            ConnectionStatusCell self = ref.get();
+            if (self == null) {
+                if (holder[0] != null) try { holder[0].close(); } catch (Exception ignored) {}
+                return;
+            }
+            MongoConnection cur = self.getItem();
             if (cur == null || !cur.id().equals(s.connectionId())) return;
-            Platform.runLater(this::refreshStatus);
+            Platform.runLater(self::refreshStatus);
         });
     }
 

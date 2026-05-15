@@ -35,7 +35,19 @@ public final class Transformer {
 
     public void run() throws InterruptedException {
         while (true) {
-            Batch batch = in.take();
+            // poll() with a short timeout so the transformer wakes up
+            // to observe ctx.stopping() — a reader-side failure that
+            // aborts before pushing POISON used to leave us blocked
+            // here forever, which in turn blocked the SinkWriter and
+            // hung the whole job.
+            Batch batch = in.poll(250, TimeUnit.MILLISECONDS);
+            if (batch == null) {
+                if (ctx.stopping()) {
+                    out.offer(Batch.POISON, 250, TimeUnit.MILLISECONDS);
+                    return;
+                }
+                continue;
+            }
             if (batch.isPoison()) {
                 out.put(Batch.POISON);
                 return;

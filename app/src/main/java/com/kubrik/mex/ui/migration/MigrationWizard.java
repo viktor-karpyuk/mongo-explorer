@@ -93,6 +93,10 @@ public final class MigrationWizard extends Stage {
         // UX-13 — when the user closes the wizard while a job is still running, show a toast
         // so it's obvious the migration continues in the background.
         setOnHiding(ev -> showBackgroundRunToast());
+        // Detach the live job-event listener that WizardStepRun
+        // installed; otherwise every wizard launch leaves a permanent
+        // dispatcher pinning the discarded ProgressPane.
+        setOnHidden(ev -> { try { runStep.close(); } catch (Exception ignored) {} });
 
         backBtn.setOnAction(e -> go(currentStep.get() - 1));
         nextBtn.setOnAction(e -> onNext());

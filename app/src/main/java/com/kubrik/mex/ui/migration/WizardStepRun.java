@@ -10,14 +10,19 @@ import javafx.scene.layout.Region;
 
 /** Step 6: renders live progress for the running job. Pause/Cancel buttons wire into
  *  {@link MigrationService}. */
-public final class WizardStepRun implements WizardStep {
+public final class WizardStepRun implements WizardStep, AutoCloseable {
 
     private final MigrationService service;
     private final ProgressPane pane = new ProgressPane();
+    /** Held so the host (MigrationWizard) can detach the listener
+     *  when the wizard dialog closes — without this, every wizard
+     *  open leaked one job-event listener that kept dispatching to
+     *  the discarded ProgressPane forever. */
+    private final EventBus.Subscription jobSub;
 
     public WizardStepRun(MigrationService service, EventBus bus) {
         this.service = service;
-        bus.onJob(pane::onEvent);
+        this.jobSub = bus.onJob(pane::onEvent);
 
         pane.pauseButton().setOnAction(e -> {
             JobId id = currentJob();
@@ -36,6 +41,12 @@ public final class WizardStepRun implements WizardStep {
             JobId id = currentJob();
             if (id != null) service.cancel(id);
         });
+    }
+
+    /** Detaches the live job-event listener. Called by the wizard
+     *  host on dialog dismiss. */
+    @Override public void close() {
+        try { if (jobSub != null) jobSub.close(); } catch (Exception ignored) {}
     }
 
     private JobId currentJob() {

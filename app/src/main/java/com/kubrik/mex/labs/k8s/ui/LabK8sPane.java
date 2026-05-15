@@ -282,8 +282,24 @@ public final class LabK8sPane extends BorderPane {
         statusLabel.setText("Bringing up " + distro + ":" + identifier.get() + "…");
         busySpinner.setVisible(true);
         Thread.startVirtualThread(() -> {
-            LabK8sLifecycleService.LabK8sApplyResult r = lifecycle.apply(
-                    distro, identifier.get(), template, namespace, deploymentName);
+            LabK8sLifecycleService.LabK8sApplyResult r;
+            try {
+                r = lifecycle.apply(distro, identifier.get(), template, namespace, deploymentName);
+            } catch (Throwable t) {
+                // Catch Throwable: if lifecycle.apply throws (CLI binary
+                // missing, NPE, sandbox SQLException) the spinner used to
+                // stay on forever and the user thought Apply was still
+                // running. Surface the failure as if it were a synthesised
+                // distro-failed result variant.
+                String msg = t.getClass().getSimpleName()
+                        + (t.getMessage() == null ? "" : ": " + t.getMessage());
+                Platform.runLater(() -> {
+                    busySpinner.setVisible(false);
+                    statusLabel.setText("Apply failed: " + msg);
+                    reload();
+                });
+                return;
+            }
             Platform.runLater(() -> {
                 busySpinner.setVisible(false);
                 switch (r) {

@@ -39,7 +39,15 @@ public final class SinkWriter {
         sink.open(targetNs);
         try {
             while (true) {
-                Batch batch = in.take();
+                // Poll with a short timeout so the writer wakes up to
+                // observe ctx.stopping() — without this, a reader-side
+                // failure that aborts before pushing POISON leaves us
+                // blocked in take() forever, hanging the whole job.
+                Batch batch = in.poll(250, java.util.concurrent.TimeUnit.MILLISECONDS);
+                if (batch == null) {
+                    if (ctx.stopping()) return;
+                    continue;
+                }
                 if (batch.isPoison()) return;
                 if (ctx.stopping()) return;
 

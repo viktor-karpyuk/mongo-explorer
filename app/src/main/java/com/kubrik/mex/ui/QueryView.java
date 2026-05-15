@@ -498,8 +498,20 @@ public class QueryView extends VBox {
         statusLabel.setText("Running…");
         setRunBusy(true);
         Thread.startVirtualThread(() -> {
-            QueryResult res = r.find(req);
-            Platform.runLater(() -> applyResult(res));
+            QueryResult res;
+            try {
+                res = r.find(req);
+            } catch (Throwable t) {
+                // Catch Throwable (not just Exception): an OOM during a
+                // very large result toJson, or a driver-internal
+                // IllegalStateException, used to leave Run stuck in
+                // RUN_BUSY_STYLE forever with no recovery short of
+                // closing the tab.
+                res = new QueryResult(java.util.List.of(), 0, false,
+                        t.getClass().getSimpleName() + ": " + t.getMessage());
+            }
+            QueryResult finalRes = res;
+            Platform.runLater(() -> applyResult(finalRes));
         });
     }
 
@@ -512,8 +524,15 @@ public class QueryView extends VBox {
         String d = dbBox.getValue(), c = collBox.getValue();
         long mt = parseLong(maxTime.getText(), 30000);
         Thread.startVirtualThread(() -> {
-            QueryResult res = r.aggregate(d, c, pipelineJson, mt);
-            Platform.runLater(() -> applyResult(res));
+            QueryResult res;
+            try {
+                res = r.aggregate(d, c, pipelineJson, mt);
+            } catch (Throwable t) {
+                res = new QueryResult(java.util.List.of(), 0, false,
+                        t.getClass().getSimpleName() + ": " + t.getMessage());
+            }
+            QueryResult finalRes = res;
+            Platform.runLater(() -> applyResult(finalRes));
         });
     }
 
