@@ -393,8 +393,17 @@ public class ConnectionEditDialog extends Dialog<MongoConnection> {
         return crypto.encrypt(fieldValue);
     }
 
+    /** Debounce window for the URI preview rebuild. Building the URI
+     *  requires running every form value through {@link
+     *  ConnectionUriBuilder#build}; with 9 fields wired to the same
+     *  listener, a single keystroke previously fired up to 9
+     *  rebuilds. Coalesce to one rebuild ~120 ms after the last edit. */
+    private final javafx.animation.PauseTransition previewDebounce =
+            new javafx.animation.PauseTransition(javafx.util.Duration.millis(120));
+
     private void setupLivePreview() {
-        javafx.beans.InvalidationListener il = obs -> refreshPreview();
+        previewDebounce.setOnFinished(e -> refreshPreview());
+        javafx.beans.InvalidationListener il = obs -> previewDebounce.playFromStart();
         hostField.textProperty().addListener(il);
         portField.textProperty().addListener(il);
         connectionType.valueProperty().addListener(il);
@@ -412,11 +421,37 @@ public class ConnectionEditDialog extends Dialog<MongoConnection> {
             if (modeUri.isSelected()) {
                 uriPreview.setText(uriArea.getText());
             } else {
-                uriPreview.setText(ConnectionUriBuilder.build(collect(), crypto));
+                // Use a preview snapshot so we don't run Crypto.encrypt
+                // (with new SecureRandom + Cipher init) on every preview
+                // rebuild — the URI builder substitutes "***" for the
+                // password whenever it's null/blank, which is the shape
+                // we want in the preview anyway.
+                uriPreview.setText(ConnectionUriBuilder.build(collectForPreview(), crypto));
             }
         } catch (Exception e) {
             uriPreview.setText("(invalid)");
         }
+    }
+
+    /** Snapshot variant of {@link #collect()} that skips
+     *  password encryption — used by the live URI preview, which
+     *  redacts the password anyway. The on-OK path still calls
+     *  {@link #collect()} so the persisted record carries a real
+     *  ciphertext. */
+    private MongoConnection collectForPreview() {
+        MongoConnection real;
+        // Temporarily blank the password field so encOrKeep returns
+        // null without re-encrypting; restore the field text in a
+        // finally so the user's input is untouched.
+        String pwd = passwordField.getText();
+        boolean placeholder = PLACEHOLDER_PWD.equals(pwd);
+        try {
+            if (!placeholder) passwordField.setText("");
+            real = collect();
+        } finally {
+            if (!placeholder) passwordField.setText(pwd);
+        }
+        return real;
     }
 
     private void doTest(ConnectionManager manager) {

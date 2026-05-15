@@ -1,5 +1,8 @@
 package com.kubrik.mex.ui;
 
+import javafx.animation.PauseTransition;
+import javafx.application.Platform;
+import javafx.util.Duration;
 import org.fxmisc.richtext.CodeArea;
 import org.fxmisc.richtext.LineNumberFactory;
 import org.fxmisc.richtext.model.StyleSpans;
@@ -7,6 +10,7 @@ import org.fxmisc.richtext.model.StyleSpansBuilder;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -24,18 +28,49 @@ public class JsonCodeArea extends CodeArea {
                     + "|(?<NULL>\\bnull\\b)"
                     + "|(?<PUNCT>[\\{\\}\\[\\],:])");
 
+    /** Debounce: per-char highlighting was the dominant typing-lag
+     *  source app-wide (regex over the full buffer on every key).
+     *  150 ms after the last edit we kick a virtual thread to compute
+     *  spans and apply them on the FX thread. */
+    private static final Duration HIGHLIGHT_DELAY = Duration.millis(150);
+    private final PauseTransition debounce = new PauseTransition(HIGHLIGHT_DELAY);
+    /** Generation counter so a stale highlight result (computed against
+     *  text that has since been edited again) is discarded. */
+    private final AtomicLong gen = new AtomicLong();
+
     public JsonCodeArea(String initial) {
         getStyleClass().add("json-code-area");
         setParagraphGraphicFactory(LineNumberFactory.get(this));
-        textProperty().addListener((obs, ov, nv) -> setStyleSpans(0, computeHighlighting(nv)));
+        debounce.setOnFinished(e -> kickHighlight());
+        textProperty().addListener((obs, ov, nv) -> debounce.playFromStart());
         if (initial != null) {
             replaceText(0, 0, initial);
+            // Initial render is cheap and important for first paint; apply synchronously.
             setStyleSpans(0, computeHighlighting(initial));
         }
     }
 
-    /** Re-apply highlighting (call after replaceText if the listener didn't run yet). */
+    private void kickHighlight() {
+        final long mine = gen.incrementAndGet();
+        final String text = getText();
+        Thread.startVirtualThread(() -> {
+            StyleSpans<Collection<String>> spans = computeHighlighting(text);
+            Platform.runLater(() -> {
+                // Drop if a newer edit has already scheduled another pass.
+                if (gen.get() != mine) return;
+                try { setStyleSpans(0, spans); } catch (Exception ignored) {
+                    // Defensive: in flight when text was wholesale-replaced
+                    // to a shorter buffer; the next debounce will resync.
+                }
+            });
+        });
+    }
+
+    /** Re-apply highlighting synchronously (call after replaceText when
+     *  you need an immediate refresh, e.g. before a screenshot or after
+     *  a programmatic load). */
     public void refreshHighlight() {
+        gen.incrementAndGet(); // invalidate any in-flight virtual-thread highlight
         setStyleSpans(0, computeHighlighting(getText()));
     }
 
