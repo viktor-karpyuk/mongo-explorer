@@ -35,6 +35,19 @@ public class WelcomeView extends VBox {
     private final FlowPane cards = new FlowPane(16, 16);
     private final Consumer<MongoConnection> onConnectAndOpen;
     private final Function<String, SecuritySignals.Summary> securitySignals;
+    /** Card node per connection id — lets us rebuild a single card on
+     *  state change instead of clearing + re-rendering all cards (which
+     *  triggered N×SQLite hits via {@link #securityChipFor} every time a
+     *  single connection's status flipped). */
+    private final java.util.Map<String, VBox> cardByConn = new java.util.HashMap<>();
+    /** Cache of {@link SecuritySignals.Summary} per connection with a
+     *  short TTL — every card rebuild used to call {@code
+     *  securitySignals.apply(id)} which hits SQLite on the FX thread.
+     *  3 s TTL is plenty for the welcome view; the security tab has its
+     *  own up-to-the-tick computation. */
+    private static final long SIGNAL_CACHE_TTL_MS = 3_000;
+    private record CachedSignal(SecuritySignals.Summary value, long expiresAt) {}
+    private final java.util.Map<String, CachedSignal> signalCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     public WelcomeView(ConnectionManager manager,
                        ConnectionStore store,
@@ -111,12 +124,15 @@ public class WelcomeView extends VBox {
 
         getChildren().addAll(header, actions, section, scroll);
 
-        // Each card is rebuilt on state changes so the status dot stays fresh.
-        events.onState(s -> Platform.runLater(this::refresh));
-        // v2.6 Q2.6-E3 — cert-expiry sweep result re-renders cards so the
-        // security chip picks up newly-expiring certs without opening the
-        // Security tab.
-        events.onCertExpiry(e -> Platform.runLater(this::refresh));
+        // Per-card refresh: state events touch one connection at a time,
+        // so don't rebuild every card (and re-hit SQLite per card). The
+        // signal cache invalidation below ensures fresh data when the
+        // event implies the security state has changed.
+        events.onState(s -> Platform.runLater(() -> refreshOne(s.connectionId())));
+        events.onCertExpiry(e -> Platform.runLater(() -> {
+            signalCache.remove(e.connectionId()); // newly-expired cert: bypass cache
+            refreshOne(e.connectionId());
+        }));
 
         // Capture editing handler for cards
         this.onEditConnection = onEditConnection;
@@ -127,6 +143,7 @@ public class WelcomeView extends VBox {
 
     public void refresh() {
         cards.getChildren().clear();
+        cardByConn.clear();
         java.util.List<MongoConnection> list = store.list();
         if (list.isEmpty()) {
             Label empty = new Label("No connections yet. Click \"New Connection\" to add one.");
@@ -134,7 +151,26 @@ public class WelcomeView extends VBox {
             cards.getChildren().add(empty);
             return;
         }
-        for (MongoConnection c : list) cards.getChildren().add(buildCard(c));
+        for (MongoConnection c : list) {
+            VBox card = buildCard(c);
+            cardByConn.put(c.id(), card);
+            cards.getChildren().add(card);
+        }
+    }
+
+    /** Replace the single card for {@code connId} in place. Falls back
+     *  to {@link #refresh()} when the connection is new (delete +
+     *  upsert paths come through here too). */
+    private void refreshOne(String connId) {
+        VBox old = cardByConn.get(connId);
+        if (old == null) { refresh(); return; }
+        MongoConnection c = store.get(connId);
+        if (c == null) { refresh(); return; }
+        VBox fresh = buildCard(c);
+        int idx = cards.getChildren().indexOf(old);
+        if (idx < 0) { refresh(); return; }
+        cards.getChildren().set(idx, fresh);
+        cardByConn.put(connId, fresh);
     }
 
     private VBox buildCard(MongoConnection c) {
@@ -215,9 +251,7 @@ public class WelcomeView extends VBox {
      */
     private Label securityChipFor(MongoConnection c) {
         if (securitySignals == null) return null;
-        SecuritySignals.Summary s;
-        try { s = securitySignals.apply(c.id()); }
-        catch (Exception e) { return null; }
+        SecuritySignals.Summary s = cachedSignal(c.id());
         if (s == null || s.clean()) return null;
 
         boolean critical = s.expiredCerts() > 0;
@@ -251,6 +285,21 @@ public class WelcomeView extends VBox {
         tip.setMaxWidth(320);
         chip.setTooltip(tip);
         return chip;
+    }
+
+    /** Fetch (and cache for {@link #SIGNAL_CACHE_TTL_MS}) the
+     *  security summary for {@code id}. Returns {@code null} on
+     *  exception so a transient SQLite failure doesn't break the
+     *  welcome card render. */
+    private SecuritySignals.Summary cachedSignal(String id) {
+        long now = System.currentTimeMillis();
+        CachedSignal cached = signalCache.get(id);
+        if (cached != null && cached.expiresAt() > now) return cached.value();
+        SecuritySignals.Summary fresh;
+        try { fresh = securitySignals.apply(id); }
+        catch (Exception e) { return null; }
+        signalCache.put(id, new CachedSignal(fresh, now + SIGNAL_CACHE_TTL_MS));
+        return fresh;
     }
 
     private static Button primaryButton(String iconLit, String text) {
