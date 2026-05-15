@@ -95,6 +95,13 @@ dependencies {
     // doesn't support modern host-key algorithms.
     implementation("com.github.mwiede:jsch:0.2.18")
 
+    // v2.8.5 Shell — GraalJS evaluates mongosh-shaped scripts against
+    // a host `db` object backed by the existing MongoService. polyglot
+    // is the embedding API; js-community is the engine (community
+    // edition, no GraalVM-runtime requirement — works on stock JDK).
+    implementation("org.graalvm.polyglot:polyglot:23.1.4")
+    implementation("org.graalvm.polyglot:js-community:23.1.4")
+
     // v2.8.1 Q2.8.1-A — Kubernetes integration. The official Java
     // client tracks upstream fastest and has first-party support
     // for exec-plugin / OIDC auth, shared informers, and typed
@@ -133,6 +140,13 @@ dependencies {
 
 application {
     mainClass.set("com.kubrik.mex.Launcher")
+    // v2.8.5 Shell — Truffle/GraalJS needs native access to bootstrap
+    // its InternalResourceCache on stock OpenJDK 21; opening the Shell
+    // tab without this fails the same way the test JVM does.
+    applicationDefaultJvmArgs = listOf(
+        "--enable-native-access=ALL-UNNAMED",
+        "-Dpolyglot.engine.WarnInterpreterOnly=false"
+    )
 }
 
 tasks.jar {
@@ -172,6 +186,15 @@ tasks.test {
         // run with `./gradlew :app:k8sKindTest`.
         excludeTags("perf", "shardedRig", "labDocker", "k8sKind", "k8sSoak")
     }
+    // v2.8.5 Shell — Truffle (under GraalJS) on stock OpenJDK 21 needs
+    // native access enabled so the InternalResourceCache can install
+    // its runtime resources; without this, MongoShellSmokeTest fails
+    // with "TruffleRuntime is null" once a class loader has touched the
+    // Engine. Suppresses the interpreter-only warning too.
+    jvmArgs(
+        "--enable-native-access=ALL-UNNAMED",
+        "-Dpolyglot.engine.WarnInterpreterOnly=false"
+    )
 }
 
 tasks.register<Test>("perfTest") {
@@ -261,7 +284,12 @@ runtime {
         // bundle, while the Gradle project.version continues to
         // carry the full label everywhere else.
         appVersion = project.version.toString().replaceFirst(Regex("-.*$"), "")
-        jvmArgs = listOf("--add-opens=java.base/java.lang=ALL-UNNAMED")
+        jvmArgs = listOf(
+            "--add-opens=java.base/java.lang=ALL-UNNAMED",
+            // v2.8.5 Shell — see application{} block above for context.
+            "--enable-native-access=ALL-UNNAMED",
+            "-Dpolyglot.engine.WarnInterpreterOnly=false"
+        )
         val os = org.gradle.internal.os.OperatingSystem.current()
         val iconBase = "${projectDir}/src/main/resources/icons/app"
         val iconFile = when {

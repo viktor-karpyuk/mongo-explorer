@@ -58,6 +58,8 @@ public class ConnectionTree extends VBox {
         default void openMonitoring(String connectionId) {}
         /** Opens the Cluster tab for the selected connection. v2.4.0 UI-OPS-1. */
         default void openCluster(String connectionId) {}
+        /** Opens a mongosh-shaped JS shell tab for the selected connection. v2.8.5 SHELL-1. */
+        default void openShell(String connectionId, String defaultDb) {}
     }
 
     public record Node(String type, String connectionId, String db, String coll, String label) {
@@ -402,6 +404,8 @@ public class ConnectionTree extends VBox {
     private final MenuItem miMigrate = new MenuItem("Migrate…");
     private final MenuItem miMonitor = new MenuItem("Monitor this connection");
     private final MenuItem miCluster = new MenuItem("Open cluster view…");
+    private final MenuItem miShell   = new MenuItem("Open shell…");
+    private final MenuItem miShellDb = new MenuItem("Open shell here…");
 
     private void rebuildContextMenuItems(ContextMenu m) {
         TreeItem<Node> sel = tree.getSelectionModel().getSelectedItem();
@@ -423,6 +427,7 @@ public class ConnectionTree extends VBox {
                 items.add(miMigrate);
                 items.add(miMonitor);
                 items.add(miCluster);
+                items.add(miShell);
             }
             items.add(new SeparatorMenuItem());
             items.add(miEdit);
@@ -433,6 +438,7 @@ public class ConnectionTree extends VBox {
             items.add(miNewColl);
             items.add(miUsers);
             items.add(miMigrate);
+            items.add(miShellDb);
             items.add(miDropDb);
             items.add(miRunCmd);
         } else if (isColl) {
@@ -608,6 +614,12 @@ public class ConnectionTree extends VBox {
         }));
         miCluster.setOnAction(e -> withSel(n -> {
             if (openHandler != null) openHandler.openCluster(n.connectionId);
+        }));
+        miShell.setOnAction(e -> withSel(n -> {
+            if (openHandler != null) openHandler.openShell(n.connectionId, null);
+        }));
+        miShellDb.setOnAction(e -> withSel(n -> {
+            if (openHandler != null) openHandler.openShell(n.connectionId, n.db);
         }));
         miRenameColl.setOnAction(e -> withSel(n -> {
             TextInputDialog d = new TextInputDialog(n.coll);

@@ -83,6 +83,7 @@ public class MainView extends BorderPane {
     private final ConnectionTree connTree;
     private final TabPane tabs = new TabPane();
     private final Map<String, Tab> openCollectionTabs = new HashMap<>();
+    private final Map<String, Tab> openShellTabs      = new HashMap<>();
     private Tab manageTab;
     private Tab historyTab;
     private Tab logsTab;
@@ -162,6 +163,9 @@ public class MainView extends BorderPane {
             }
             @Override public void openCluster(String connectionId) {
                 openClusterTab(connectionId);
+            }
+            @Override public void openShell(String connectionId, String defaultDb) {
+                openShellTab(connectionId, defaultDb);
             }
         });
 
@@ -1384,6 +1388,29 @@ public class MainView extends BorderPane {
         Tab t = new Tab(db + "." + coll, qv);
         t.setOnClosed(e -> openCollectionTabs.remove(key));
         openCollectionTabs.put(key, t);
+        tabs.getTabs().add(t);
+        tabs.getSelectionModel().select(t);
+    }
+
+    private void openShellTab(String connectionId, String defaultDb) {
+        if (manager.state(connectionId).status() != com.kubrik.mex.model.ConnectionState.Status.CONNECTED) {
+            UiHelpers.error(getScene().getWindow(), "Connect to the cluster first.");
+            return;
+        }
+        Tab existing = openShellTabs.get(connectionId);
+        if (existing != null) {
+            tabs.getSelectionModel().select(existing);
+            return;
+        }
+        MongoConnection c = connectionStore.get(connectionId);
+        String label = c == null ? connectionId : c.name();
+        ShellView sv = new ShellView(manager, connectionId, label, defaultDb);
+        Tab t = new Tab("Shell · " + label, sv);
+        t.setOnClosed(e -> {
+            openShellTabs.remove(connectionId);
+            sv.dispose();
+        });
+        openShellTabs.put(connectionId, t);
         tabs.getTabs().add(t);
         tabs.getSelectionModel().select(t);
     }
