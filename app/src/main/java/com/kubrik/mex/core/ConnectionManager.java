@@ -39,14 +39,30 @@ public class ConnectionManager {
 
     public MongoService service(String id) { return active.get(id); }
 
-    /** Hard upper bound on the connect attempt — slightly above the
-     *  driver's 30 s server-selection timeout. If the driver itself
-     *  ever hangs past this (which has happened with broken DNS / TCP
-     *  black-holes), the watchdog publishes ERROR so the UI never sits
-     *  on a CONNECTING spinner forever. */
-    private static final long CONNECT_WATCHDOG_MS = 35_000;
+    /** Bounded retry envelope for the connect path. 5 attempts at
+     *  4.5 s server-selection each → at most ~22 s of UI wait on the
+     *  sad path, after which the modal closes and the error is
+     *  surfaced. The old single-shot 30 s timeout hid transient SRV /
+     *  DNS / cold-pool failures behind a long spinner; explicit
+     *  retries make the same failure mode visible and bounded. */
+    static final int MAX_CONNECT_ATTEMPTS = 5;
+    static final int ATTEMPT_SERVER_SELECTION_MS = 4_500;
+    static final int ATTEMPT_TCP_CONNECT_MS = 4_000;
+    /** Small backoff between attempts so we don't hammer a flapping
+     *  SRV record / DNS in tight succession. */
+    static final long ATTEMPT_BACKOFF_MS = 400;
 
     public void connect(String id) {
+        connect(id, null);
+    }
+
+    /** Connect with per-attempt progress feedback. {@code progress} (if
+     *  non-null) is invoked once per attempt with {@code (attemptNumber,
+     *  maxAttempts, lastError)}; {@code lastError} is {@code null} on
+     *  the first attempt and the previous attempt's failure message
+     *  thereafter. Always called off the FX thread — the UI must
+     *  re-post to {@code Platform.runLater}. */
+    public void connect(String id, ConnectProgress progress) {
         // Run the entire connect path off the calling thread so the FX
         // thread can never block on store I/O, keychain decrypt, or
         // synchronous EventBus listeners. Always publish a terminal state
@@ -87,42 +103,59 @@ public class ConnectionManager {
                 publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.ERROR, null, describe(e)));
                 return;
             }
-            // Watchdog: forces a terminal ERROR if the driver hangs past
-            // CONNECT_WATCHDOG_MS. Cancels itself implicitly via
-            // `settled` once we publish a real CONNECTED/ERROR.
-            String connName = c.name();
-            Thread.startVirtualThread(() -> {
-                try { Thread.sleep(CONNECT_WATCHDOG_MS); } catch (InterruptedException ignored) { return; }
-                if (settled.get()) return;
-                String msg = "Timed out after " + (CONNECT_WATCHDOG_MS / 1000) + " s while connecting to " + connName;
-                events.publishLog(id, "ERROR " + msg);
-                publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.ERROR, null, msg));
-            });
-            try {
-                MongoService svc = new MongoService(uri);
-                if (settled.get()) {
-                    // The watchdog already declared timeout — discard the
-                    // late client so it doesn't leak.
-                    try { svc.close(); } catch (Exception ignored) {}
+
+            String lastError = null;
+            for (int attempt = 1; attempt <= MAX_CONNECT_ATTEMPTS; attempt++) {
+                if (settled.get()) return; // cancelled
+                if (progress != null) {
+                    try { progress.onAttempt(attempt, MAX_CONNECT_ATTEMPTS, lastError); }
+                    catch (Exception ignored) {}
+                }
+                events.publishLog(id, "attempt " + attempt + "/" + MAX_CONNECT_ATTEMPTS
+                        + (lastError == null ? "" : " (last error: " + lastError + ")"));
+                try {
+                    MongoService svc = new MongoService(uri,
+                            ATTEMPT_SERVER_SELECTION_MS, ATTEMPT_TCP_CONNECT_MS);
+                    if (settled.get()) {
+                        try { svc.close(); } catch (Exception ignored) {}
+                        return;
+                    }
+                    // Atomic replace — if a concurrent second connect()
+                    // wins and writes first, we close the losing client
+                    // here rather than letting it linger to JVM exit.
+                    MongoService prior = active.put(id, svc);
+                    if (prior != null && prior != svc) {
+                        try { prior.close(); } catch (Exception ignored) {}
+                    }
+                    publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.CONNECTED, svc.serverVersion(), null));
+                    events.publishLog(id, "connected to " + c.name() + " (mongo " + svc.serverVersion() + ")");
                     return;
+                } catch (Exception e) {
+                    lastError = describe(e);
+                    log.warn("connect attempt {}/{} failed: {}", attempt, MAX_CONNECT_ATTEMPTS, lastError);
+                    events.publishLog(id, "attempt " + attempt + " failed: " + lastError);
+                    if (attempt < MAX_CONNECT_ATTEMPTS) {
+                        try { Thread.sleep(ATTEMPT_BACKOFF_MS); }
+                        catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.ERROR, null, "connect interrupted"));
+                            return;
+                        }
+                    }
                 }
-                // Atomic replace — if a concurrent second connect()
-                // (user double-click, or a retry racing the previous
-                // attempt) wins and writes first, we close the losing
-                // client here rather than letting it linger to JVM
-                // exit.
-                MongoService prior = active.put(id, svc);
-                if (prior != null && prior != svc) {
-                    try { prior.close(); } catch (Exception ignored) {}
-                }
-                publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.CONNECTED, svc.serverVersion(), null));
-                events.publishLog(id, "connected to " + c.name() + " (mongo " + svc.serverVersion() + ")");
-            } catch (Exception e) {
-                log.warn("connect failed: {}", e.toString());
-                events.publishLog(id, "ERROR " + describe(e));
-                publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.ERROR, null, describe(e)));
             }
+            String summary = "Failed to connect after " + MAX_CONNECT_ATTEMPTS + " attempts"
+                    + (lastError == null ? "" : ": " + lastError);
+            events.publishLog(id, "ERROR " + summary);
+            publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.ERROR, null, summary));
         });
+    }
+
+    /** Callback invoked at the start of every connect attempt. Use to
+     *  drive a UI counter like "Attempt 3 of 5…". */
+    @FunctionalInterface
+    public interface ConnectProgress {
+        void onAttempt(int attempt, int maxAttempts, String previousError);
     }
 
     private void publishTerminal(AtomicBoolean settled, ConnectionState s) {

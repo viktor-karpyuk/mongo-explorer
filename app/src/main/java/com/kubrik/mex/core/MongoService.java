@@ -27,23 +27,39 @@ public class MongoService implements AutoCloseable {
     private volatile Document cachedHello;
 
     public MongoService(String uri) {
+        this(uri, 30_000, 10_000);
+    }
+
+    /** Per-attempt constructor used by {@link ConnectionManager}'s
+     *  bounded retry loop. {@code serverSelectionTimeoutMs} keeps each
+     *  attempt short so the UI's per-attempt progress ("Attempt N of 5…")
+     *  updates at a tight cadence; {@code connectTimeoutMs} controls TCP
+     *  socket open. */
+    public MongoService(String uri, int serverSelectionTimeoutMs, int connectTimeoutMs) {
         this.cs = new ConnectionString(uri);
+        int sst = Math.max(500, serverSelectionTimeoutMs);
+        int ct  = Math.max(500, connectTimeoutMs);
         MongoClientSettings settings = MongoClientSettings.builder()
                 .applyConnectionString(cs)
-                // Driver defaults: 10s TCP connect, 30s server selection.
-                // 8s server selection was too aggressive for SRV / Atlas /
-                // remote replica-set discovery — a slow DNS SRV lookup
-                // alone can burn 1–3 s before any TCP work begins.
                 .applyToSocketSettings(b -> {
-                    b.connectTimeout(10000, java.util.concurrent.TimeUnit.MILLISECONDS);
-                    b.readTimeout(30000, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    b.connectTimeout(ct, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    b.readTimeout(30_000, java.util.concurrent.TimeUnit.MILLISECONDS);
                 })
-                .applyToClusterSettings(b -> b.serverSelectionTimeout(30000, java.util.concurrent.TimeUnit.MILLISECONDS))
-                .applyToConnectionPoolSettings(b -> b.maxWaitTime(10000, java.util.concurrent.TimeUnit.MILLISECONDS))
+                .applyToClusterSettings(b -> b.serverSelectionTimeout(sst, java.util.concurrent.TimeUnit.MILLISECONDS))
+                .applyToConnectionPoolSettings(b -> b.maxWaitTime(ct, java.util.concurrent.TimeUnit.MILLISECONDS))
                 .build();
         this.client = MongoClients.create(settings);
-        Document buildInfo = client.getDatabase("admin").runCommand(new Document("buildInfo", 1));
-        this.serverVersion = String.valueOf(buildInfo.get("version"));
+        try {
+            Document buildInfo = client.getDatabase("admin").runCommand(new Document("buildInfo", 1));
+            this.serverVersion = String.valueOf(buildInfo.get("version"));
+        } catch (RuntimeException e) {
+            // Don't leak the driver's internal cluster threads if the
+            // very first command fails — close the freshly-created
+            // client before bubbling up so the retry loop doesn't
+            // accumulate dead clients per attempt.
+            try { client.close(); } catch (Exception ignored) {}
+            throw e;
+        }
     }
 
     /**

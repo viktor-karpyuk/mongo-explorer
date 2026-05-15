@@ -729,14 +729,21 @@ public class ConnectionTree extends VBox {
             });
         });
         dlg.show();
-        manager.connect(connId);
-        // Safety net: if no terminal state arrives within the connect
-        // timeout window, drop the listener AND the dialog so neither
-        // lingers forever. Slightly longer than the 35 s connect
-        // watchdog in ConnectionManager so a real timeout still
-        // surfaces through the listener first.
+        manager.connect(connId, (attempt, max, prevErr) -> {
+            String line = "Attempt " + attempt + " of " + max + "…";
+            if (prevErr != null && attempt > 1) {
+                String trimmed = prevErr.length() > 120 ? prevErr.substring(0, 117) + "…" : prevErr;
+                line = line + "  (previous: " + trimmed + ")";
+            }
+            dlg.setStatus(line);
+        });
+        // Safety net: if no terminal state arrives within the bounded
+        // retry envelope, drop the listener AND the dialog so neither
+        // lingers forever. 5 attempts × ~5 s = ~25 s; 30 s gives the
+        // last attempt's terminal state a chance to surface through the
+        // listener before this fires.
         javafx.animation.PauseTransition guard =
-                new javafx.animation.PauseTransition(javafx.util.Duration.seconds(45));
+                new javafx.animation.PauseTransition(javafx.util.Duration.seconds(30));
         guard.setOnFinished(e -> { detach.run(); dlg.close(); });
         guard.play();
     }
