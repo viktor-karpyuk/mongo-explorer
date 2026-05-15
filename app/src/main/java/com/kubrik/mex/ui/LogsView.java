@@ -37,6 +37,16 @@ public class LogsView extends VBox {
     private final TextArea area = new TextArea();
     private final ToggleButton auditOnly = new ToggleButton("Audit only");
     private final List<String> buffer = new ArrayList<>();
+    /** Pending lines drained to the TextArea by a single coalesced
+     *  runLater every {@link #DRAIN_PERIOD_MS}. The previous version
+     *  fired one runLater per log line — with the mongo driver chatty
+     *  at INFO and N connected clusters that floods the FX queue even
+     *  when this view isn't on screen. */
+    private final java.util.concurrent.ConcurrentLinkedQueue<String> pending =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private final java.util.concurrent.atomic.AtomicBoolean drainScheduled =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private static final long DRAIN_PERIOD_MS = 100;
 
     public LogsView(EventBus events) {
         setPadding(new Insets(12));
@@ -90,11 +100,33 @@ public class LogsView extends VBox {
                 buffer.subList(0, drop).clear();
             }
         }
-        Platform.runLater(() -> {
-            if (!auditOnly.isSelected() || line.contains("  " + AUDIT_TAG + "  ")) {
-                area.appendText(stamped + "\n");
+        pending.offer(stamped);
+        // Skip the FX hop entirely while the LogsView isn't mounted —
+        // the buffer keeps everything, so refresh() catches the user up
+        // when they open the tab.
+        if (getScene() == null) return;
+        scheduleDrain();
+    }
+
+    private void scheduleDrain() {
+        if (!drainScheduled.compareAndSet(false, true)) return;
+        // Wait DRAIN_PERIOD_MS so multiple lines arriving in a burst
+        // (mongo driver heartbeats / sampler tick / topology refresh)
+        // collapse into one appendText.
+        javafx.animation.PauseTransition pause =
+                new javafx.animation.PauseTransition(javafx.util.Duration.millis(DRAIN_PERIOD_MS));
+        pause.setOnFinished(e -> {
+            drainScheduled.set(false);
+            StringBuilder sb = null;
+            String s;
+            while ((s = pending.poll()) != null) {
+                if (auditOnly.isSelected() && !s.contains("  " + AUDIT_TAG + "  ")) continue;
+                if (sb == null) sb = new StringBuilder(256);
+                sb.append(s).append('\n');
             }
+            if (sb != null) area.appendText(sb.toString());
         });
+        Platform.runLater(pause::play);
     }
 
     private void refresh() {

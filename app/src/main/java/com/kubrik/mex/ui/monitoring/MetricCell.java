@@ -124,16 +124,32 @@ public final class MetricCell extends VBox {
         });
     }
 
+    /** Latest pending value-label text — written on the event-bus
+     *  thread, drained on the FX thread by a single coalesced
+     *  runLater. Avoids one runLater per onSamples × N visible cells
+     *  per sampler tick. */
+    private final java.util.concurrent.atomic.AtomicReference<String> pendingValue =
+            new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicBoolean repaintScheduled =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private static final String STATUS_LIVE_STYLE = "-fx-text-fill: #16a34a; -fx-font-size: 10px;";
+
     /** Push new samples (called off the event-bus thread). */
     public void onSamples(List<MetricSample> samples) {
         if (samples.isEmpty()) return;
         MetricSample last = samples.get(samples.size() - 1);
         chart.push(samples);
-        Platform.runLater(() -> {
-            valueLabel.setText(format(last.value(), metric.unit()));
-            status.setText("● live");
-            status.setStyle("-fx-text-fill: #16a34a; -fx-font-size: 10px;");
-        });
+        pendingValue.set(format(last.value(), metric.unit()));
+        if (repaintScheduled.compareAndSet(false, true)) {
+            Platform.runLater(() -> {
+                repaintScheduled.set(false);
+                String txt = pendingValue.getAndSet(null);
+                if (txt == null) return;
+                valueLabel.setText(txt);
+                if (!"● live".equals(status.getText())) status.setText("● live");
+                if (!STATUS_LIVE_STYLE.equals(status.getStyle())) status.setStyle(STATUS_LIVE_STYLE);
+            });
+        }
     }
 
     public MetricId metric() { return metric; }

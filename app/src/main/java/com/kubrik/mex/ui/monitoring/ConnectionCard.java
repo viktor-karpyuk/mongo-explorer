@@ -224,20 +224,45 @@ public final class ConnectionCard extends HBox implements AutoCloseable {
         });
     }
 
+    /** Pending pill texts written off the bus thread, drained on FX in
+     *  one coalesced runLater per sampler tick. The previous version
+     *  fired up to 4 separate runLater jobs per card per tick × N
+     *  cards on screen, swamping the FX queue. */
+    private final java.util.concurrent.atomic.AtomicReference<String> pendInsert =
+            new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<String> pendQuery =
+            new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<String> pendConn =
+            new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<String> pendCache =
+            new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicBoolean pillsScheduled =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
     private void onSamples(List<MetricSample> batch) {
         if (lastStatus != ConnectionState.Status.CONNECTED) return;
         for (MetricSample s : batch) {
             if (!connectionId.equals(s.connectionId())) continue;
             switch (s.metric()) {
                 case INST_OP_1 -> {
-                    updatePill(insertPill, String.format("%.0f /s", s.value()));
+                    pendInsert.set(String.format("%.0f /s", s.value()));
                     insertSpark.push(List.of(s));
                 }
-                case INST_OP_2 -> updatePill(queryPill,  String.format("%.0f /s", s.value()));
-                case INST_CONN_1 -> updatePill(connPill, String.format("%.0f",    s.value()));
-                case WT_3       -> updatePill(cachePill, String.format("%.2f",    s.value()));
+                case INST_OP_2   -> pendQuery.set(String.format("%.0f /s", s.value()));
+                case INST_CONN_1 -> pendConn.set(String.format("%.0f",    s.value()));
+                case WT_3        -> pendCache.set(String.format("%.2f",   s.value()));
                 default -> {}
             }
+        }
+        if (pillsScheduled.compareAndSet(false, true)) {
+            Platform.runLater(() -> {
+                pillsScheduled.set(false);
+                String t;
+                t = pendInsert.getAndSet(null); if (t != null) insertPill.setText(t);
+                t = pendQuery.getAndSet(null);  if (t != null) queryPill.setText(t);
+                t = pendConn.getAndSet(null);   if (t != null) connPill.setText(t);
+                t = pendCache.getAndSet(null);  if (t != null) cachePill.setText(t);
+            });
         }
     }
 
@@ -304,10 +329,6 @@ public final class ConnectionCard extends HBox implements AutoCloseable {
         Label l = new Label(text);
         l.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 10px;");
         return l;
-    }
-
-    private static void updatePill(Label pill, String text) {
-        Platform.runLater(() -> pill.setText(text));
     }
 
     private static String cardStyle(boolean connected) {
