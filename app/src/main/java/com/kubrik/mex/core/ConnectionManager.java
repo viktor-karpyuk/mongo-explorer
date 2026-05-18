@@ -114,8 +114,24 @@ public class ConnectionManager {
                 events.publishLog(id, "attempt " + attempt + "/" + MAX_CONNECT_ATTEMPTS
                         + (lastError == null ? "" : " (last error: " + lastError + ")"));
                 try {
-                    MongoService svc = new MongoService(uri,
+                    // Phase 1 — probe with short per-attempt timeouts so
+                    // the retry loop fails fast on transient outages.
+                    MongoService probe = new MongoService(uri,
                             ATTEMPT_SERVER_SELECTION_MS, ATTEMPT_TCP_CONNECT_MS);
+                    if (settled.get()) {
+                        try { probe.close(); } catch (Exception ignored) {}
+                        return;
+                    }
+                    String serverVersion = probe.serverVersion();
+                    // Phase 2 — discard the probe (its 4.5s server-
+                    // selection / 4s pool-wait would otherwise become
+                    // the ceiling on EVERY subsequent operation —
+                    // listDatabaseNames, find, aggregate — making the
+                    // app feel slow whenever the driver's monitor
+                    // hiccups). Reopen with normal long-lived
+                    // production timeouts.
+                    try { probe.close(); } catch (Exception ignored) {}
+                    MongoService svc = new MongoService(uri);
                     if (settled.get()) {
                         try { svc.close(); } catch (Exception ignored) {}
                         return;
@@ -127,8 +143,8 @@ public class ConnectionManager {
                     if (prior != null && prior != svc) {
                         try { prior.close(); } catch (Exception ignored) {}
                     }
-                    publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.CONNECTED, svc.serverVersion(), null));
-                    events.publishLog(id, "connected to " + c.name() + " (mongo " + svc.serverVersion() + ")");
+                    publishTerminal(settled, new ConnectionState(id, ConnectionState.Status.CONNECTED, serverVersion, null));
+                    events.publishLog(id, "connected to " + c.name() + " (mongo " + serverVersion + ")");
                     return;
                 } catch (Exception e) {
                     lastError = describe(e);
