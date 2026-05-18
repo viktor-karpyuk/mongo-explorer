@@ -137,42 +137,22 @@ public final class RestoreWizardDialog {
             boolean drop = dropBox.isSelected();
             boolean oplog = oplogBox.isSelected();
             Thread.startVirtualThread(() -> {
-                RestoreService.RestoreResult r;
-                try {
-                    r = service.execute(row.id(), uri,
-                            mode, prefix, drop, oplog, oplogLimitSecs,
-                            callerUser, callerHost);
-                } catch (Throwable t) {
-                    // Catch Throwable: a kill-switch race / mongorestore
-                    // spawn failure / NPE used to leave the progress bar
-                    // indeterminate and both buttons disabled forever.
-                    Platform.runLater(() -> {
-                        progress.setVisible(false);
-                        startBtn.setDisable(false);
-                        closeBtn.setDisable(false);
-                        status.setText("FAIL — " + t.getClass().getSimpleName()
-                                + (t.getMessage() == null ? "" : ": " + t.getMessage()));
-                        status.setStyle(resultStyle(Outcome.FAIL));
-                        info(stage, "Restore FAIL",
-                                t.getClass().getSimpleName()
-                                        + (t.getMessage() == null ? "" : ": " + t.getMessage()));
-                    });
-                    return;
-                }
-                final RestoreService.RestoreResult finalR = r;
+                RestoreService.RestoreResult r = service.execute(row.id(), uri,
+                        mode, prefix, drop, oplog, oplogLimitSecs,
+                        callerUser, callerHost);
                 Platform.runLater(() -> {
                     progress.setVisible(false);
                     startBtn.setDisable(false);
                     closeBtn.setDisable(false);
-                    status.setText(finalR.outcome() + "  —  " + finalR.durationMs() + " ms"
-                            + (finalR.failures() > 0 ? "  ·  " + finalR.failures() + " failures" : ""));
-                    status.setStyle(resultStyle(finalR.outcome()));
-                    if (finalR.outcome() == Outcome.OK) {
+                    status.setText(r.outcome() + "  —  " + r.durationMs() + " ms"
+                            + (r.failures() > 0 ? "  ·  " + r.failures() + " failures" : ""));
+                    status.setStyle(resultStyle(r.outcome()));
+                    if (r.outcome() == Outcome.OK) {
                         info(stage, "Restore complete",
-                                "Restore finished successfully." + (finalR.failures() > 0
-                                        ? "\n(" + finalR.failures() + " per-namespace failures)" : ""));
+                                "Restore finished successfully." + (r.failures() > 0
+                                        ? "\n(" + r.failures() + " per-namespace failures)" : ""));
                     } else {
-                        info(stage, "Restore " + finalR.outcome(), finalR.message());
+                        info(stage, "Restore " + r.outcome(), r.message());
                     }
                 });
             });

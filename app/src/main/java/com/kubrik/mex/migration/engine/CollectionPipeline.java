@@ -124,11 +124,11 @@ public final class CollectionPipeline {
                             ctx.setLastId(plan.sourceNs(), lastId);
                         });
 
-                futures.add(pool.submit(wrap(reader::run, firstError, ctx)));
-                futures.add(pool.submit(wrap(transformer::run, firstError, ctx)));
+                futures.add(pool.submit(wrap(reader::run, firstError)));
+                futures.add(pool.submit(wrap(transformer::run, firstError)));
                 futures.add(pool.submit(wrap(() -> {
                     try { sinkWriter.run(); } catch (Exception e) { throw new RuntimeException(e); }
-                }, firstError, ctx)));
+                }, firstError)));
             }
             for (Future<?> f : futures) {
                 try { f.get(); }
@@ -286,23 +286,10 @@ public final class CollectionPipeline {
         return o;
     }
 
-    /** Stage wrapper that captures the first failure AND signals the
-     *  shared {@link JobContext} to stop so downstream stages unblock
-     *  from their {@code take()} calls. Without the stop signal a
-     *  reader-side failure left the transformer + sink-writer
-     *  blocked in {@link BlockingQueue#take()} forever, leaving the
-     *  job in "running" forever with the source cursor pinned and no
-     *  progress visible. */
-    private static Runnable wrap(RunnableEx r, AtomicReference<Exception> err, JobContext ctx) {
+    private static Runnable wrap(RunnableEx r, AtomicReference<Exception> err) {
         return () -> {
             try { r.run(); }
-            catch (Exception e) {
-                err.compareAndSet(null, e);
-                if (ctx != null) {
-                    try { ctx.stop("stage failed: " + e.getClass().getSimpleName() + ": " + e.getMessage()); }
-                    catch (Exception ignored) {}
-                }
-            }
+            catch (Exception e) { err.compareAndSet(null, e); }
         };
     }
 

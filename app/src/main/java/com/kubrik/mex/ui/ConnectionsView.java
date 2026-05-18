@@ -60,15 +60,7 @@ public class ConnectionsView extends VBox {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) { setText(null); setGraphic(null); return; }
-                // Bounds-guard the index lookup: getIndex() can transiently
-                // be -1 or past the items list size during row removal,
-                // and the IOOBE that JavaFX swallows leaves the row
-                // painted blank. Bail out cleanly instead.
-                int i = getIndex();
-                java.util.List<MongoConnection> items = getTableView().getItems();
-                if (i < 0 || i >= items.size()) { setText(null); setGraphic(null); return; }
-                MongoConnection mc = items.get(i);
-                if (mc == null) { setText(null); setGraphic(null); return; }
+                MongoConnection mc = getTableView().getItems().get(getIndex());
                 ConnectionState s = manager.state(mc.id());
                 setText("●");
                 setStyle("-fx-text-fill: " + UiHelpers.colorFor(s.status()) + "; -fx-font-size: 16px; -fx-alignment: center;");
