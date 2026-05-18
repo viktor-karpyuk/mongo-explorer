@@ -215,15 +215,7 @@ public class ConnectionTree extends VBox {
         events.onState(s -> Platform.runLater(() -> {
             TreeItem<Node> item = connectionItems.get(s.connectionId());
             if (item != null) {
-                // Re-render just the affected row instead of repainting
-                // the whole tree. tree.refresh() forces every visible
-                // cell through updateItem (and its 4-7 allocations);
-                // for a tree of N rows × every state event of every
-                // connection, that compounds into the browsing-feels-
-                // laggy storm. Event.fireEvent with TreeModificationEvent
-                // signals just this row to re-render.
-                javafx.event.Event.fireEvent(item,
-                        new TreeItem.TreeModificationEvent<>(TreeItem.<Node>valueChangedEvent(), item));
+                tree.refresh();
                 if (s.status() == ConnectionState.Status.CONNECTED && item.getChildren().isEmpty()) {
                     loadDatabases(item, s.connectionId());
                     item.setExpanded(true);
@@ -274,21 +266,12 @@ public class ConnectionTree extends VBox {
         scheduleBadgeRefresh();
     }
 
-    /** Coalesce migration-progress repaints to one tick per ~120 ms.
-     *  Multiple progress events arrive on the bus thread during a busy
-     *  job; without throttling they each schedule a Platform.runLater
-     *  → tree.refresh() chain, swamping the FX queue. */
-    private final javafx.animation.PauseTransition badgeRefreshDebounce =
-            new javafx.animation.PauseTransition(javafx.util.Duration.millis(120));
-    {
-        badgeRefreshDebounce.setOnFinished(e -> {
-            refreshScheduled.set(false);
-            tree.refresh();
-        });
-    }
     private void scheduleBadgeRefresh() {
         if (refreshScheduled.compareAndSet(false, true)) {
-            Platform.runLater(badgeRefreshDebounce::playFromStart);
+            Platform.runLater(() -> {
+                refreshScheduled.set(false);
+                tree.refresh();
+            });
         }
     }
 
@@ -777,57 +760,8 @@ public class ConnectionTree extends VBox {
         guard.play();
     }
 
-    // Constant CSS strings — JavaFX reparses any setStyle("…") string on
-    // every call; keeping them as final fields still skips reparse only
-    // if the string is identical to the previous value, but eliminates
-    // the per-paint StringBuilder concat that the old buildLabBadge /
-    // buildMigrationBadge methods incurred.
-    private static final String CSS_BADGE_MIGRATION =
-            "-fx-background-color: #dbeafe; -fx-text-fill: #1d4ed8; "
-                    + "-fx-font-size: 10px; -fx-font-weight: bold; "
-                    + "-fx-background-radius: 8; -fx-padding: 0 6 0 6;";
-    private static final String CSS_LAB_DOCKER =
-            "-fx-background-color: #fef3c7; -fx-text-fill: #92400e; "
-                    + "-fx-font-size: 10px; -fx-font-weight: bold; "
-                    + "-fx-background-radius: 8; -fx-padding: 0 6 0 6;";
-    private static final String CSS_LAB_K8S =
-            "-fx-background-color: #ede9fe; -fx-text-fill: #6d28d9; "
-                    + "-fx-font-size: 10px; -fx-font-weight: bold; "
-                    + "-fx-background-radius: 8; -fx-padding: 0 6 0 6;";
-
-    /** Cell with a leading icon / status dot. Reuses scene-graph
-     *  instances across {@link #updateItem} calls — JavaFX invokes
-     *  updateItem on every scroll, hover, and refresh, so allocating
-     *  4–7 fresh nodes per call (FontIcon + Label + HBox + StackPane +
-     *  Circle + badge + Tooltip) was the dominant browsing-feels-laggy
-     *  cost in the prior version. */
+    /** Cell with a leading icon / status dot. */
     private class ConnCell extends TreeCell<Node> {
-        private final FontIcon icon = new FontIcon();
-        private final Label label = new Label();
-        private final HBox row = new HBox(6);
-        // Status-dot scaffolding: built once, parented in/out of the row.
-        private final javafx.scene.shape.Circle dot = new javafx.scene.shape.Circle(4);
-        private final javafx.scene.layout.StackPane iconWithDot =
-                new javafx.scene.layout.StackPane(icon, dot);
-        // Reused badge instances; recycled tooltips per kind so we don't
-        // allocate Tooltip per paint.
-        private final Label labBadge = new Label();
-        private final Tooltip labTooltip = new Tooltip();
-        private final Label migBadge = new Label();
-        private final Tooltip migTooltip = new Tooltip();
-
-        ConnCell() {
-            icon.setIconSize(13);
-            label.setMinWidth(Region.USE_PREF_SIZE);
-            row.setAlignment(Pos.CENTER_LEFT);
-            row.setMinWidth(Region.USE_PREF_SIZE);
-            dot.setFill(javafx.scene.paint.Color.web("#16a34a"));
-            javafx.scene.layout.StackPane.setAlignment(dot, Pos.BOTTOM_RIGHT);
-            iconWithDot.setPrefSize(16, 16);
-            labBadge.setTooltip(labTooltip);
-            migBadge.setTooltip(migTooltip);
-        }
-
         @Override
         protected void updateItem(Node item, boolean empty) {
             super.updateItem(item, empty);
@@ -849,59 +783,93 @@ public class ConnectionTree extends VBox {
                 case "loading" -> iconLit = "fth-clock";
                 default -> iconLit = "fth-circle";
             }
-            // Mutate the reused icon/label/row in place.
-            if (!iconLit.equals(icon.getIconLiteral())) icon.setIconLiteral(iconLit);
+            FontIcon icon = new FontIcon(iconLit);
+            icon.setIconSize(13);
             icon.setIconColor(color);
-            label.setText(item.label);
-
-            // Rebuild row children only — avoids alloc of HBox + Label + FontIcon.
-            row.getChildren().clear();
-            row.getChildren().add(showStatusDot ? iconWithDot : icon);
-            row.getChildren().add(label);
+            javafx.scene.Node graphic;
+            if (showStatusDot) {
+                javafx.scene.shape.Circle dot = new javafx.scene.shape.Circle(4);
+                dot.setFill(javafx.scene.paint.Color.web("#16a34a"));
+                javafx.scene.layout.StackPane iconWithDot = new javafx.scene.layout.StackPane(icon, dot);
+                javafx.scene.layout.StackPane.setAlignment(dot, Pos.BOTTOM_RIGHT);
+                iconWithDot.setPrefSize(16, 16);
+                graphic = iconWithDot;
+            } else {
+                graphic = icon;
+            }
+            Label lbl = new Label(item.label);
+            lbl.setMinWidth(Region.USE_PREF_SIZE);
+            HBox row = new HBox(6, graphic, lbl);
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.setMinWidth(Region.USE_PREF_SIZE);
 
             // Q2.8-N6 — Lab provenance chip for connection rows.
             if ("conn".equals(item.type)) {
                 LabBadgeProvider p = labBadgeProvider;
                 LabBadge lb = p == null ? null : p.forConnection(item.connectionId);
-                if (lb != null) {
-                    String txt = lb.kind() == LabBadge.Kind.K8S_LAB ? "Lab•K8s" : "Lab";
-                    String css = lb.kind() == LabBadge.Kind.K8S_LAB ? CSS_LAB_K8S : CSS_LAB_DOCKER;
-                    if (!txt.equals(labBadge.getText())) labBadge.setText(txt);
-                    if (!css.equals(labBadge.getStyle())) labBadge.setStyle(css);
-                    String tt = lb.tooltip() == null ? "" : lb.tooltip();
-                    if (!tt.equals(labTooltip.getText())) labTooltip.setText(tt);
-                    row.getChildren().add(labBadge);
-                }
+                if (lb != null) row.getChildren().add(buildLabBadge(lb));
             }
 
             // OBS-4 — migration-progress badge for target-side collection nodes.
             if ("coll".equals(item.type)) {
                 BadgeState bs = liveBadges.get(new BadgeKey(item.connectionId, item.db, item.coll));
-                if (bs != null) {
-                    String txt;
-                    if (bs.docsTotal() > 0) {
-                        int pct = (int) Math.min(100, (bs.docsCopied() * 100L) / bs.docsTotal());
-                        txt = "▶ " + pct + "%";
-                    } else if (bs.docsCopied() > 0) {
-                        txt = "▶ " + compactDocs(bs.docsCopied());
-                    } else {
-                        txt = "▶";
-                    }
-                    if (!txt.equals(migBadge.getText())) migBadge.setText(txt);
-                    if (migBadge.getStyle().isEmpty()) migBadge.setStyle(CSS_BADGE_MIGRATION);
-                    String ttip = "Migration " + (bs.status() == null ? "running" : bs.status().toLowerCase())
-                            + ": " + bs.docsCopied()
-                            + (bs.docsTotal() > 0 ? " / " + bs.docsTotal() : "")
-                            + " documents";
-                    if (!ttip.equals(migTooltip.getText())) migTooltip.setText(ttip);
-                    row.getChildren().add(migBadge);
-                }
+                if (bs != null) row.getChildren().add(buildMigrationBadge(bs));
             }
 
             setGraphic(row);
             setText(null);
             setMinWidth(Region.USE_PREF_SIZE);
             setPrefWidth(Region.USE_COMPUTED_SIZE);
+        }
+
+        private Label buildMigrationBadge(BadgeState bs) {
+            String text;
+            if (bs.docsTotal() > 0) {
+                int pct = (int) Math.min(100, (bs.docsCopied() * 100L) / bs.docsTotal());
+                text = "▶ " + pct + "%";
+            } else if (bs.docsCopied() > 0) {
+                text = "▶ " + compactDocs(bs.docsCopied());
+            } else {
+                text = "▶";
+            }
+            Label badge = new Label(text);
+            badge.setStyle(
+                    "-fx-background-color: #dbeafe;"
+                  + "-fx-text-fill: #1d4ed8;"
+                  + "-fx-font-size: 10px;"
+                  + "-fx-font-weight: bold;"
+                  + "-fx-background-radius: 8;"
+                  + "-fx-padding: 0 6 0 6;");
+            badge.setTooltip(new Tooltip(
+                    "Migration " + (bs.status() == null ? "running" : bs.status().toLowerCase())
+                  + ": " + bs.docsCopied()
+                  + (bs.docsTotal() > 0 ? " / " + bs.docsTotal() : "")
+                  + " documents"));
+            return badge;
+        }
+
+        private Label buildLabBadge(LabBadge lb) {
+            String text = lb.kind() == LabBadge.Kind.K8S_LAB ? "Lab•K8s" : "Lab";
+            String bg, fg;
+            if (lb.kind() == LabBadge.Kind.K8S_LAB) {
+                // violet — matches the K8s pane's accent
+                bg = "#ede9fe"; fg = "#6d28d9";
+            } else {
+                // amber — matches the Docker Labs pane's accent
+                bg = "#fef3c7"; fg = "#92400e";
+            }
+            Label badge = new Label(text);
+            badge.setStyle(
+                    "-fx-background-color: " + bg + ";"
+                  + "-fx-text-fill: " + fg + ";"
+                  + "-fx-font-size: 10px;"
+                  + "-fx-font-weight: bold;"
+                  + "-fx-background-radius: 8;"
+                  + "-fx-padding: 0 6 0 6;");
+            if (lb.tooltip() != null && !lb.tooltip().isBlank()) {
+                badge.setTooltip(new Tooltip(lb.tooltip()));
+            }
+            return badge;
         }
 
         private String compactDocs(long n) {
