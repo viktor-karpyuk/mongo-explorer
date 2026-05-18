@@ -42,12 +42,6 @@ public class ResultsPane extends TabPane {
     private final Tab errorTab;
     private final Tab jsonTab;
     private Consumer<Document> onSelect = d -> {};
-    /** Reused column instances keyed by header name. Avoids the
-     *  TableView skin tear-down + virtualisation reset cost that
-     *  used to happen on every {@link #setDocuments} when columns
-     *  were cleared and rebuilt from scratch. */
-    private final java.util.LinkedHashMap<String, TableColumn<Document, String>> columnCache =
-            new java.util.LinkedHashMap<>();
     /** Bumped on every {@link #setDocuments} so async JSON / Tree-children
      *  builds know when their snapshot is stale and skip the apply. */
     private final AtomicLong epoch = new AtomicLong();
@@ -156,44 +150,14 @@ public class ResultsPane extends TabPane {
     }
 
     private void rebuildTable() {
+        table.getColumns().clear();
         LinkedHashSet<String> fields = new LinkedHashSet<>();
         for (Document d : docs) fields.addAll(d.keySet());
-
-        // Reuse columns already present; only add new ones, drop gone ones.
-        // The TableView skin only does an incremental relayout when the
-        // columns list changes by individual add/remove, vs a full reset
-        // on clear()-then-add.
-        if (!columnCache.keySet().equals(fields)) {
-            // Drop columns whose field disappeared.
-            for (java.util.Iterator<Map.Entry<String, TableColumn<Document,String>>> it =
-                    columnCache.entrySet().iterator(); it.hasNext(); ) {
-                Map.Entry<String, TableColumn<Document,String>> e = it.next();
-                if (!fields.contains(e.getKey())) {
-                    table.getColumns().remove(e.getValue());
-                    it.remove();
-                }
-            }
-            // Add missing columns in iteration order.
-            for (String f : fields) {
-                if (columnCache.containsKey(f)) continue;
-                TableColumn<Document, String> col = new TableColumn<>(f);
-                col.setCellValueFactory(c -> new SimpleStringProperty(formatValue(c.getValue().get(f))));
-                col.setPrefWidth(Math.min(280, Math.max(90, f.length() * 11 + 30)));
-                columnCache.put(f, col);
-                table.getColumns().add(col);
-            }
-            // Re-order to match field iteration order without rebuilding.
-            // Skipped in the common case (column set + order is stable).
-            int i = 0;
-            for (String f : fields) {
-                TableColumn<Document, String> wanted = columnCache.get(f);
-                int actual = table.getColumns().indexOf(wanted);
-                if (actual != i && actual >= 0) {
-                    table.getColumns().remove(actual);
-                    table.getColumns().add(i, wanted);
-                }
-                i++;
-            }
+        for (String f : fields) {
+            TableColumn<Document, String> col = new TableColumn<>(f);
+            col.setCellValueFactory(c -> new SimpleStringProperty(formatValue(c.getValue().get(f))));
+            col.setPrefWidth(Math.min(280, Math.max(90, f.length() * 11 + 30)));
+            table.getColumns().add(col);
         }
         table.setItems(FXCollections.observableArrayList(docs));
     }
@@ -204,40 +168,26 @@ public class ResultsPane extends TabPane {
      *  takes ~1 % of the FX-thread time the eager version did. */
     private void rebuildTree() {
         TreeItem<Object> root = new TreeItem<>("results");
-        java.util.List<TreeItem<Object>> items = new ArrayList<>(docs.size());
         for (int i = 0; i < docs.size(); i++) {
-            items.add(new LazyDocItem(i, docs.get(i)));
+            final Document d = docs.get(i);
+            final int idx = i;
+            TreeItem<Object> docItem = new TreeItem<>(new DocRef(idx, "[" + idx + "] " + summarize(d)));
+            // Placeholder so the arrow appears; replaced on first expand.
+            docItem.getChildren().add(new TreeItem<>(LAZY_PLACEHOLDER));
+            docItem.expandedProperty().addListener((o, was, now) -> {
+                if (Boolean.TRUE.equals(now)
+                        && docItem.getChildren().size() == 1
+                        && LAZY_PLACEHOLDER.equals(docItem.getChildren().get(0).getValue())) {
+                    docItem.getChildren().clear();
+                    populateChildren(docItem, d);
+                }
+            });
+            root.getChildren().add(docItem);
         }
-        root.getChildren().setAll(items);
         tree.setRoot(root);
     }
 
-    /** TreeItem whose children are built lazily on first {@link
-     *  #getChildren()} call. Mirrors the JavaFX-samples lazy-tree
-     *  pattern: {@code isLeaf()} returns false so the disclosure
-     *  arrow renders even before children exist, and the heavy
-     *  {@link #populateChildren} walk only fires when the user
-     *  expands the row. Saves one weakly-referenced
-     *  {@code expandedProperty} listener per result row — a 1000-doc
-     *  result is 1000 fewer listeners on the FX-thread listener map. */
-    private static final class LazyDocItem extends TreeItem<Object> {
-        private final Document doc;
-        private boolean materialised;
-        LazyDocItem(int index, Document d) {
-            super(new DocRef(index, "[" + index + "] " + summarize(d)));
-            this.doc = d;
-        }
-        @Override public boolean isLeaf() { return false; }
-        @Override public javafx.collections.ObservableList<TreeItem<Object>> getChildren() {
-            javafx.collections.ObservableList<TreeItem<Object>> kids = super.getChildren();
-            if (!materialised) {
-                materialised = true;
-                populateChildren(this, doc);
-            }
-            return kids;
-        }
-    }
-
+    private static final String LAZY_PLACEHOLDER = "LAZY";
 
     /** Builds the JSON text on a virtual thread (toJson per doc + the
      *  StringBuilder concat are both CPU-heavy for big result sets) and
