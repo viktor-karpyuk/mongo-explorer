@@ -89,48 +89,20 @@ public class DocumentEditorDialog {
             switchView(toStructured, codeScroll);
         });
 
-        // Validation status \u2014 CSS class swap (no setStyle string rebuild
-        // per validation) so the FX skin's CSS reparse path doesn't fire
-        // on every keystroke after debounce.
+        // Validation status
         Label status = new Label("");
-        status.getStyleClass().add("doc-editor-status");
-        status.setStyle("-fx-font-size: 11px; -fx-text-fill: #6b7280;");
-        // Debounce parse \u2014 parsing a 50 KB doc was ~30-100 ms per char.
-        javafx.animation.PauseTransition validateDebounce =
-                new javafx.animation.PauseTransition(javafx.util.Duration.millis(180));
+        status.setStyle("-fx-text-fill: #6b7280; -fx-font-size: 11px;");
         Runnable validate = () -> {
-            String text = codeArea.getText();
-            // Parse on a virtual thread; apply on FX.
-            Thread.startVirtualThread(() -> {
-                String okText, errText;
-                try {
-                    BsonDocument.parse(text);
-                    okText = "\u2713 valid JSON";
-                    errText = null;
-                } catch (Exception ex) {
-                    okText = null;
-                    errText = "\u2717 " + ex.getMessage();
-                }
-                final String fOk = okText, fErr = errText;
-                javafx.application.Platform.runLater(() -> {
-                    // Drop if the text has changed again \u2014 the next
-                    // debounce tick will refresh.
-                    if (!text.equals(codeArea.getText())) return;
-                    if (fOk != null) {
-                        status.setStyle("-fx-text-fill: #16a34a; -fx-font-size: 11px;");
-                        status.setText(fOk);
-                    } else {
-                        status.setStyle("-fx-text-fill: #dc2626; -fx-font-size: 11px;");
-                        status.setText(fErr);
-                    }
-                });
-            });
+            try {
+                BsonDocument.parse(codeArea.getText());
+                status.setStyle("-fx-text-fill: #16a34a; -fx-font-size: 11px;");
+                status.setText("\u2713 valid JSON");
+            } catch (Exception ex) {
+                status.setStyle("-fx-text-fill: #dc2626; -fx-font-size: 11px;");
+                status.setText("\u2717 " + ex.getMessage());
+            }
         };
-        validateDebounce.setOnFinished(e -> validate.run());
-        codeArea.textProperty().addListener((obs, a, b) -> {
-            if (showingStructured) return;
-            validateDebounce.playFromStart();
-        });
+        codeArea.textProperty().addListener((obs, a, b) -> { if (!showingStructured) validate.run(); });
 
         // Toolbar: Format, Zoom, Add Field, status
         Button format = new Button("Format");
