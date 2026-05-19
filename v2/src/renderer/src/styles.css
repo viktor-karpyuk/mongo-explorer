@@ -1,4 +1,5 @@
-:root {
+:root,
+:root[data-theme='dark'] {
   color-scheme: dark;
   --bg: #0f1115;
   --bg-elev: #161a21;
@@ -15,9 +16,27 @@
   --danger: #f87171;
   --radius: 8px;
   --radius-sm: 5px;
+  --editor-font-size: 12.5px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   font-size: 13.5px;
   line-height: 1.5;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f7f8fa;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #eef1f5;
+  --border: #e1e5ec;
+  --border-strong: #c7cdd9;
+  --fg: #1a1f29;
+  --fg-muted: #5a6573;
+  --fg-faint: #94a0b0;
+  --accent: #1e6ee0;
+  --accent-dim: #4287e1;
+  --success: #1f9d55;
+  --warning: #c97300;
+  --danger: #c1414a;
 }
 
 * { box-sizing: border-box; }
@@ -1588,6 +1607,72 @@ button { font-family: inherit; }
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
+}
+
+/* Settings */
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-row:last-child { border-bottom: 0; }
+
+.settings-row > span {
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.settings-row__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-row select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.kbd-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.kbd-table td {
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.kbd-table td:last-child { text-align: right; }
+
+kbd {
+  font-family: inherit;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--fg);
+}
+
+/* Apply editor font size variable in editors */
+.json-editor,
+.shell-output,
+.shell-input,
+.query-row input,
+.stage__body,
+.result-table,
+.result-tree__row,
+.result-json {
+  font-size: var(--editor-font-size, 12.5px) !important;
 }
 
 /* Helpers */

@@ -5,6 +5,8 @@ import { DbStatsPanel } from './components/DbStatsPanel';
 import { CollectionPanel } from './components/CollectionPanel';
 import { ConnectionPanel } from './components/ConnectionPanel';
 import { MigrationsView } from './components/migration/MigrationsView';
+import { SettingsView } from './components/SettingsView';
+import { usePrefsStore } from './store/prefs';
 import { subscribeConnectionState, useConnectionsStore } from './store/connections';
 import { useSelectionStore } from './store/selection';
 import { useNamespacesStore } from './store/namespaces';
@@ -13,6 +15,8 @@ import { subscribeMigrationProgress } from './store/migrations';
 export function App() {
   const [version, setVersion] = useState<string>('—');
   const selection = useSelectionStore((s) => s.current);
+  // Initialize prefs (applies theme + font-size to DOM on first load).
+  usePrefsStore((s) => s.prefs);
 
   useEffect(() => {
     void window.mex.appVersion().then(setVersion);
@@ -53,6 +57,7 @@ export function App() {
         <main className="shell-main">
           {selection.kind === 'welcome' && <ConnectionsView />}
           {selection.kind === 'migrations' && <MigrationsView />}
+          {selection.kind === 'settings' && <SettingsView />}
           {selection.kind === 'connection' && (
             <ConnectionPanel connectionId={selection.connectionId} />
           )}

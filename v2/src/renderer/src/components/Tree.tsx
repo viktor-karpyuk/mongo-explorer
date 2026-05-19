@@ -175,6 +175,14 @@ export function Tree() {
       >
         <span>Migrations</span>
       </div>
+      <div
+        className={`tree__row tree__row--welcome${
+          selection.kind === 'settings' ? ' tree__row--active' : ''
+        }`}
+        onClick={() => select({ kind: 'settings' })}
+      >
+        <span>Settings</span>
+      </div>
 
       <div className="tree__list">
         {connected.length === 0 && (
