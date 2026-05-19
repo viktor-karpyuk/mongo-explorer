@@ -3,11 +3,21 @@ import {
   IpcChannels,
   type BridgeApi,
   type ConnectionsApi,
+  type MutateApi,
   type NamespacesApi,
   type QueriesApi,
   type QueryHistoryRow,
   type SchemaApi,
 } from '../shared/ipc.js';
+import type {
+  BulkWriteInput,
+  DeleteInput,
+  InsertManyInput,
+  InsertOneInput,
+  MutateResponse,
+  ReplaceInput,
+  UpdateInput,
+} from '../shared/mutation.js';
 import type { FindRequest, FindResponse } from '../shared/query.js';
 import type { AggregateRequest, AggregateResponse } from '../shared/aggregation.js';
 import type {
@@ -121,6 +131,21 @@ const schema: SchemaApi = {
     ipcRenderer.invoke(IpcChannels.ValidatorSet, id, db, coll, payload) as Promise<void>,
 };
 
+const mutate: MutateApi = {
+  insertOne: (input: InsertOneInput) =>
+    ipcRenderer.invoke(IpcChannels.MutateInsertOne, input) as Promise<MutateResponse>,
+  insertMany: (input: InsertManyInput) =>
+    ipcRenderer.invoke(IpcChannels.MutateInsertMany, input) as Promise<MutateResponse>,
+  update: (input: UpdateInput) =>
+    ipcRenderer.invoke(IpcChannels.MutateUpdate, input) as Promise<MutateResponse>,
+  replace: (input: ReplaceInput) =>
+    ipcRenderer.invoke(IpcChannels.MutateReplace, input) as Promise<MutateResponse>,
+  delete: (input: DeleteInput) =>
+    ipcRenderer.invoke(IpcChannels.MutateDelete, input) as Promise<MutateResponse>,
+  bulk: (input: BulkWriteInput) =>
+    ipcRenderer.invoke(IpcChannels.MutateBulk, input) as Promise<MutateResponse>,
+};
+
 const api: BridgeApi = {
   appVersion: () => ipcRenderer.invoke(IpcChannels.AppVersion) as Promise<string>,
   ping: () => ipcRenderer.invoke(IpcChannels.AppPing) as Promise<'pong'>,
@@ -128,6 +153,7 @@ const api: BridgeApi = {
   ns,
   query,
   schema,
+  mutate,
 };
 
 contextBridge.exposeInMainWorld('mex', api);

@@ -8,6 +8,7 @@ import { registerNamespaceIpc } from './ipc/namespaces.js';
 import { registerQueryIpc } from './ipc/queries.js';
 import { registerAggregateIpc } from './ipc/aggregate.js';
 import { registerSchemaIpc } from './ipc/schema.js';
+import { registerMutateIpc } from './ipc/mutate.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = !!process.env['ELECTRON_RENDERER_URL'];
@@ -57,6 +58,7 @@ app.whenReady().then(() => {
   registerQueryIpc(ctx, ctx.registry);
   registerAggregateIpc(ctx, ctx.registry);
   registerSchemaIpc(ctx.registry);
+  registerMutateIpc(ctx.registry);
   registerIpc();
   createWindow();
 

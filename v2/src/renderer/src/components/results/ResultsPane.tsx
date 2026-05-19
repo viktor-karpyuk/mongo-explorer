@@ -14,6 +14,8 @@ interface Props {
   limit: number;
   onPrev: () => void;
   onNext: () => void;
+  onEditRow?: (doc: string) => void;
+  onDeleteRow?: (doc: string) => void;
 }
 
 export function ResultsPane({
@@ -23,6 +25,8 @@ export function ResultsPane({
   limit,
   onPrev,
   onNext,
+  onEditRow,
+  onDeleteRow,
 }: Props) {
   const [tab, setTab] = useState<Tab>('table');
   const hasError = result && result.ok === false;
@@ -79,7 +83,9 @@ export function ResultsPane({
         {!running && !result && <div className="muted">Run a query to see results.</div>}
         {hasError && tab === 'error' && <ResultError message={result.error} />}
         {hasRows && tab === 'table' && <ResultTable rows={result.rows} />}
-        {hasRows && tab === 'tree' && <ResultTree rows={result.rows} />}
+        {hasRows && tab === 'tree' && (
+          <ResultTree rows={result.rows} onEdit={onEditRow} onDelete={onDeleteRow} />
+        )}
         {hasRows && tab === 'json' && <ResultJson rows={result.rows} />}
       </div>
 

@@ -3,9 +3,11 @@ import { formatValue, isContainer, parseRow, type EjsonValue } from '../../utils
 
 interface Props {
   rows: string[];
+  onEdit?: (doc: string) => void;
+  onDelete?: (doc: string) => void;
 }
 
-export function ResultTree({ rows }: Props) {
+export function ResultTree({ rows, onEdit, onDelete }: Props) {
   return (
     <div className="result-tree">
       {rows.map((row, i) => {
@@ -16,17 +18,49 @@ export function ResultTree({ rows }: Props) {
           parsed = null;
         }
         return (
-          <DocBlock key={i} index={i + 1} value={parsed ?? { _: row as unknown as EjsonValue }} />
+          <DocBlock
+            key={i}
+            index={i + 1}
+            raw={row}
+            value={parsed ?? { _: row as unknown as EjsonValue }}
+            onEdit={onEdit}
+            onDelete={onDelete}
+          />
         );
       })}
     </div>
   );
 }
 
-function DocBlock({ index, value }: { index: number; value: Record<string, EjsonValue> }) {
+function DocBlock({
+  index,
+  raw,
+  value,
+  onEdit,
+  onDelete,
+}: {
+  index: number;
+  raw: string;
+  value: Record<string, EjsonValue>;
+  onEdit?: (doc: string) => void;
+  onDelete?: (doc: string) => void;
+}) {
   return (
     <div className="result-tree__doc">
-      <div className="result-tree__header">Document {index}</div>
+      <div className="result-tree__header">
+        <span>Document {index}</span>
+        <div className="spacer" />
+        {onEdit && (
+          <button className="btn btn--ghost btn--xs" onClick={() => onEdit(raw)}>
+            Edit
+          </button>
+        )}
+        {onDelete && (
+          <button className="btn btn--ghost btn--xs btn--danger" onClick={() => onDelete(raw)}>
+            Delete
+          </button>
+        )}
+      </div>
       <Node label="" value={value} depth={0} root />
     </div>
   );

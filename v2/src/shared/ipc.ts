@@ -26,6 +26,15 @@ import type {
   SchemaReport,
   ValidatorPayload,
 } from './schema.js';
+import type {
+  BulkWriteInput,
+  DeleteInput,
+  InsertManyInput,
+  InsertOneInput,
+  MutateResponse,
+  ReplaceInput,
+  UpdateInput,
+} from './mutation.js';
 
 export const IpcChannels = {
   AppVersion: 'app:version',
@@ -66,6 +75,13 @@ export const IpcChannels = {
   IdxStats: 'idx:stats',
   ValidatorGet: 'validator:get',
   ValidatorSet: 'validator:set',
+
+  MutateInsertOne: 'mutate:insertOne',
+  MutateInsertMany: 'mutate:insertMany',
+  MutateUpdate: 'mutate:update',
+  MutateReplace: 'mutate:replace',
+  MutateDelete: 'mutate:delete',
+  MutateBulk: 'mutate:bulk',
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
@@ -139,6 +155,15 @@ export interface SchemaApi {
   setValidator(connectionId: string, db: string, coll: string, payload: ValidatorPayload): Promise<void>;
 }
 
+export interface MutateApi {
+  insertOne(input: InsertOneInput): Promise<MutateResponse>;
+  insertMany(input: InsertManyInput): Promise<MutateResponse>;
+  update(input: UpdateInput): Promise<MutateResponse>;
+  replace(input: ReplaceInput): Promise<MutateResponse>;
+  delete(input: DeleteInput): Promise<MutateResponse>;
+  bulk(input: BulkWriteInput): Promise<MutateResponse>;
+}
+
 export interface BridgeApi {
   appVersion(): Promise<string>;
   ping(): Promise<'pong'>;
@@ -146,6 +171,7 @@ export interface BridgeApi {
   ns: NamespacesApi;
   query: QueriesApi;
   schema: SchemaApi;
+  mutate: MutateApi;
 }
 
 declare global {

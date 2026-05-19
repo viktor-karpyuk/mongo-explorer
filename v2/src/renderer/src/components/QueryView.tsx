@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useQueryStore, nsKey } from '../store/query';
 import { ResultsPane } from './results/ResultsPane';
+import { InsertDialog } from './mutate/InsertDialog';
+import { UpdateDialog } from './mutate/UpdateDialog';
+import { ReplaceDialog } from './mutate/ReplaceDialog';
+import { DeleteDialog } from './mutate/DeleteDialog';
+import { BulkWriteDialog } from './mutate/BulkWriteDialog';
+import { RowEditDialog } from './mutate/RowEditDialog';
+
+type MutateView = null | 'insert' | 'update' | 'replace' | 'delete' | 'bulk' | { kind: 'editRow'; doc: string };
 
 interface Props {
   connectionId: string;
@@ -34,6 +42,11 @@ export function QueryView({ connectionId, db, collection }: Props) {
   }, [ns, connectionId, db, collection]);
 
   const [rowsCollapsed, setRowsCollapsed] = useState(false);
+  const [mutate, setMutate] = useState<MutateView>(null);
+
+  function rerun() {
+    void run(ns, base);
+  }
 
   return (
     <div className="query-view">
@@ -47,6 +60,23 @@ export function QueryView({ connectionId, db, collection }: Props) {
             {rowsCollapsed ? 'Expand editor ▾' : 'Collapse editor ▴'}
           </button>
           <div className="spacer" />
+          <div className="mutate-menu">
+            <button className="btn btn--ghost" onClick={() => setMutate('insert')}>
+              Insert
+            </button>
+            <button className="btn btn--ghost" onClick={() => setMutate('update')}>
+              Update
+            </button>
+            <button className="btn btn--ghost" onClick={() => setMutate('replace')}>
+              Replace
+            </button>
+            <button className="btn btn--ghost btn--danger" onClick={() => setMutate('delete')}>
+              Delete
+            </button>
+            <button className="btn btn--ghost" onClick={() => setMutate('bulk')}>
+              Bulk
+            </button>
+          </div>
           <button
             className="btn btn--primary"
             onClick={() => void run(ns, base)}
@@ -127,7 +157,81 @@ export function QueryView({ connectionId, db, collection }: Props) {
         limit={draft.limit}
         onPrev={() => void prevPage(ns, base)}
         onNext={() => void nextPage(ns, base)}
+        onEditRow={(doc) => setMutate({ kind: 'editRow', doc })}
+        onDeleteRow={(doc) => {
+          try {
+            const parsed = JSON.parse(doc) as Record<string, unknown>;
+            const id = parsed['_id'];
+            if (id === undefined) {
+              alert('Document has no _id; cannot delete inline.');
+              return;
+            }
+            setMutate('delete');
+            setDraft(ns, { filter: JSON.stringify({ _id: id }) });
+          } catch {
+            alert('Could not parse document.');
+          }
+        }}
       />
+
+      {mutate === 'insert' && (
+        <InsertDialog
+          connectionId={connectionId}
+          db={db}
+          collection={collection}
+          onClose={() => setMutate(null)}
+          onDone={rerun}
+        />
+      )}
+      {mutate === 'update' && (
+        <UpdateDialog
+          connectionId={connectionId}
+          db={db}
+          collection={collection}
+          initialFilter={draft.filter}
+          onClose={() => setMutate(null)}
+          onDone={rerun}
+        />
+      )}
+      {mutate === 'replace' && (
+        <ReplaceDialog
+          connectionId={connectionId}
+          db={db}
+          collection={collection}
+          initialFilter={draft.filter}
+          onClose={() => setMutate(null)}
+          onDone={rerun}
+        />
+      )}
+      {mutate === 'delete' && (
+        <DeleteDialog
+          connectionId={connectionId}
+          db={db}
+          collection={collection}
+          initialFilter={draft.filter}
+          onClose={() => setMutate(null)}
+          onDone={rerun}
+        />
+      )}
+      {mutate === 'bulk' && (
+        <BulkWriteDialog
+          connectionId={connectionId}
+          db={db}
+          collection={collection}
+          onClose={() => setMutate(null)}
+          onDone={rerun}
+        />
+      )}
+      {mutate && typeof mutate === 'object' && mutate.kind === 'editRow' && (
+        <RowEditDialog
+          connectionId={connectionId}
+          db={db}
+          collection={collection}
+          doc={mutate.doc}
+          onClose={() => setMutate(null)}
+          onDone={rerun}
+        />
+      )}
     </div>
   );
 }
