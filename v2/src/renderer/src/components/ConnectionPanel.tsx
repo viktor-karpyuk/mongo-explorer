@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { ClusterPanel } from './ClusterPanel';
 import { MonitoringPanel } from './MonitoringPanel';
+import { ShellPanel } from './ShellPanel';
 
-type Tab = 'cluster' | 'monitoring';
+type Tab = 'cluster' | 'monitoring' | 'shell';
 
 export function ConnectionPanel({ connectionId }: { connectionId: string }) {
   const [tab, setTab] = useState<Tab>('cluster');
@@ -21,10 +22,17 @@ export function ConnectionPanel({ connectionId }: { connectionId: string }) {
         >
           Monitoring
         </button>
+        <button
+          className={`tab${tab === 'shell' ? ' tab--active' : ''}`}
+          onClick={() => setTab('shell')}
+        >
+          Shell
+        </button>
       </div>
       <div className="coll-panel__body">
         {tab === 'cluster' && <ClusterPanel connectionId={connectionId} />}
         {tab === 'monitoring' && <MonitoringPanel connectionId={connectionId} />}
+        {tab === 'shell' && <ShellPanel connectionId={connectionId} />}
       </div>
     </div>
   );

@@ -12,7 +12,9 @@ import {
   type QueriesApi,
   type QueryHistoryRow,
   type SchemaApi,
+  type ShellApi,
 } from '../shared/ipc.js';
+import type { ShellEvent } from '../shared/shell.js';
 import type { ClusterSnapshot } from '../shared/cluster.js';
 import type { MonitorTick, SlowOp } from '../shared/monitor.js';
 import type {
@@ -194,6 +196,22 @@ const monitor: MonitorApi = {
     ipcRenderer.invoke(IpcChannels.MonitorSlowOps, id, db, limit) as Promise<SlowOp[]>,
 };
 
+const shell: ShellApi = {
+  start: (connectionId) =>
+    ipcRenderer.invoke(IpcChannels.ShellStart, connectionId) as Promise<string>,
+  send: (sessionId, text) =>
+    ipcRenderer.invoke(IpcChannels.ShellSend, sessionId, text) as Promise<boolean>,
+  stop: (sessionId) =>
+    ipcRenderer.invoke(IpcChannels.ShellStop, sessionId) as Promise<void>,
+  onEvent: (cb) => {
+    const handler = (_e: unknown, event: ShellEvent) => cb(event);
+    ipcRenderer.on(IpcChannels.ShellEvent, handler);
+    return () => {
+      ipcRenderer.off(IpcChannels.ShellEvent, handler);
+    };
+  },
+};
+
 const api: BridgeApi = {
   appVersion: () => ipcRenderer.invoke(IpcChannels.AppVersion) as Promise<string>,
   ping: () => ipcRenderer.invoke(IpcChannels.AppPing) as Promise<'pong'>,
@@ -205,6 +223,7 @@ const api: BridgeApi = {
   cluster,
   monitor,
   io,
+  shell,
 };
 
 contextBridge.exposeInMainWorld('mex', api);

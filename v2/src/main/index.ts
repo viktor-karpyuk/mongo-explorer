@@ -12,6 +12,7 @@ import { registerMutateIpc } from './ipc/mutate.js';
 import { registerClusterIpc } from './ipc/cluster.js';
 import { registerMonitorIpc } from './ipc/monitor.js';
 import { registerIoIpc } from './ipc/io.js';
+import { registerShellIpc } from './ipc/shell.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = !!process.env['ELECTRON_RENDERER_URL'];
@@ -65,6 +66,7 @@ app.whenReady().then(() => {
   registerClusterIpc(ctx.registry);
   registerMonitorIpc(ctx.registry);
   registerIoIpc(ctx, ctx.registry);
+  registerShellIpc(ctx);
   registerIpc();
   createWindow();
 

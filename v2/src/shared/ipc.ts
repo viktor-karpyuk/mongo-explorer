@@ -44,6 +44,7 @@ import type {
   ImportRequest,
   IoResult,
 } from './io.js';
+import type { ShellEvent } from './shell.js';
 
 export const IpcChannels = {
   AppVersion: 'app:version',
@@ -106,6 +107,11 @@ export const IpcChannels = {
   IoPickDir: 'io:pick-dir',
   IoDumpRestoreStart: 'io:dump-restore-start',
   IoDumpRestoreEvent: 'io:dump-restore-event',
+
+  ShellStart: 'shell:start',
+  ShellSend: 'shell:send',
+  ShellStop: 'shell:stop',
+  ShellEvent: 'shell:event',
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
@@ -214,6 +220,13 @@ export interface IoApi {
   onDumpRestoreEvent(cb: (event: DumpRestoreEvent) => void): () => void;
 }
 
+export interface ShellApi {
+  start(connectionId: string): Promise<string>;
+  send(sessionId: string, text: string): Promise<boolean>;
+  stop(sessionId: string): Promise<void>;
+  onEvent(cb: (event: ShellEvent) => void): () => void;
+}
+
 export interface BridgeApi {
   appVersion(): Promise<string>;
   ping(): Promise<'pong'>;
@@ -225,6 +238,7 @@ export interface BridgeApi {
   cluster: ClusterApi;
   monitor: MonitorApi;
   io: IoApi;
+  shell: ShellApi;
 }
 
 declare global {
