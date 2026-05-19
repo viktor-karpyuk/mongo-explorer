@@ -4,13 +4,16 @@ import {
   type BridgeApi,
   type ClusterApi,
   type ConnectionsApi,
+  type MonitorApi,
   type MutateApi,
   type NamespacesApi,
+  type ProfilerInput,
   type QueriesApi,
   type QueryHistoryRow,
   type SchemaApi,
 } from '../shared/ipc.js';
 import type { ClusterSnapshot } from '../shared/cluster.js';
+import type { MonitorTick, SlowOp } from '../shared/monitor.js';
 import type {
   BulkWriteInput,
   DeleteInput,
@@ -153,6 +156,16 @@ const cluster: ClusterApi = {
     ipcRenderer.invoke(IpcChannels.ClusterSnapshot, id) as Promise<ClusterSnapshot>,
 };
 
+const monitor: MonitorApi = {
+  tick: (id) => ipcRenderer.invoke(IpcChannels.MonitorTick, id) as Promise<MonitorTick>,
+  profileGet: (id, db) =>
+    ipcRenderer.invoke(IpcChannels.MonitorProfileGet, id, db) as Promise<ProfilerInput>,
+  profileSet: (id, db, input) =>
+    ipcRenderer.invoke(IpcChannels.MonitorProfileSet, id, db, input) as Promise<void>,
+  slowOps: (id, db, limit) =>
+    ipcRenderer.invoke(IpcChannels.MonitorSlowOps, id, db, limit) as Promise<SlowOp[]>,
+};
+
 const api: BridgeApi = {
   appVersion: () => ipcRenderer.invoke(IpcChannels.AppVersion) as Promise<string>,
   ping: () => ipcRenderer.invoke(IpcChannels.AppPing) as Promise<'pong'>,
@@ -162,6 +175,7 @@ const api: BridgeApi = {
   schema,
   mutate,
   cluster,
+  monitor,
 };
 
 contextBridge.exposeInMainWorld('mex', api);

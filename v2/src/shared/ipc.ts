@@ -36,6 +36,7 @@ import type {
   UpdateInput,
 } from './mutation.js';
 import type { ClusterSnapshot } from './cluster.js';
+import type { MonitorTick, SlowOp } from './monitor.js';
 
 export const IpcChannels = {
   AppVersion: 'app:version',
@@ -85,6 +86,11 @@ export const IpcChannels = {
   MutateBulk: 'mutate:bulk',
 
   ClusterSnapshot: 'cluster:snapshot',
+
+  MonitorTick: 'monitor:tick',
+  MonitorProfileGet: 'monitor:profile-get',
+  MonitorProfileSet: 'monitor:profile-set',
+  MonitorSlowOps: 'monitor:slow-ops',
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
@@ -171,6 +177,18 @@ export interface ClusterApi {
   snapshot(connectionId: string): Promise<ClusterSnapshot>;
 }
 
+export interface ProfilerInput {
+  level: 0 | 1 | 2;
+  slowMs: number;
+}
+
+export interface MonitorApi {
+  tick(connectionId: string): Promise<MonitorTick>;
+  profileGet(connectionId: string, db: string): Promise<ProfilerInput>;
+  profileSet(connectionId: string, db: string, input: ProfilerInput): Promise<void>;
+  slowOps(connectionId: string, db: string, limit?: number): Promise<SlowOp[]>;
+}
+
 export interface BridgeApi {
   appVersion(): Promise<string>;
   ping(): Promise<'pong'>;
@@ -180,6 +198,7 @@ export interface BridgeApi {
   schema: SchemaApi;
   mutate: MutateApi;
   cluster: ClusterApi;
+  monitor: MonitorApi;
 }
 
 declare global {
