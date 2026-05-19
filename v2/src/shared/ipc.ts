@@ -17,6 +17,15 @@ import type {
 } from './namespace.js';
 import type { FindRequest, FindResponse } from './query.js';
 import type { AggregateRequest, AggregateResponse } from './aggregation.js';
+import type {
+  CreateIndexInput,
+  ExplainRequest,
+  ExplainResponse,
+  IndexInfo,
+  IndexStatRow,
+  SchemaReport,
+  ValidatorPayload,
+} from './schema.js';
 
 export const IpcChannels = {
   AppVersion: 'app:version',
@@ -47,7 +56,16 @@ export const IpcChannels = {
 
   QueryFind: 'query:find',
   QueryAggregate: 'query:aggregate',
+  QueryExplain: 'query:explain',
   QueryHistory: 'query:history',
+
+  SchemaAnalyze: 'schema:analyze',
+  IdxList: 'idx:list',
+  IdxCreate: 'idx:create',
+  IdxDrop: 'idx:drop',
+  IdxStats: 'idx:stats',
+  ValidatorGet: 'validator:get',
+  ValidatorSet: 'validator:set',
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
@@ -105,7 +123,20 @@ export interface QueryHistoryRow {
 export interface QueriesApi {
   find(req: FindRequest): Promise<FindResponse>;
   aggregate(req: AggregateRequest): Promise<AggregateResponse>;
+  explain(req: ExplainRequest): Promise<ExplainResponse>;
   history(connectionId: string, limit?: number): Promise<QueryHistoryRow[]>;
+}
+
+export interface SchemaApi {
+  analyze(connectionId: string, db: string, coll: string, sampleSize?: number): Promise<SchemaReport>;
+
+  listIndexes(connectionId: string, db: string, coll: string): Promise<IndexInfo[]>;
+  createIndex(connectionId: string, db: string, coll: string, input: CreateIndexInput): Promise<string>;
+  dropIndex(connectionId: string, db: string, coll: string, name: string): Promise<void>;
+  indexStats(connectionId: string, db: string, coll: string): Promise<IndexStatRow[]>;
+
+  getValidator(connectionId: string, db: string, coll: string): Promise<ValidatorPayload>;
+  setValidator(connectionId: string, db: string, coll: string, payload: ValidatorPayload): Promise<void>;
 }
 
 export interface BridgeApi {
@@ -114,6 +145,7 @@ export interface BridgeApi {
   connections: ConnectionsApi;
   ns: NamespacesApi;
   query: QueriesApi;
+  schema: SchemaApi;
 }
 
 declare global {

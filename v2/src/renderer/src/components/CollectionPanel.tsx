@@ -2,8 +2,11 @@ import { useState } from 'react';
 import { QueryView } from './QueryView';
 import { AggregationView } from './AggregationView';
 import { CollectionStatsPanel } from './CollectionStatsPanel';
+import { SchemaPanel } from './SchemaPanel';
+import { IndexesPanel } from './IndexesPanel';
+import { ValidatorPanel } from './ValidatorPanel';
 
-type Sub = 'query' | 'aggregate' | 'stats';
+type Sub = 'query' | 'aggregate' | 'schema' | 'indexes' | 'validator' | 'stats';
 
 interface Props {
   connectionId: string;
@@ -30,6 +33,24 @@ export function CollectionPanel({ connectionId, db, collection }: Props) {
           Aggregate
         </button>
         <button
+          className={`tab${tab === 'schema' ? ' tab--active' : ''}`}
+          onClick={() => setTab('schema')}
+        >
+          Schema
+        </button>
+        <button
+          className={`tab${tab === 'indexes' ? ' tab--active' : ''}`}
+          onClick={() => setTab('indexes')}
+        >
+          Indexes
+        </button>
+        <button
+          className={`tab${tab === 'validator' ? ' tab--active' : ''}`}
+          onClick={() => setTab('validator')}
+        >
+          Validator
+        </button>
+        <button
           className={`tab${tab === 'stats' ? ' tab--active' : ''}`}
           onClick={() => setTab('stats')}
         >
@@ -42,6 +63,15 @@ export function CollectionPanel({ connectionId, db, collection }: Props) {
         )}
         {tab === 'aggregate' && (
           <AggregationView connectionId={connectionId} db={db} collection={collection} />
+        )}
+        {tab === 'schema' && (
+          <SchemaPanel connectionId={connectionId} db={db} collection={collection} />
+        )}
+        {tab === 'indexes' && (
+          <IndexesPanel connectionId={connectionId} db={db} collection={collection} />
+        )}
+        {tab === 'validator' && (
+          <ValidatorPanel connectionId={connectionId} db={db} collection={collection} />
         )}
         {tab === 'stats' && (
           <CollectionStatsPanel

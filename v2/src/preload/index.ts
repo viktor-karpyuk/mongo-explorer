@@ -6,9 +6,19 @@ import {
   type NamespacesApi,
   type QueriesApi,
   type QueryHistoryRow,
+  type SchemaApi,
 } from '../shared/ipc.js';
 import type { FindRequest, FindResponse } from '../shared/query.js';
 import type { AggregateRequest, AggregateResponse } from '../shared/aggregation.js';
+import type {
+  CreateIndexInput,
+  ExplainRequest,
+  ExplainResponse,
+  IndexInfo,
+  IndexStatRow,
+  SchemaReport,
+  ValidatorPayload,
+} from '../shared/schema.js';
 import type {
   ConnectionInput,
   ConnectionRecord,
@@ -86,10 +96,29 @@ const query: QueriesApi = {
     ipcRenderer.invoke(IpcChannels.QueryFind, req) as Promise<FindResponse>,
   aggregate: (req: AggregateRequest) =>
     ipcRenderer.invoke(IpcChannels.QueryAggregate, req) as Promise<AggregateResponse>,
+  explain: (req: ExplainRequest) =>
+    ipcRenderer.invoke(IpcChannels.QueryExplain, req) as Promise<ExplainResponse>,
   history: (connectionId, limit) =>
     ipcRenderer.invoke(IpcChannels.QueryHistory, connectionId, limit) as Promise<
       QueryHistoryRow[]
     >,
+};
+
+const schema: SchemaApi = {
+  analyze: (id, db, coll, sampleSize) =>
+    ipcRenderer.invoke(IpcChannels.SchemaAnalyze, id, db, coll, sampleSize) as Promise<SchemaReport>,
+  listIndexes: (id, db, coll) =>
+    ipcRenderer.invoke(IpcChannels.IdxList, id, db, coll) as Promise<IndexInfo[]>,
+  createIndex: (id, db, coll, input: CreateIndexInput) =>
+    ipcRenderer.invoke(IpcChannels.IdxCreate, id, db, coll, input) as Promise<string>,
+  dropIndex: (id, db, coll, name) =>
+    ipcRenderer.invoke(IpcChannels.IdxDrop, id, db, coll, name) as Promise<void>,
+  indexStats: (id, db, coll) =>
+    ipcRenderer.invoke(IpcChannels.IdxStats, id, db, coll) as Promise<IndexStatRow[]>,
+  getValidator: (id, db, coll) =>
+    ipcRenderer.invoke(IpcChannels.ValidatorGet, id, db, coll) as Promise<ValidatorPayload>,
+  setValidator: (id, db, coll, payload) =>
+    ipcRenderer.invoke(IpcChannels.ValidatorSet, id, db, coll, payload) as Promise<void>,
 };
 
 const api: BridgeApi = {
@@ -98,6 +127,7 @@ const api: BridgeApi = {
   connections,
   ns,
   query,
+  schema,
 };
 
 contextBridge.exposeInMainWorld('mex', api);
