@@ -4,9 +4,11 @@ import { Tree } from './components/Tree';
 import { DbStatsPanel } from './components/DbStatsPanel';
 import { CollectionPanel } from './components/CollectionPanel';
 import { ConnectionPanel } from './components/ConnectionPanel';
+import { MigrationsView } from './components/migration/MigrationsView';
 import { subscribeConnectionState, useConnectionsStore } from './store/connections';
 import { useSelectionStore } from './store/selection';
 import { useNamespacesStore } from './store/namespaces';
+import { subscribeMigrationProgress } from './store/migrations';
 
 export function App() {
   const [version, setVersion] = useState<string>('—');
@@ -29,9 +31,12 @@ export function App() {
       }
     });
 
+    const unsubMigrations = subscribeMigrationProgress();
+
     return () => {
       unsub();
       unsubStates();
+      unsubMigrations();
     };
   }, []);
 
@@ -47,6 +52,7 @@ export function App() {
         </aside>
         <main className="shell-main">
           {selection.kind === 'welcome' && <ConnectionsView />}
+          {selection.kind === 'migrations' && <MigrationsView />}
           {selection.kind === 'connection' && (
             <ConnectionPanel connectionId={selection.connectionId} />
           )}

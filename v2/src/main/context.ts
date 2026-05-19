@@ -4,6 +4,7 @@ import { openStore, type Db } from './db/store.js';
 import { ConnectionsRepo } from './db/connections.js';
 import { PrefsRepo } from './db/prefs.js';
 import { QueryHistoryRepo } from './db/queryHistory.js';
+import { MigrationJobsRepo } from './db/migrationJobs.js';
 import type { MongoRegistry } from './mongo/registry.js';
 
 export interface AppContext {
@@ -11,6 +12,7 @@ export interface AppContext {
   connections: ConnectionsRepo;
   prefs: PrefsRepo;
   queryHistory: QueryHistoryRepo;
+  migrations: MigrationJobsRepo;
   registry?: MongoRegistry;
 }
 
@@ -21,11 +23,14 @@ export function initContext(): AppContext {
 
   const dbPath = join(app.getPath('userData'), 'mex-v2.db');
   const db = openStore(dbPath);
+  const migrations = new MigrationJobsRepo(db);
+  migrations.reconcileOrphans();
   context = {
     db,
     connections: new ConnectionsRepo(db),
     prefs: new PrefsRepo(db),
     queryHistory: new QueryHistoryRepo(db),
+    migrations,
   };
   return context;
 }

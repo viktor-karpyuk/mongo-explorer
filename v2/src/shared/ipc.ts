@@ -45,6 +45,12 @@ import type {
   IoResult,
 } from './io.js';
 import type { ShellEvent } from './shell.js';
+import type {
+  MigrationJob,
+  MigrationProgress,
+  MigrationSpec,
+  PreflightResult,
+} from './migration.js';
 
 export const IpcChannels = {
   AppVersion: 'app:version',
@@ -112,6 +118,16 @@ export const IpcChannels = {
   ShellSend: 'shell:send',
   ShellStop: 'shell:stop',
   ShellEvent: 'shell:event',
+
+  MigrateList: 'migrate:list',
+  MigrateGet: 'migrate:get',
+  MigrateCreate: 'migrate:create',
+  MigrateStart: 'migrate:start',
+  MigratePause: 'migrate:pause',
+  MigrateCancel: 'migrate:cancel',
+  MigrateDelete: 'migrate:delete',
+  MigratePreflight: 'migrate:preflight',
+  MigrateProgress: 'migrate:progress',
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
@@ -227,6 +243,18 @@ export interface ShellApi {
   onEvent(cb: (event: ShellEvent) => void): () => void;
 }
 
+export interface MigrationApi {
+  list(): Promise<MigrationJob[]>;
+  get(jobId: string): Promise<MigrationJob | null>;
+  preflight(spec: MigrationSpec): Promise<PreflightResult>;
+  create(spec: MigrationSpec): Promise<MigrationJob>;
+  start(jobId: string): Promise<void>;
+  pause(jobId: string): Promise<void>;
+  cancel(jobId: string): Promise<void>;
+  delete(jobId: string): Promise<void>;
+  onProgress(cb: (event: MigrationProgress) => void): () => void;
+}
+
 export interface BridgeApi {
   appVersion(): Promise<string>;
   ping(): Promise<'pong'>;
@@ -239,6 +267,7 @@ export interface BridgeApi {
   monitor: MonitorApi;
   io: IoApi;
   shell: ShellApi;
+  migrate: MigrationApi;
 }
 
 declare global {

@@ -1541,6 +1541,55 @@ button { font-family: inherit; }
 .shell-input:focus { border-color: var(--accent); }
 .shell-input:disabled { opacity: 0.5; }
 
+/* Migrations */
+.modal--wide { width: min(760px, 95vw); }
+
+.migration-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.ns-picker {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  padding: 8px 12px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.ns-picker__db { margin-bottom: 6px; }
+.ns-picker__colls {
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0;
+}
+
+.migrations-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.migrations-table th {
+  text-align: left;
+  padding: 6px 10px;
+  color: var(--fg-muted);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-bottom: 1px solid var(--border);
+}
+
+.migrations-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
 /* Helpers */
 .muted { color: var(--fg-muted); font-size: 12px; }
 .spacer { flex: 1; }

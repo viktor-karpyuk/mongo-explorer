@@ -11,10 +11,17 @@ import {
   type ProfilerInput,
   type QueriesApi,
   type QueryHistoryRow,
+  type MigrationApi,
   type SchemaApi,
   type ShellApi,
 } from '../shared/ipc.js';
 import type { ShellEvent } from '../shared/shell.js';
+import type {
+  MigrationJob,
+  MigrationProgress,
+  MigrationSpec,
+  PreflightResult,
+} from '../shared/migration.js';
 import type { ClusterSnapshot } from '../shared/cluster.js';
 import type { MonitorTick, SlowOp } from '../shared/monitor.js';
 import type {
@@ -212,6 +219,29 @@ const shell: ShellApi = {
   },
 };
 
+const migrate: MigrationApi = {
+  list: () => ipcRenderer.invoke(IpcChannels.MigrateList) as Promise<MigrationJob[]>,
+  get: (jobId) =>
+    ipcRenderer.invoke(IpcChannels.MigrateGet, jobId) as Promise<MigrationJob | null>,
+  preflight: (spec: MigrationSpec) =>
+    ipcRenderer.invoke(IpcChannels.MigratePreflight, spec) as Promise<PreflightResult>,
+  create: (spec: MigrationSpec) =>
+    ipcRenderer.invoke(IpcChannels.MigrateCreate, spec) as Promise<MigrationJob>,
+  start: (jobId) => ipcRenderer.invoke(IpcChannels.MigrateStart, jobId) as Promise<void>,
+  pause: (jobId) => ipcRenderer.invoke(IpcChannels.MigratePause, jobId) as Promise<void>,
+  cancel: (jobId) =>
+    ipcRenderer.invoke(IpcChannels.MigrateCancel, jobId) as Promise<void>,
+  delete: (jobId) =>
+    ipcRenderer.invoke(IpcChannels.MigrateDelete, jobId) as Promise<void>,
+  onProgress: (cb) => {
+    const handler = (_e: unknown, event: MigrationProgress) => cb(event);
+    ipcRenderer.on(IpcChannels.MigrateProgress, handler);
+    return () => {
+      ipcRenderer.off(IpcChannels.MigrateProgress, handler);
+    };
+  },
+};
+
 const api: BridgeApi = {
   appVersion: () => ipcRenderer.invoke(IpcChannels.AppVersion) as Promise<string>,
   ping: () => ipcRenderer.invoke(IpcChannels.AppPing) as Promise<'pong'>,
@@ -224,6 +254,7 @@ const api: BridgeApi = {
   monitor,
   io,
   shell,
+  migrate,
 };
 
 contextBridge.exposeInMainWorld('mex', api);

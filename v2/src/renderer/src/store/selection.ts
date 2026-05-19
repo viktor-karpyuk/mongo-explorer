@@ -2,6 +2,7 @@ import { create } from 'zustand';
 
 export type Selection =
   | { kind: 'welcome' }
+  | { kind: 'migrations' }
   | { kind: 'connection'; connectionId: string }
   | { kind: 'database'; connectionId: string; db: string }
   | { kind: 'collection'; connectionId: string; db: string; collection: string };
