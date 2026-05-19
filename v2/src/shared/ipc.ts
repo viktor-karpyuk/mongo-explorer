@@ -35,6 +35,7 @@ import type {
   ReplaceInput,
   UpdateInput,
 } from './mutation.js';
+import type { ClusterSnapshot } from './cluster.js';
 
 export const IpcChannels = {
   AppVersion: 'app:version',
@@ -82,6 +83,8 @@ export const IpcChannels = {
   MutateReplace: 'mutate:replace',
   MutateDelete: 'mutate:delete',
   MutateBulk: 'mutate:bulk',
+
+  ClusterSnapshot: 'cluster:snapshot',
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
@@ -164,6 +167,10 @@ export interface MutateApi {
   bulk(input: BulkWriteInput): Promise<MutateResponse>;
 }
 
+export interface ClusterApi {
+  snapshot(connectionId: string): Promise<ClusterSnapshot>;
+}
+
 export interface BridgeApi {
   appVersion(): Promise<string>;
   ping(): Promise<'pong'>;
@@ -172,6 +179,7 @@ export interface BridgeApi {
   query: QueriesApi;
   schema: SchemaApi;
   mutate: MutateApi;
+  cluster: ClusterApi;
 }
 
 declare global {

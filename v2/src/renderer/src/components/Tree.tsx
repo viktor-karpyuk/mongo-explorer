@@ -182,10 +182,15 @@ export function Tree() {
           }
           const dbs = cache?.databases ?? [];
 
+          const isConnSel =
+            selection.kind === 'connection' && selection.connectionId === conn.id;
           return (
             <div key={conn.id} className="tree__conn">
               <div
-                className="tree__row tree__row--conn"
+                className={`tree__row tree__row--conn${
+                  isConnSel ? ' tree__row--active' : ''
+                }`}
+                onClick={() => select({ kind: 'connection', connectionId: conn.id })}
                 onContextMenu={(e) => onConnContextMenu(e, conn.id)}
               >
                 <span className="tree__caret">●</span>

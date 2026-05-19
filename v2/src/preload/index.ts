@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import {
   IpcChannels,
   type BridgeApi,
+  type ClusterApi,
   type ConnectionsApi,
   type MutateApi,
   type NamespacesApi,
@@ -9,6 +10,7 @@ import {
   type QueryHistoryRow,
   type SchemaApi,
 } from '../shared/ipc.js';
+import type { ClusterSnapshot } from '../shared/cluster.js';
 import type {
   BulkWriteInput,
   DeleteInput,
@@ -146,6 +148,11 @@ const mutate: MutateApi = {
     ipcRenderer.invoke(IpcChannels.MutateBulk, input) as Promise<MutateResponse>,
 };
 
+const cluster: ClusterApi = {
+  snapshot: (id) =>
+    ipcRenderer.invoke(IpcChannels.ClusterSnapshot, id) as Promise<ClusterSnapshot>,
+};
+
 const api: BridgeApi = {
   appVersion: () => ipcRenderer.invoke(IpcChannels.AppVersion) as Promise<string>,
   ping: () => ipcRenderer.invoke(IpcChannels.AppPing) as Promise<'pong'>,
@@ -154,6 +161,7 @@ const api: BridgeApi = {
   query,
   schema,
   mutate,
+  cluster,
 };
 
 contextBridge.exposeInMainWorld('mex', api);

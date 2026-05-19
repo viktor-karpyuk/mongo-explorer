@@ -3,6 +3,7 @@ import { ConnectionsView } from './components/ConnectionsView';
 import { Tree } from './components/Tree';
 import { DbStatsPanel } from './components/DbStatsPanel';
 import { CollectionPanel } from './components/CollectionPanel';
+import { ClusterPanel } from './components/ClusterPanel';
 import { subscribeConnectionState, useConnectionsStore } from './store/connections';
 import { useSelectionStore } from './store/selection';
 import { useNamespacesStore } from './store/namespaces';
@@ -46,6 +47,9 @@ export function App() {
         </aside>
         <main className="shell-main">
           {selection.kind === 'welcome' && <ConnectionsView />}
+          {selection.kind === 'connection' && (
+            <ClusterPanel connectionId={selection.connectionId} />
+          )}
           {selection.kind === 'database' && (
             <DbStatsPanel connectionId={selection.connectionId} db={selection.db} />
           )}

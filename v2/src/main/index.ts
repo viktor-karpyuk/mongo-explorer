@@ -9,6 +9,7 @@ import { registerQueryIpc } from './ipc/queries.js';
 import { registerAggregateIpc } from './ipc/aggregate.js';
 import { registerSchemaIpc } from './ipc/schema.js';
 import { registerMutateIpc } from './ipc/mutate.js';
+import { registerClusterIpc } from './ipc/cluster.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = !!process.env['ELECTRON_RENDERER_URL'];
@@ -59,6 +60,7 @@ app.whenReady().then(() => {
   registerAggregateIpc(ctx, ctx.registry);
   registerSchemaIpc(ctx.registry);
   registerMutateIpc(ctx.registry);
+  registerClusterIpc(ctx.registry);
   registerIpc();
   createWindow();
 
