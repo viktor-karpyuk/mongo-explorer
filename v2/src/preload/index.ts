@@ -4,6 +4,7 @@ import {
   type BridgeApi,
   type ClusterApi,
   type ConnectionsApi,
+  type IoApi,
   type MonitorApi,
   type MutateApi,
   type NamespacesApi,
@@ -14,6 +15,13 @@ import {
 } from '../shared/ipc.js';
 import type { ClusterSnapshot } from '../shared/cluster.js';
 import type { MonitorTick, SlowOp } from '../shared/monitor.js';
+import type {
+  DumpRestoreEvent,
+  DumpRestoreRequest,
+  ExportRequest,
+  ImportRequest,
+  IoResult,
+} from '../shared/io.js';
 import type {
   BulkWriteInput,
   DeleteInput,
@@ -156,6 +164,26 @@ const cluster: ClusterApi = {
     ipcRenderer.invoke(IpcChannels.ClusterSnapshot, id) as Promise<ClusterSnapshot>,
 };
 
+const io: IoApi = {
+  export: (req: ExportRequest) =>
+    ipcRenderer.invoke(IpcChannels.IoExport, req) as Promise<IoResult>,
+  import: (req: ImportRequest) =>
+    ipcRenderer.invoke(IpcChannels.IoImport, req) as Promise<IoResult>,
+  pickSave: (defaultName) =>
+    ipcRenderer.invoke(IpcChannels.IoPickSave, defaultName) as Promise<string | null>,
+  pickOpen: () => ipcRenderer.invoke(IpcChannels.IoPickOpen) as Promise<string | null>,
+  pickDir: () => ipcRenderer.invoke(IpcChannels.IoPickDir) as Promise<string | null>,
+  startDumpRestore: (req: DumpRestoreRequest) =>
+    ipcRenderer.invoke(IpcChannels.IoDumpRestoreStart, req) as Promise<string>,
+  onDumpRestoreEvent: (cb) => {
+    const handler = (_e: unknown, event: DumpRestoreEvent) => cb(event);
+    ipcRenderer.on(IpcChannels.IoDumpRestoreEvent, handler);
+    return () => {
+      ipcRenderer.off(IpcChannels.IoDumpRestoreEvent, handler);
+    };
+  },
+};
+
 const monitor: MonitorApi = {
   tick: (id) => ipcRenderer.invoke(IpcChannels.MonitorTick, id) as Promise<MonitorTick>,
   profileGet: (id, db) =>
@@ -176,6 +204,7 @@ const api: BridgeApi = {
   mutate,
   cluster,
   monitor,
+  io,
 };
 
 contextBridge.exposeInMainWorld('mex', api);

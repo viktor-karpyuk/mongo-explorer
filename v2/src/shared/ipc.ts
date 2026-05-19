@@ -37,6 +37,13 @@ import type {
 } from './mutation.js';
 import type { ClusterSnapshot } from './cluster.js';
 import type { MonitorTick, SlowOp } from './monitor.js';
+import type {
+  DumpRestoreEvent,
+  DumpRestoreRequest,
+  ExportRequest,
+  ImportRequest,
+  IoResult,
+} from './io.js';
 
 export const IpcChannels = {
   AppVersion: 'app:version',
@@ -91,6 +98,14 @@ export const IpcChannels = {
   MonitorProfileGet: 'monitor:profile-get',
   MonitorProfileSet: 'monitor:profile-set',
   MonitorSlowOps: 'monitor:slow-ops',
+
+  IoExport: 'io:export',
+  IoImport: 'io:import',
+  IoPickSave: 'io:pick-save',
+  IoPickOpen: 'io:pick-open',
+  IoPickDir: 'io:pick-dir',
+  IoDumpRestoreStart: 'io:dump-restore-start',
+  IoDumpRestoreEvent: 'io:dump-restore-event',
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
@@ -189,6 +204,16 @@ export interface MonitorApi {
   slowOps(connectionId: string, db: string, limit?: number): Promise<SlowOp[]>;
 }
 
+export interface IoApi {
+  export(req: ExportRequest): Promise<IoResult>;
+  import(req: ImportRequest): Promise<IoResult>;
+  pickSave(defaultName: string): Promise<string | null>;
+  pickOpen(): Promise<string | null>;
+  pickDir(): Promise<string | null>;
+  startDumpRestore(req: DumpRestoreRequest): Promise<string>;
+  onDumpRestoreEvent(cb: (event: DumpRestoreEvent) => void): () => void;
+}
+
 export interface BridgeApi {
   appVersion(): Promise<string>;
   ping(): Promise<'pong'>;
@@ -199,6 +224,7 @@ export interface BridgeApi {
   mutate: MutateApi;
   cluster: ClusterApi;
   monitor: MonitorApi;
+  io: IoApi;
 }
 
 declare global {

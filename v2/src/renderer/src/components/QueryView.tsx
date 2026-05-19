@@ -7,8 +7,21 @@ import { ReplaceDialog } from './mutate/ReplaceDialog';
 import { DeleteDialog } from './mutate/DeleteDialog';
 import { BulkWriteDialog } from './mutate/BulkWriteDialog';
 import { RowEditDialog } from './mutate/RowEditDialog';
+import { ExportDialog } from './io/ExportDialog';
+import { ImportDialog } from './io/ImportDialog';
+import { DumpRestoreDialog } from './io/DumpRestoreDialog';
 
-type MutateView = null | 'insert' | 'update' | 'replace' | 'delete' | 'bulk' | { kind: 'editRow'; doc: string };
+type MutateView =
+  | null
+  | 'insert'
+  | 'update'
+  | 'replace'
+  | 'delete'
+  | 'bulk'
+  | 'export'
+  | 'import'
+  | 'dump'
+  | { kind: 'editRow'; doc: string };
 
 interface Props {
   connectionId: string;
@@ -75,6 +88,15 @@ export function QueryView({ connectionId, db, collection }: Props) {
             </button>
             <button className="btn btn--ghost" onClick={() => setMutate('bulk')}>
               Bulk
+            </button>
+            <button className="btn btn--ghost" onClick={() => setMutate('export')}>
+              Export
+            </button>
+            <button className="btn btn--ghost" onClick={() => setMutate('import')}>
+              Import
+            </button>
+            <button className="btn btn--ghost" onClick={() => setMutate('dump')}>
+              Dump/Restore
             </button>
           </div>
           <button
@@ -230,6 +252,34 @@ export function QueryView({ connectionId, db, collection }: Props) {
           doc={mutate.doc}
           onClose={() => setMutate(null)}
           onDone={rerun}
+        />
+      )}
+      {mutate === 'export' && (
+        <ExportDialog
+          connectionId={connectionId}
+          db={db}
+          collection={collection}
+          initialFilter={draft.filter}
+          initialProjection={draft.projection}
+          initialSort={draft.sort}
+          onClose={() => setMutate(null)}
+        />
+      )}
+      {mutate === 'import' && (
+        <ImportDialog
+          connectionId={connectionId}
+          db={db}
+          collection={collection}
+          onClose={() => setMutate(null)}
+          onDone={rerun}
+        />
+      )}
+      {mutate === 'dump' && (
+        <DumpRestoreDialog
+          connectionId={connectionId}
+          defaultDb={db}
+          defaultCollection={collection}
+          onClose={() => setMutate(null)}
         />
       )}
     </div>
