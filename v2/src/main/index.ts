@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { IpcChannels } from '../shared/ipc.js';
+import { closeContext, initContext } from './context.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = !!process.env['ELECTRON_RENDERER_URL'];
@@ -45,6 +46,7 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
+  initContext();
   registerIpc();
   createWindow();
 
@@ -55,4 +57,8 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('will-quit', () => {
+  closeContext();
 });
