@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ConnectionsView } from './components/ConnectionsView';
 import { Tree } from './components/Tree';
 import { DbStatsPanel } from './components/DbStatsPanel';
-import { CollectionStatsPanel } from './components/CollectionStatsPanel';
+import { CollectionPanel } from './components/CollectionPanel';
 import { subscribeConnectionState, useConnectionsStore } from './store/connections';
 import { useSelectionStore } from './store/selection';
 import { useNamespacesStore } from './store/namespaces';
@@ -50,7 +50,7 @@ export function App() {
             <DbStatsPanel connectionId={selection.connectionId} db={selection.db} />
           )}
           {selection.kind === 'collection' && (
-            <CollectionStatsPanel
+            <CollectionPanel
               connectionId={selection.connectionId}
               db={selection.db}
               collection={selection.collection}

@@ -5,6 +5,7 @@ import { IpcChannels } from '../shared/ipc.js';
 import { closeContext, initContext } from './context.js';
 import { registerConnectionsIpc } from './ipc/connections.js';
 import { registerNamespaceIpc } from './ipc/namespaces.js';
+import { registerQueryIpc } from './ipc/queries.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = !!process.env['ELECTRON_RENDERER_URL'];
@@ -51,6 +52,7 @@ app.whenReady().then(() => {
   const ctx = initContext();
   ctx.registry = registerConnectionsIpc(ctx);
   registerNamespaceIpc(ctx.registry);
+  registerQueryIpc(ctx, ctx.registry);
   registerIpc();
   createWindow();
 

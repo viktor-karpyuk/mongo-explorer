@@ -15,6 +15,7 @@ import type {
   DatabaseInfo,
   DbStats,
 } from './namespace.js';
+import type { FindRequest, FindResponse } from './query.js';
 
 export const IpcChannels = {
   AppVersion: 'app:version',
@@ -42,6 +43,9 @@ export const IpcChannels = {
   CollDrop: 'coll:drop',
   CollRename: 'coll:rename',
   CollStats: 'coll:stats',
+
+  QueryFind: 'query:find',
+  QueryHistory: 'query:history',
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
@@ -83,11 +87,30 @@ export interface NamespacesApi {
   collStats(connectionId: string, db: string, name: string): Promise<CollStats>;
 }
 
+export interface QueryHistoryRow {
+  id: number;
+  connectionId: string;
+  database: string;
+  collection: string;
+  kind: 'find' | 'aggregate' | 'command';
+  body: string;
+  durationMs: number | null;
+  rowCount: number | null;
+  error: string | null;
+  ranAt: number;
+}
+
+export interface QueriesApi {
+  find(req: FindRequest): Promise<FindResponse>;
+  history(connectionId: string, limit?: number): Promise<QueryHistoryRow[]>;
+}
+
 export interface BridgeApi {
   appVersion(): Promise<string>;
   ping(): Promise<'pong'>;
   connections: ConnectionsApi;
   ns: NamespacesApi;
+  query: QueriesApi;
 }
 
 declare global {

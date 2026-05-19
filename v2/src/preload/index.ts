@@ -4,7 +4,10 @@ import {
   type BridgeApi,
   type ConnectionsApi,
   type NamespacesApi,
+  type QueriesApi,
+  type QueryHistoryRow,
 } from '../shared/ipc.js';
+import type { FindRequest, FindResponse } from '../shared/query.js';
 import type {
   ConnectionInput,
   ConnectionRecord,
@@ -77,11 +80,21 @@ const ns: NamespacesApi = {
     ipcRenderer.invoke(IpcChannels.CollStats, id, db, name) as Promise<CollStats>,
 };
 
+const query: QueriesApi = {
+  find: (req: FindRequest) =>
+    ipcRenderer.invoke(IpcChannels.QueryFind, req) as Promise<FindResponse>,
+  history: (connectionId, limit) =>
+    ipcRenderer.invoke(IpcChannels.QueryHistory, connectionId, limit) as Promise<
+      QueryHistoryRow[]
+    >,
+};
+
 const api: BridgeApi = {
   appVersion: () => ipcRenderer.invoke(IpcChannels.AppVersion) as Promise<string>,
   ping: () => ipcRenderer.invoke(IpcChannels.AppPing) as Promise<'pong'>,
   connections,
   ns,
+  query,
 };
 
 contextBridge.exposeInMainWorld('mex', api);
