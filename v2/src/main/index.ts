@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { IpcChannels } from '../shared/ipc.js';
 import { closeContext, initContext } from './context.js';
+import { registerConnectionsIpc } from './ipc/connections.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isDev = !!process.env['ELECTRON_RENDERER_URL'];
@@ -46,7 +47,8 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
-  initContext();
+  const ctx = initContext();
+  ctx.registry = registerConnectionsIpc(ctx);
   registerIpc();
   createWindow();
 
@@ -59,6 +61,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('will-quit', () => {
-  closeContext();
+app.on('will-quit', (e) => {
+  e.preventDefault();
+  closeContext().finally(() => app.exit());
 });

@@ -4,12 +4,14 @@ import { openStore, type Db } from './db/store.js';
 import { ConnectionsRepo } from './db/connections.js';
 import { PrefsRepo } from './db/prefs.js';
 import { QueryHistoryRepo } from './db/queryHistory.js';
+import type { MongoRegistry } from './mongo/registry.js';
 
 export interface AppContext {
   db: Db;
   connections: ConnectionsRepo;
   prefs: PrefsRepo;
   queryHistory: QueryHistoryRepo;
+  registry?: MongoRegistry;
 }
 
 let context: AppContext | undefined;
@@ -33,8 +35,9 @@ export function getContext(): AppContext {
   return context;
 }
 
-export function closeContext(): void {
+export async function closeContext(): Promise<void> {
   if (context) {
+    await context.registry?.disconnectAll();
     context.db.close();
     context = undefined;
   }
