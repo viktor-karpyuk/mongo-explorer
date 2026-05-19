@@ -1,6 +1,9 @@
 node_modules/
 out/
 dist/
+build/icon.icns
+build/icon.ico
+build/icon.png
 .DS_Store
 *.log
 .env
