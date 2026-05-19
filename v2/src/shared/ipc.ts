@@ -16,6 +16,7 @@ import type {
   DbStats,
 } from './namespace.js';
 import type { FindRequest, FindResponse } from './query.js';
+import type { AggregateRequest, AggregateResponse } from './aggregation.js';
 
 export const IpcChannels = {
   AppVersion: 'app:version',
@@ -45,6 +46,7 @@ export const IpcChannels = {
   CollStats: 'coll:stats',
 
   QueryFind: 'query:find',
+  QueryAggregate: 'query:aggregate',
   QueryHistory: 'query:history',
 } as const;
 
@@ -102,6 +104,7 @@ export interface QueryHistoryRow {
 
 export interface QueriesApi {
   find(req: FindRequest): Promise<FindResponse>;
+  aggregate(req: AggregateRequest): Promise<AggregateResponse>;
   history(connectionId: string, limit?: number): Promise<QueryHistoryRow[]>;
 }
 

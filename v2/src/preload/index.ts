@@ -8,6 +8,7 @@ import {
   type QueryHistoryRow,
 } from '../shared/ipc.js';
 import type { FindRequest, FindResponse } from '../shared/query.js';
+import type { AggregateRequest, AggregateResponse } from '../shared/aggregation.js';
 import type {
   ConnectionInput,
   ConnectionRecord,
@@ -83,6 +84,8 @@ const ns: NamespacesApi = {
 const query: QueriesApi = {
   find: (req: FindRequest) =>
     ipcRenderer.invoke(IpcChannels.QueryFind, req) as Promise<FindResponse>,
+  aggregate: (req: AggregateRequest) =>
+    ipcRenderer.invoke(IpcChannels.QueryAggregate, req) as Promise<AggregateResponse>,
   history: (connectionId, limit) =>
     ipcRenderer.invoke(IpcChannels.QueryHistory, connectionId, limit) as Promise<
       QueryHistoryRow[]

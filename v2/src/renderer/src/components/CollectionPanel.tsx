@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { QueryView } from './QueryView';
+import { AggregationView } from './AggregationView';
 import { CollectionStatsPanel } from './CollectionStatsPanel';
 
-type Sub = 'query' | 'stats';
+type Sub = 'query' | 'aggregate' | 'stats';
 
 interface Props {
   connectionId: string;
@@ -20,7 +21,13 @@ export function CollectionPanel({ connectionId, db, collection }: Props) {
           className={`tab${tab === 'query' ? ' tab--active' : ''}`}
           onClick={() => setTab('query')}
         >
-          Query
+          Find
+        </button>
+        <button
+          className={`tab${tab === 'aggregate' ? ' tab--active' : ''}`}
+          onClick={() => setTab('aggregate')}
+        >
+          Aggregate
         </button>
         <button
           className={`tab${tab === 'stats' ? ' tab--active' : ''}`}
@@ -32,6 +39,9 @@ export function CollectionPanel({ connectionId, db, collection }: Props) {
       <div className="coll-panel__body">
         {tab === 'query' && (
           <QueryView connectionId={connectionId} db={db} collection={collection} />
+        )}
+        {tab === 'aggregate' && (
+          <AggregationView connectionId={connectionId} db={db} collection={collection} />
         )}
         {tab === 'stats' && (
           <CollectionStatsPanel

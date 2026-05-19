@@ -939,6 +939,122 @@ button { font-family: inherit; }
   font-size: 13px;
 }
 
+/* Aggregation view */
+.agg-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.agg-view__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.agg-view__head strong { font-size: 13px; font-weight: 600; }
+
+.agg-template-picker {
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font-size: 12px;
+  max-width: 280px;
+}
+
+.inline-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.inline-field input {
+  width: 70px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
+.agg-view__stages {
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  max-height: 45%;
+  overflow-y: auto;
+}
+
+.agg-view__add {
+  align-self: flex-start;
+}
+
+.stage {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+
+.stage--disabled { opacity: 0.5; }
+
+.stage__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.stage__index {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg-elev-2);
+  color: var(--fg-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.stage__op {
+  background: var(--bg);
+  color: var(--accent);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.stage__body {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 0;
+  padding: 8px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  resize: vertical;
+  min-height: 60px;
+  outline: none;
+}
+
 /* Helpers */
 .muted { color: var(--fg-muted); font-size: 12px; }
 .spacer { flex: 1; }
