@@ -41,7 +41,19 @@ public final class ClusterWiring implements AutoCloseable {
         }
     }
 
+    /** Default false — the per-connection topology poller used to do
+     *  a 300 ms heartbeat (with 2 s visible cadence) on every connect,
+     *  including replSetGetStatus + replSetGetConfig per shard on
+     *  sharded clusters. Combined with monitoring sampler fan-out
+     *  this was a primary FX-thread starvation source. Set
+     *  {@code -Dmex.cluster.autoStart=true} to restore the old
+     *  behavior; otherwise the Cluster tab is responsible for
+     *  starting the topology poller when the user actually opens it. */
+    private static final boolean AUTO_START =
+            Boolean.parseBoolean(System.getProperty("mex.cluster.autoStart", "false"));
+
     private void enableFor(String connectionId) {
+        if (!AUTO_START) return;
         if (!wired.add(connectionId)) return;
         try {
             topology.start(connectionId);

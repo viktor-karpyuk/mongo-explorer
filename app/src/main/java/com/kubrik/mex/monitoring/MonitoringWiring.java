@@ -57,7 +57,20 @@ public final class MonitoringWiring implements AutoCloseable {
         }
     }
 
+    /** Default false — the per-connection auto-start used to register
+     *  8 samplers at 1 s cadence the moment any connect succeeded,
+     *  even when the user was just browsing. With 15+ FX listeners
+     *  on the metrics fan-out, that alone produced ~120
+     *  Platform.runLater jobs per second per connection and starved
+     *  the FX thread on every click / query. Set
+     *  {@code -Dmex.monitoring.autoStart=true} to restore the old
+     *  behavior; otherwise the Monitoring tab is responsible for
+     *  registering samplers when the user actually opens it. */
+    private static final boolean AUTO_START =
+            Boolean.parseBoolean(System.getProperty("mex.monitoring.autoStart", "false"));
+
     private void enableFor(String connectionId) {
+        if (!AUTO_START) return;
         if (!wired.add(connectionId)) return;
         MonitoringProfile enabled;
         try {
