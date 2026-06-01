@@ -7,12 +7,17 @@ import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import io.mex.ui.App
 
-fun main() = application {
-    Window(
-        onCloseRequest = ::exitApplication,
-        title = "Mongo Explorer",
-        state = WindowState(size = DpSize(1400.dp, 900.dp)),
-    ) {
-        App()
+fun main() {
+    val ctx = AppContext.bootstrap()
+    Runtime.getRuntime().addShutdownHook(Thread { ctx.close() })
+
+    application {
+        Window(
+            onCloseRequest = ::exitApplication,
+            title = "Mongo Explorer",
+            state = WindowState(size = DpSize(1400.dp, 900.dp)),
+        ) {
+            App(ctx)
+        }
     }
 }

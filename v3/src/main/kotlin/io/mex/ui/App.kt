@@ -1,15 +1,15 @@
 package io.mex.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import io.mex.AppContext
 import io.mex.ui.theme.MexTheme
 
 @Composable
-fun App() {
+fun App(ctx: AppContext) {
     MexTheme {
         Surface(
             modifier = Modifier.fillMaxSize(),
@@ -24,7 +24,8 @@ fun App() {
                     style = MaterialTheme.typography.headlineMedium,
                 )
                 Text(
-                    text = "Kotlin + Compose Desktop scaffold. Phase A complete.",
+                    text = "Persistence + crypto wired up. " +
+                        "${ctx.connections.list().size} saved connections.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
