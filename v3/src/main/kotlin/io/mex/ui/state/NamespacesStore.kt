@@ -1,0 +1,62 @@
+package io.mex.ui.state
+
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import io.mex.mongo.CollectionInfo
+import io.mex.mongo.DatabaseInfo
+import io.mex.mongo.MongoRegistry
+import io.mex.mongo.listCollections
+import io.mex.mongo.listDatabases
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+class NsCache {
+    var loading by mutableStateOf(false)
+    var databases by mutableStateOf<List<DatabaseInfo>>(emptyList())
+    val collections = mutableStateMapOf<String, List<CollectionInfo>>()
+    val collectionsLoading = mutableStateMapOf<String, Boolean>()
+    val expanded = mutableStateOf<Set<String>>(emptySet())
+}
+
+class NamespacesStore(private val registry: MongoRegistry) {
+    private val _byConnection = mutableStateMapOf<String, NsCache>()
+    val byConnection: Map<String, NsCache> get() = _byConnection
+
+    fun cache(connectionId: String): NsCache =
+        _byConnection.getOrPut(connectionId) { NsCache() }
+
+    suspend fun loadDatabases(connectionId: String) {
+        val client = registry.client(connectionId) ?: return
+        val cache = cache(connectionId)
+        cache.loading = true
+        try {
+            cache.databases = withContext(Dispatchers.IO) { listDatabases(client) }
+        } finally {
+            cache.loading = false
+        }
+    }
+
+    suspend fun loadCollections(connectionId: String, db: String) {
+        val client = registry.client(connectionId) ?: return
+        val cache = cache(connectionId)
+        cache.collectionsLoading[db] = true
+        try {
+            cache.collections[db] = withContext(Dispatchers.IO) { listCollections(client, db) }
+        } finally {
+            cache.collectionsLoading[db] = false
+        }
+    }
+
+    suspend fun toggleExpanded(connectionId: String, db: String) {
+        val cache = cache(connectionId)
+        val current = cache.expanded.value
+        cache.expanded.value = if (current.contains(db)) current - db else current + db
+        if (db !in current && cache.collections[db] == null) loadCollections(connectionId, db)
+    }
+
+    fun reset(connectionId: String) {
+        _byConnection.remove(connectionId)
+    }
+}
