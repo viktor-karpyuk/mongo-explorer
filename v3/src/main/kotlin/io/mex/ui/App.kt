@@ -6,16 +6,18 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.mex.AppContext
+import io.mex.migration.MigrationRunner
 import io.mex.mongo.ConnectionState
 import io.mex.mongo.MongoRegistry
-import io.mex.migration.MigrationRunner
 import io.mex.ui.cluster.ConnectionPanel
 import io.mex.ui.coll.CollPanel
-import io.mex.ui.migration.MigrationsView
 import io.mex.ui.connections.ConnectionsView
 import io.mex.ui.db.DbStatsPanel
+import io.mex.ui.migration.MigrationsView
 import io.mex.ui.query.QueryStore
+import io.mex.ui.settings.SettingsView
 import io.mex.ui.state.NamespacesStore
+import io.mex.ui.state.PrefsStore
 import io.mex.ui.state.Selection
 import io.mex.ui.state.SelectionStore
 import io.mex.ui.theme.MexTheme
@@ -28,8 +30,8 @@ fun App(ctx: AppContext) {
     val namespaces = remember { NamespacesStore(registry) }
     val queries = remember { QueryStore(ctx, registry) }
     val migrations = remember { MigrationRunner(ctx, registry) }
+    val prefs = remember { PrefsStore(ctx.prefs) }
 
-    // Auto-reset cached namespaces when a connection drops.
     val states by registry.states.collectAsState()
     LaunchedEffect(states) {
         for ((id, state) in states) {
@@ -37,7 +39,7 @@ fun App(ctx: AppContext) {
         }
     }
 
-    MexTheme {
+    MexTheme(theme = prefs.theme) {
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
@@ -54,7 +56,7 @@ fun App(ctx: AppContext) {
                     when (val s = selection.current) {
                         Selection.Welcome -> ConnectionsView(ctx, registry)
                         Selection.Migrations -> MigrationsView(ctx, registry, migrations)
-                        Selection.Settings -> PlaceholderPanel("Settings")
+                        Selection.Settings -> SettingsView(ctx, prefs)
                         is Selection.ConnectionView -> ConnectionPanel(ctx, s.connectionId, registry)
                         is Selection.Database -> DbStatsPanel(s.connectionId, s.db, registry)
                         is Selection.Collection -> CollPanel(
@@ -69,14 +71,5 @@ fun App(ctx: AppContext) {
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun PlaceholderPanel(label: String) {
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-        Text(label, style = MaterialTheme.typography.headlineSmall)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("Phase pending.", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

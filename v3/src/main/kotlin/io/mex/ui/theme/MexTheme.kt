@@ -6,6 +6,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import io.mex.ui.state.ThemePref
 
 private val DarkColors = darkColorScheme(
     primary = Color(0xFF4EA1FF),
@@ -31,11 +32,16 @@ private val LightColors = lightColorScheme(
 
 @Composable
 fun MexTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    theme: ThemePref = ThemePref.System,
     content: @Composable () -> Unit,
 ) {
+    val isDark = when (theme) {
+        ThemePref.Dark -> true
+        ThemePref.Light -> false
+        ThemePref.System -> isSystemInDarkTheme()
+    }
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = if (isDark) DarkColors else LightColors,
         content = content,
     )
 }
