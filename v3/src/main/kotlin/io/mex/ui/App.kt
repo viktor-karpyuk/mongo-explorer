@@ -6,11 +6,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.mex.AppContext
-import io.mex.mongo.MongoRegistry
 import io.mex.mongo.ConnectionState
-import io.mex.ui.coll.CollStatsPanel
+import io.mex.mongo.MongoRegistry
+import io.mex.ui.coll.CollPanel
 import io.mex.ui.connections.ConnectionsView
 import io.mex.ui.db.DbStatsPanel
+import io.mex.ui.query.QueryStore
 import io.mex.ui.state.NamespacesStore
 import io.mex.ui.state.Selection
 import io.mex.ui.state.SelectionStore
@@ -22,6 +23,7 @@ fun App(ctx: AppContext) {
     val registry = remember { MongoRegistry() }
     val selection = remember { SelectionStore() }
     val namespaces = remember { NamespacesStore(registry) }
+    val queries = remember { QueryStore(ctx, registry) }
 
     // Auto-reset cached namespaces when a connection drops.
     val states by registry.states.collectAsState()
@@ -40,7 +42,6 @@ fun App(ctx: AppContext) {
                 Surface(
                     modifier = Modifier.width(280.dp).fillMaxHeight(),
                     color = MaterialTheme.colorScheme.surface,
-                    border = MaterialTheme.shapes.small.let { null },
                 ) {
                     Tree(ctx, registry, selection, namespaces)
                 }
@@ -52,7 +53,14 @@ fun App(ctx: AppContext) {
                         Selection.Settings -> PlaceholderPanel("Settings")
                         is Selection.ConnectionView -> PlaceholderPanel("Cluster (Phase I)")
                         is Selection.Database -> DbStatsPanel(s.connectionId, s.db, registry)
-                        is Selection.Collection -> CollStatsPanel(s.connectionId, s.db, s.collection, registry)
+                        is Selection.Collection -> CollPanel(
+                            ctx = ctx,
+                            registry = registry,
+                            queries = queries,
+                            connectionId = s.connectionId,
+                            db = s.db,
+                            collection = s.collection,
+                        )
                     }
                 }
             }
