@@ -8,6 +8,7 @@ import androidx.compose.ui.unit.dp
 import io.mex.AppContext
 import io.mex.mongo.ConnectionState
 import io.mex.mongo.MongoRegistry
+import io.mex.ui.cluster.ClusterPanel
 import io.mex.ui.coll.CollPanel
 import io.mex.ui.connections.ConnectionsView
 import io.mex.ui.db.DbStatsPanel
@@ -51,7 +52,7 @@ fun App(ctx: AppContext) {
                         Selection.Welcome -> ConnectionsView(ctx, registry)
                         Selection.Migrations -> PlaceholderPanel("Migrations")
                         Selection.Settings -> PlaceholderPanel("Settings")
-                        is Selection.ConnectionView -> PlaceholderPanel("Cluster (Phase I)")
+                        is Selection.ConnectionView -> ClusterPanel(s.connectionId, registry)
                         is Selection.Database -> DbStatsPanel(s.connectionId, s.db, registry)
                         is Selection.Collection -> CollPanel(
                             ctx = ctx,
