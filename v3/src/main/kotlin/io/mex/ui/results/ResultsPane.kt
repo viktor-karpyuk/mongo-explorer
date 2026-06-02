@@ -241,10 +241,10 @@ private fun TableBody(rows: List<String>, selectedIndex: Int, onSelect: (Int) ->
         CenterText("No documents to render.")
         return
     }
-    val hscroll = rememberScrollState()
-    Column(modifier = Modifier.fillMaxSize().horizontalScroll(hscroll)) {
+    Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
+                .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surfaceVariant)
                 .padding(vertical = 4.dp),
         ) {
@@ -252,7 +252,7 @@ private fun TableBody(rows: List<String>, selectedIndex: Int, onSelect: (Int) ->
             columns.forEach { c -> HeaderCell(c) }
         }
         HorizontalDivider()
-        LazyColumn(modifier = Modifier.weight(1f)) {
+        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
             items(parsed.size) { i ->
                 val doc = parsed[i]
                 val isSelected = i == selectedIndex
@@ -281,7 +281,7 @@ private fun TableBody(rows: List<String>, selectedIndex: Int, onSelect: (Int) ->
 }
 
 @Composable
-private fun IndexCell(text: String, header: Boolean = false, selected: Boolean = false) {
+private fun RowScope.IndexCell(text: String, header: Boolean = false, selected: Boolean = false) {
     Box(modifier = Modifier.width(60.dp).padding(horizontal = 8.dp)) {
         Text(
             text,
@@ -297,8 +297,8 @@ private fun IndexCell(text: String, header: Boolean = false, selected: Boolean =
 }
 
 @Composable
-private fun HeaderCell(text: String) {
-    Box(modifier = Modifier.width(180.dp).padding(horizontal = 8.dp)) {
+private fun RowScope.HeaderCell(text: String) {
+    Box(modifier = Modifier.weight(1f).widthIn(min = 120.dp).padding(horizontal = 8.dp)) {
         Text(
             text,
             style = MaterialTheme.typography.labelSmall,
@@ -311,8 +311,8 @@ private fun HeaderCell(text: String) {
 }
 
 @Composable
-private fun CellView(v: JsonElement?) {
-    Box(modifier = Modifier.width(180.dp).padding(horizontal = 8.dp)) {
+private fun RowScope.CellView(v: JsonElement?) {
+    Box(modifier = Modifier.weight(1f).widthIn(min = 120.dp).padding(horizontal = 8.dp)) {
         if (v == null) {
             Text("—", color = Color.DarkGray, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
         } else {
