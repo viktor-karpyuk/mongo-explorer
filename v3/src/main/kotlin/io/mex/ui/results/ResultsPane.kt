@@ -2,6 +2,7 @@ package io.mex.ui.results
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -14,6 +15,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -23,6 +29,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import java.awt.Cursor
 
 enum class ResultTab { Table, Tree, Json, Error }
 
@@ -39,35 +46,52 @@ fun ResultsPane(
 ) {
     var tab by remember { mutableStateOf(ResultTab.Table) }
     var selectedIndex by remember(result) { mutableStateOf(-1) }
+    var splitFraction by remember { mutableStateOf(0.62f) }
+    var splitContainerHeightPx by remember { mutableStateOf(0) }
     val isError = result is FindResult.Failed
     LaunchedEffect(isError) { if (isError) tab = ResultTab.Error }
 
     Column(modifier = Modifier.fillMaxSize()) {
         TabRow(tab = tab, hasError = isError, onSelect = { tab = it })
-        // Result body
-        Box(modifier = Modifier.weight(0.62f).fillMaxWidth()) {
-            when {
-                running && result == null -> CenterText("Running…")
-                result == null -> CenterText("Run a query to see results.")
-                result is FindResult.Failed && tab == ResultTab.Error -> ErrorBody(result.error)
-                result is FindResult.Ok -> when (tab) {
-                    ResultTab.Table -> TableBody(result.rows, selectedIndex) { selectedIndex = it }
-                    ResultTab.Tree -> TreeBody(result.rows, selectedIndex) { selectedIndex = it }
-                    ResultTab.Json -> JsonBody(result.rows)
-                    ResultTab.Error -> ErrorBody("(no error)")
+        // Split container — measure its height so the drag delta maps to a fraction.
+        Column(
+            modifier = Modifier.weight(1f).fillMaxWidth().onSizeChanged {
+                splitContainerHeightPx = it.height
+            },
+        ) {
+            // Result body
+            Box(modifier = Modifier.weight(splitFraction).fillMaxWidth()) {
+                when {
+                    running && result == null -> CenterText("Running…")
+                    result == null -> CenterText("Run a query to see results.")
+                    result is FindResult.Failed && tab == ResultTab.Error -> ErrorBody(result.error)
+                    result is FindResult.Ok -> when (tab) {
+                        ResultTab.Table -> TableBody(result.rows, selectedIndex) { selectedIndex = it }
+                        ResultTab.Tree -> TreeBody(result.rows, selectedIndex) { selectedIndex = it }
+                        ResultTab.Json -> JsonBody(result.rows)
+                        ResultTab.Error -> ErrorBody("(no error)")
+                    }
+                    else -> {}
                 }
-                else -> {}
             }
+            // Draggable divider
+            SplitDivider(
+                onDragPx = { deltaY ->
+                    if (splitContainerHeightPx > 0) {
+                        splitFraction = (splitFraction + deltaY / splitContainerHeightPx)
+                            .coerceIn(0.15f, 0.85f)
+                    }
+                },
+            )
+            // Preview / edit panel
+            PreviewPanel(
+                modifier = Modifier.weight(1f - splitFraction).fillMaxWidth(),
+                rows = (result as? FindResult.Ok)?.rows,
+                selectedIndex = selectedIndex,
+                onEditRow = onEditRow,
+                onDeleteRow = onDeleteRow,
+            )
         }
-        HorizontalDivider()
-        // Preview / edit panel
-        PreviewPanel(
-            modifier = Modifier.weight(0.38f).fillMaxWidth(),
-            rows = (result as? FindResult.Ok)?.rows,
-            selectedIndex = selectedIndex,
-            onEditRow = onEditRow,
-            onDeleteRow = onDeleteRow,
-        )
         Pager(
             result = result,
             running = running,
@@ -75,6 +99,33 @@ fun ResultsPane(
             limit = limit,
             onPrev = onPrev,
             onNext = onNext,
+        )
+    }
+}
+
+@Composable
+private fun SplitDivider(onDragPx: (Float) -> Unit) {
+    val resizeCursor = remember { PointerIcon(Cursor.getPredefinedCursor(Cursor.N_RESIZE_CURSOR)) }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(6.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .pointerHoverIcon(resizeCursor)
+            .pointerInput(Unit) {
+                detectDragGestures { change, drag ->
+                    change.consume()
+                    onDragPx(drag.y)
+                }
+            },
+    ) {
+        // Subtle grip in the middle of the divider.
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .width(36.dp)
+                .height(2.dp)
+                .background(MaterialTheme.colorScheme.outline),
         )
     }
 }
