@@ -52,7 +52,7 @@ fun App(ctx: AppContext) {
                         Selection.Welcome -> ConnectionsView(ctx, registry)
                         Selection.Migrations -> PlaceholderPanel("Migrations")
                         Selection.Settings -> PlaceholderPanel("Settings")
-                        is Selection.ConnectionView -> ConnectionPanel(s.connectionId, registry)
+                        is Selection.ConnectionView -> ConnectionPanel(ctx, s.connectionId, registry)
                         is Selection.Database -> DbStatsPanel(s.connectionId, s.db, registry)
                         is Selection.Collection -> CollPanel(
                             ctx = ctx,
