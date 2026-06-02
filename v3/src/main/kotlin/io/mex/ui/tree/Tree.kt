@@ -70,18 +70,6 @@ fun Tree(
         )
 
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            TopLevelRow("Connections", current is Selection.Welcome) {
-                selection.select(Selection.Welcome)
-            }
-            TopLevelRow("Migrations", current is Selection.Migrations) {
-                selection.select(Selection.Migrations)
-            }
-            TopLevelRow("Settings", current is Selection.Settings) {
-                selection.select(Selection.Settings)
-            }
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
             if (connected.isEmpty()) {
                 Text(
                     "Open a connection to browse.",
@@ -181,26 +169,6 @@ fun Tree(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun TopLevelRow(label: String, selected: Boolean, onClick: () -> Unit) {
-    val bg = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(bg, RoundedCornerShape(4.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            label.uppercase(),
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 

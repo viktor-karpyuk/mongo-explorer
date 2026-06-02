@@ -1,9 +1,14 @@
 package io.mex.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.mex.AppContext
 import io.mex.migration.MigrationRunner
@@ -46,32 +51,90 @@ fun App(ctx: AppContext) {
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
         ) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                Surface(
-                    modifier = Modifier.width(280.dp).fillMaxHeight(),
-                    color = MaterialTheme.colorScheme.surface,
-                ) {
-                    Tree(ctx, registry, selection, namespaces, connectionsVm)
-                }
-                VerticalDivider()
-                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                    when (val s = selection.current) {
-                        Selection.Welcome -> ConnectionsView(ctx, registry, connectionsVm, selection)
-                        Selection.Migrations -> MigrationsView(ctx, registry, migrations)
-                        Selection.Settings -> SettingsView(ctx, prefs)
-                        is Selection.ConnectionView -> ConnectionPanel(ctx, s.connectionId, registry)
-                        is Selection.Database -> DbStatsPanel(s.connectionId, s.db, registry)
-                        is Selection.Collection -> CollPanel(
-                            ctx = ctx,
-                            registry = registry,
-                            queries = queries,
-                            connectionId = s.connectionId,
-                            db = s.db,
-                            collection = s.collection,
-                        )
+            Column(modifier = Modifier.fillMaxSize()) {
+                TopBar(selection = selection)
+                HorizontalDivider()
+                Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    Surface(
+                        modifier = Modifier.width(280.dp).fillMaxHeight(),
+                        color = MaterialTheme.colorScheme.surface,
+                    ) {
+                        Tree(ctx, registry, selection, namespaces, connectionsVm)
+                    }
+                    VerticalDivider()
+                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                        when (val s = selection.current) {
+                            Selection.Welcome -> ConnectionsView(ctx, registry, connectionsVm, selection)
+                            Selection.Migrations -> MigrationsView(ctx, registry, migrations)
+                            Selection.Settings -> SettingsView(ctx, prefs)
+                            is Selection.ConnectionView -> ConnectionPanel(ctx, s.connectionId, registry)
+                            is Selection.Database -> DbStatsPanel(s.connectionId, s.db, registry)
+                            is Selection.Collection -> CollPanel(
+                                ctx = ctx,
+                                registry = registry,
+                                queries = queries,
+                                connectionId = s.connectionId,
+                                db = s.db,
+                                collection = s.collection,
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun TopBar(selection: SelectionStore) {
+    val current = selection.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Mongo Explorer",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(modifier = Modifier.width(24.dp))
+        TopBarItem("Connections", current is Selection.Welcome) {
+            selection.select(Selection.Welcome)
+        }
+        TopBarItem("Migrations", current is Selection.Migrations) {
+            selection.select(Selection.Migrations)
+        }
+        TopBarItem("Settings", current is Selection.Settings) {
+            selection.select(Selection.Settings)
+        }
+    }
+}
+
+@Composable
+private fun TopBarItem(label: String, selected: Boolean, onClick: () -> Unit) {
+    val bg = if (selected)
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+    else
+        MaterialTheme.colorScheme.surface
+    val color = if (selected)
+        MaterialTheme.colorScheme.primary
+    else
+        MaterialTheme.colorScheme.onSurfaceVariant
+    Box(
+        modifier = Modifier
+            .padding(horizontal = 4.dp)
+            .background(bg, RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
+            color = color,
+        )
     }
 }
