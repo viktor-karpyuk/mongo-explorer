@@ -97,6 +97,7 @@ fun ConnectionsView(
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun ConnectionCard(
     conn: ConnectionSummary,
@@ -141,9 +142,10 @@ private fun ConnectionCard(
                 }
             }
 
-            Row(
+            FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 if (state is ConnectionState.Connected) {
                     TextButton(onClick = onClose) { Text("Disconnect") }
@@ -155,7 +157,6 @@ private fun ConnectionCard(
                         Text(if (state is ConnectionState.Connecting) "Connecting…" else "Connect")
                     }
                 }
-                Spacer(modifier = Modifier.weight(1f))
                 TextButton(onClick = onEdit) { Text("Edit") }
                 TextButton(onClick = onDuplicate) { Text("Duplicate") }
                 TextButton(onClick = onDelete) { Text("Delete") }
