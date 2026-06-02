@@ -1,6 +1,7 @@
 package io.mex
 
 import io.mex.data.ConnectionsRepo
+import io.mex.data.MigrationJobsRepo
 import io.mex.data.PrefsRepo
 import io.mex.data.QueryHistoryRepo
 import io.mex.data.Store
@@ -14,18 +15,21 @@ class AppContext(
     val uriHistory: UriHistoryRepo,
     val prefs: PrefsRepo,
     val queryHistory: QueryHistoryRepo,
+    val migrations: MigrationJobsRepo,
 ) : AutoCloseable {
     override fun close() = store.close()
 
     companion object {
         fun bootstrap(): AppContext {
             val store = Store.open(dbPath())
+            val migrations = MigrationJobsRepo(store).also { it.reconcileOrphans() }
             return AppContext(
                 store = store,
                 connections = ConnectionsRepo(store),
                 uriHistory = UriHistoryRepo(store),
                 prefs = PrefsRepo(store),
                 queryHistory = QueryHistoryRepo(store),
+                migrations = migrations,
             )
         }
 

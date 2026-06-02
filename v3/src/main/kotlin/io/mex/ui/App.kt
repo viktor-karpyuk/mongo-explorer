@@ -8,8 +8,10 @@ import androidx.compose.ui.unit.dp
 import io.mex.AppContext
 import io.mex.mongo.ConnectionState
 import io.mex.mongo.MongoRegistry
+import io.mex.migration.MigrationRunner
 import io.mex.ui.cluster.ConnectionPanel
 import io.mex.ui.coll.CollPanel
+import io.mex.ui.migration.MigrationsView
 import io.mex.ui.connections.ConnectionsView
 import io.mex.ui.db.DbStatsPanel
 import io.mex.ui.query.QueryStore
@@ -25,6 +27,7 @@ fun App(ctx: AppContext) {
     val selection = remember { SelectionStore() }
     val namespaces = remember { NamespacesStore(registry) }
     val queries = remember { QueryStore(ctx, registry) }
+    val migrations = remember { MigrationRunner(ctx, registry) }
 
     // Auto-reset cached namespaces when a connection drops.
     val states by registry.states.collectAsState()
@@ -50,7 +53,7 @@ fun App(ctx: AppContext) {
                 Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                     when (val s = selection.current) {
                         Selection.Welcome -> ConnectionsView(ctx, registry)
-                        Selection.Migrations -> PlaceholderPanel("Migrations")
+                        Selection.Migrations -> MigrationsView(ctx, registry, migrations)
                         Selection.Settings -> PlaceholderPanel("Settings")
                         is Selection.ConnectionView -> ConnectionPanel(ctx, s.connectionId, registry)
                         is Selection.Database -> DbStatsPanel(s.connectionId, s.db, registry)
