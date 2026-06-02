@@ -14,6 +14,7 @@ import io.mex.ui.io.ImportDialog
 import io.mex.ui.mutate.DeleteDialog
 import io.mex.ui.mutate.InsertDialog
 import io.mex.ui.mutate.ReplaceDialog
+import io.mex.ui.mutate.RowEditDialog
 import io.mex.ui.mutate.UpdateDialog
 import io.mex.ui.results.ResultsPane
 import kotlinx.coroutines.launch
@@ -110,15 +111,16 @@ fun QueryView(
     }
 
     rowEdit?.let { (filter, doc) ->
-        ReplaceDialog(
+        RowEditDialog(
             registry = registry,
             connectionId = connectionId,
             db = db,
-            coll = collection,
+            collection = collection,
             initialFilter = filter,
             initialDoc = doc,
             onClose = { rowEdit = null },
-        ) { onDone() }
+            onDone = { onDone() },
+        )
     }
     rowDeleteFilter?.let { filter ->
         DeleteDialog(
