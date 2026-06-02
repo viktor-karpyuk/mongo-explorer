@@ -7,10 +7,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.mex.AppContext
 import io.mex.mongo.MongoRegistry
+import io.mex.ui.aggregate.AggregationView
 import io.mex.ui.query.QueryStore
 import io.mex.ui.query.QueryView
 
-enum class CollTab { Query, Stats }
+enum class CollTab { Query, Aggregate, Stats }
 
 @Composable
 fun CollPanel(
@@ -28,12 +29,14 @@ fun CollPanel(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
         ) {
             TabBtn("Find", tab == CollTab.Query) { tab = CollTab.Query }
+            TabBtn("Aggregate", tab == CollTab.Aggregate) { tab = CollTab.Aggregate }
             TabBtn("Stats", tab == CollTab.Stats) { tab = CollTab.Stats }
         }
         HorizontalDivider()
         Box(modifier = Modifier.weight(1f)) {
             when (tab) {
                 CollTab.Query -> QueryView(ctx, registry, connectionId, db, collection, queries)
+                CollTab.Aggregate -> AggregationView(ctx, registry, connectionId, db, collection)
                 CollTab.Stats -> CollStatsPanel(connectionId, db, collection, registry)
             }
         }
