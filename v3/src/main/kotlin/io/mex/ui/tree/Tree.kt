@@ -57,17 +57,34 @@ fun Tree(
         }
     }
 
+    var sortAsc by remember { mutableStateOf(true) }
+
     Column(
         modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface),
     ) {
-        OutlinedTextField(
-            value = filter,
-            onValueChange = { filter = it },
-            placeholder = { Text("Filter namespaces…", style = MaterialTheme.typography.bodySmall) },
-            singleLine = true,
+        Row(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
-            textStyle = MaterialTheme.typography.bodySmall,
-        )
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = filter,
+                onValueChange = { filter = it },
+                placeholder = { Text("Filter namespaces…", style = MaterialTheme.typography.bodySmall) },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+                textStyle = MaterialTheme.typography.bodySmall,
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            OutlinedButton(
+                onClick = { sortAsc = !sortAsc },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+            ) {
+                Text(
+                    if (sortAsc) "A↓" else "Z↑",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
 
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             if (connected.isEmpty()) {
@@ -88,7 +105,10 @@ fun Tree(
                     onClick = { selection.select(Selection.ConnectionView(conn.id)) },
                 )
 
-                val dbs = cache.databases.filter { it.name.contains(filter, ignoreCase = true) || filter.isEmpty() }
+                val dbs = cache.databases
+                    .filter { filter.isEmpty() || it.name.contains(filter, ignoreCase = true) }
+                    .sortedBy { it.name.lowercase() }
+                    .let { if (sortAsc) it else it.asReversed() }
                 for (db in dbs) {
                     val expanded = cache.expanded.value.contains(db.name)
                     val isDbSel = current is Selection.Database &&
@@ -128,7 +148,11 @@ fun Tree(
                                 modifier = Modifier.padding(start = 38.dp, top = 2.dp, bottom = 2.dp),
                             )
                         }
-                        for (c in colls.filter { it.name.contains(filter, ignoreCase = true) || filter.isEmpty() }) {
+                        val visibleColls = colls
+                            .filter { filter.isEmpty() || it.name.contains(filter, ignoreCase = true) }
+                            .sortedBy { it.name.lowercase() }
+                            .let { if (sortAsc) it else it.asReversed() }
+                        for (c in visibleColls) {
                             val isCollSel = current is Selection.Collection &&
                                 current.connectionId == conn.id &&
                                 current.db == db.name &&
