@@ -9,6 +9,10 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.unit.dp
 import io.mex.AppContext
 import io.mex.mongo.MongoRegistry
+import io.mex.ui.mutate.DeleteDialog
+import io.mex.ui.mutate.InsertDialog
+import io.mex.ui.mutate.ReplaceDialog
+import io.mex.ui.mutate.UpdateDialog
 import io.mex.ui.results.ResultsPane
 import kotlinx.coroutines.launch
 
@@ -31,6 +35,9 @@ fun QueryView(
     fun next() = scope.launch { store.nextPage(key, connectionId, db, collection) }
     fun prev() = scope.launch { store.prevPage(key, connectionId, db, collection) }
 
+    var dialog by remember(connectionId, db, collection) { mutableStateOf<String?>(null) }
+    val onDone = { run(); Unit }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -51,6 +58,10 @@ fun QueryView(
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f),
                 )
+                TextButton(onClick = { dialog = "insert" }) { Text("Insert") }
+                TextButton(onClick = { dialog = "update" }) { Text("Update") }
+                TextButton(onClick = { dialog = "replace" }) { Text("Replace") }
+                TextButton(onClick = { dialog = "delete" }) { Text("Delete") }
                 Button(onClick = { run() }, enabled = !running) {
                     Text(if (running) "Running…" else "Run ⌘↵")
                 }
@@ -73,6 +84,13 @@ fun QueryView(
             onPrev = { prev() },
             onNext = { next() },
         )
+    }
+
+    when (dialog) {
+        "insert" -> InsertDialog(registry, connectionId, db, collection, { dialog = null }) { onDone() }
+        "update" -> UpdateDialog(registry, connectionId, db, collection, draft.filter, { dialog = null }) { onDone() }
+        "replace" -> ReplaceDialog(registry, connectionId, db, collection, draft.filter, "{}", { dialog = null }) { onDone() }
+        "delete" -> DeleteDialog(registry, connectionId, db, collection, draft.filter, { dialog = null }) { onDone() }
     }
 }
 
