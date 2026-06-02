@@ -1,6 +1,7 @@
 package io.mex.ui.results
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,6 +22,7 @@ import io.mex.util.*
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 
 enum class ResultTab { Table, Tree, Json, Error }
 
@@ -32,27 +34,40 @@ fun ResultsPane(
     limit: Int,
     onPrev: () -> Unit,
     onNext: () -> Unit,
+    onEditRow: ((doc: String) -> Unit)? = null,
+    onDeleteRow: ((idEjson: String) -> Unit)? = null,
 ) {
     var tab by remember { mutableStateOf(ResultTab.Table) }
+    var selectedIndex by remember(result) { mutableStateOf(-1) }
     val isError = result is FindResult.Failed
     LaunchedEffect(isError) { if (isError) tab = ResultTab.Error }
 
     Column(modifier = Modifier.fillMaxSize()) {
         TabRow(tab = tab, hasError = isError, onSelect = { tab = it })
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        // Result body
+        Box(modifier = Modifier.weight(0.62f).fillMaxWidth()) {
             when {
                 running && result == null -> CenterText("Running…")
                 result == null -> CenterText("Run a query to see results.")
                 result is FindResult.Failed && tab == ResultTab.Error -> ErrorBody(result.error)
                 result is FindResult.Ok -> when (tab) {
-                    ResultTab.Table -> TableBody(result.rows)
-                    ResultTab.Tree -> TreeBody(result.rows)
+                    ResultTab.Table -> TableBody(result.rows, selectedIndex) { selectedIndex = it }
+                    ResultTab.Tree -> TreeBody(result.rows, selectedIndex) { selectedIndex = it }
                     ResultTab.Json -> JsonBody(result.rows)
                     ResultTab.Error -> ErrorBody("(no error)")
                 }
                 else -> {}
             }
         }
+        HorizontalDivider()
+        // Preview / edit panel
+        PreviewPanel(
+            modifier = Modifier.weight(0.38f).fillMaxWidth(),
+            rows = (result as? FindResult.Ok)?.rows,
+            selectedIndex = selectedIndex,
+            onEditRow = onEditRow,
+            onDeleteRow = onDeleteRow,
+        )
         Pager(
             result = result,
             running = running,
@@ -61,6 +76,76 @@ fun ResultsPane(
             onPrev = onPrev,
             onNext = onNext,
         )
+    }
+}
+
+@Composable
+private fun PreviewPanel(
+    modifier: Modifier,
+    rows: List<String>?,
+    selectedIndex: Int,
+    onEditRow: ((String) -> Unit)?,
+    onDeleteRow: ((String) -> Unit)?,
+) {
+    val raw = rows?.getOrNull(selectedIndex)
+    val parsed = remember(raw) { raw?.let { parseRow(it) } }
+    val idEjson = remember(parsed) { parsed?.get("_id")?.let { idElementToEjson(it) } }
+    val canMutate = onEditRow != null && onDeleteRow != null && idEjson != null
+
+    Column(modifier = modifier.background(MaterialTheme.colorScheme.surface)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (selectedIndex < 0) "Preview" else "Preview · row ${selectedIndex + 1}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            if (onEditRow != null) {
+                TextButton(onClick = { raw?.let(onEditRow) }, enabled = canMutate) {
+                    Text("Edit", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+            if (onDeleteRow != null) {
+                TextButton(onClick = { idEjson?.let(onDeleteRow) }, enabled = canMutate) {
+                    Text("Delete", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+        Box(modifier = Modifier.fillMaxSize()) {
+            when {
+                raw == null -> CenterText(
+                    if (rows.isNullOrEmpty()) "Run a query to see rows."
+                    else "Click a row to preview.",
+                )
+                else -> Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(12.dp),
+                ) {
+                    Text(
+                        prettyPrint(raw),
+                        fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun idElementToEjson(id: JsonElement): String {
+    // Build the EJSON snippet that goes inside a filter, e.g. { _id: <here> }
+    return when (id) {
+        is JsonObject -> id.toString()
+        is JsonPrimitive -> id.toString()
+        else -> id.toString()
     }
 }
 
@@ -98,7 +183,7 @@ private fun CenterText(text: String) {
 }
 
 @Composable
-private fun TableBody(rows: List<String>) {
+private fun TableBody(rows: List<String>, selectedIndex: Int, onSelect: (Int) -> Unit) {
     val parsed = remember(rows) { rows.map { parseRow(it) } }
     val columns = remember(rows) { collectColumns(rows) }
     if (columns.isEmpty()) {
@@ -119,8 +204,20 @@ private fun TableBody(rows: List<String>) {
         LazyColumn(modifier = Modifier.weight(1f)) {
             items(parsed.size) { i ->
                 val doc = parsed[i]
-                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                    IndexCell((i + 1).toString())
+                val isSelected = i == selectedIndex
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            if (isSelected)
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                            else
+                                Color.Transparent,
+                        )
+                        .clickable { onSelect(i) }
+                        .padding(vertical = 2.dp),
+                ) {
+                    IndexCell((i + 1).toString(), selected = isSelected)
                     columns.forEach { col ->
                         val v = doc?.get(col)
                         CellView(v)
@@ -133,12 +230,16 @@ private fun TableBody(rows: List<String>) {
 }
 
 @Composable
-private fun IndexCell(text: String, header: Boolean = false) {
+private fun IndexCell(text: String, header: Boolean = false, selected: Boolean = false) {
     Box(modifier = Modifier.width(60.dp).padding(horizontal = 8.dp)) {
         Text(
             text,
             style = MaterialTheme.typography.bodySmall,
-            color = if (header) MaterialTheme.colorScheme.onSurfaceVariant else Color.Gray,
+            color = when {
+                header -> MaterialTheme.colorScheme.onSurfaceVariant
+                selected -> MaterialTheme.colorScheme.primary
+                else -> Color.Gray
+            },
             fontFamily = FontFamily.Monospace,
         )
     }
@@ -190,19 +291,29 @@ private fun colorFor(t: EjsonType): Color = when (t) {
 }
 
 @Composable
-private fun TreeBody(rows: List<String>) {
+private fun TreeBody(rows: List<String>, selectedIndex: Int, onSelect: (Int) -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         rows.forEachIndexed { i, row ->
             val parsed = remember(row) { parseRow(row) }
-            Card(border = CardDefaults.outlinedCardBorder()) {
+            val isSelected = i == selectedIndex
+            Card(
+                border = CardDefaults.outlinedCardBorder(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isSelected)
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                    else
+                        MaterialTheme.colorScheme.surface,
+                ),
+                modifier = Modifier.fillMaxWidth().clickable { onSelect(i) },
+            ) {
                 Column(modifier = Modifier.padding(10.dp)) {
                     Text(
                         "Document ${i + 1}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     if (parsed != null) {
@@ -251,11 +362,7 @@ private fun NodeView(label: String, value: JsonElement, depth: Int, root: Boolea
         else -> emptyList<Pair<String, JsonElement>>() to ""
     }
 
-    Row(
-        modifier = Modifier
-            .background(if (root) Color.Unspecified else Color.Transparent)
-            .padding(start = indent, top = 1.dp, bottom = 1.dp),
-    ) {
+    Row(modifier = Modifier.padding(start = indent, top = 1.dp, bottom = 1.dp)) {
         TextButton(
             onClick = { open = !open },
             contentPadding = PaddingValues(0.dp),

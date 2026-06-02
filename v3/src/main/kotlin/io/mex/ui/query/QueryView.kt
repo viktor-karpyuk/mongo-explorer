@@ -38,6 +38,9 @@ fun QueryView(
     fun prev() = scope.launch { store.prevPage(key, connectionId, db, collection) }
 
     var dialog by remember(connectionId, db, collection) { mutableStateOf<String?>(null) }
+    // Holds the pre-filled state when Edit/Delete is invoked from a result row.
+    var rowEdit by remember(connectionId, db, collection) { mutableStateOf<Pair<String, String>?>(null) }
+    var rowDeleteFilter by remember(connectionId, db, collection) { mutableStateOf<String?>(null) }
     val onDone = { run(); Unit }
 
     Column(
@@ -87,6 +90,13 @@ fun QueryView(
             limit = draft.limit,
             onPrev = { prev() },
             onNext = { next() },
+            onEditRow = { doc ->
+                val id = extractIdEjson(doc) ?: return@ResultsPane
+                rowEdit = """{ "_id": $id }""" to prettyDoc(doc)
+            },
+            onDeleteRow = { idEjson ->
+                rowDeleteFilter = """{ "_id": $idEjson }"""
+            },
         )
     }
 
@@ -98,7 +108,45 @@ fun QueryView(
         "export" -> ExportDialog(registry, connectionId, db, collection, draft.filter) { dialog = null }
         "import" -> ImportDialog(registry, connectionId, db, collection, { dialog = null }) { onDone() }
     }
+
+    rowEdit?.let { (filter, doc) ->
+        ReplaceDialog(
+            registry = registry,
+            connectionId = connectionId,
+            db = db,
+            coll = collection,
+            initialFilter = filter,
+            initialDoc = doc,
+            onClose = { rowEdit = null },
+        ) { onDone() }
+    }
+    rowDeleteFilter?.let { filter ->
+        DeleteDialog(
+            registry = registry,
+            connectionId = connectionId,
+            db = db,
+            coll = collection,
+            initialFilter = filter,
+            onClose = { rowDeleteFilter = null },
+        ) { onDone() }
+    }
 }
+
+/** Returns the canonical EJSON for the `_id` field, suitable for embedding in a filter. */
+private fun extractIdEjson(rowEjson: String): String? = runCatching {
+    val obj = kotlinx.serialization.json.Json.parseToJsonElement(rowEjson).let {
+        it as? kotlinx.serialization.json.JsonObject
+    } ?: return@runCatching null
+    obj["_id"]?.toString()
+}.getOrNull()
+
+private fun prettyDoc(rowEjson: String): String = runCatching {
+    val element = kotlinx.serialization.json.Json.parseToJsonElement(rowEjson)
+    kotlinx.serialization.json.Json {
+        prettyPrint = true
+        prettyPrintIndent = "  "
+    }.encodeToString(kotlinx.serialization.json.JsonElement.serializer(), element)
+}.getOrDefault(rowEjson)
 
 @Composable
 private fun QueryField(label: String, value: String, hint: String, onChange: (String) -> Unit) {
