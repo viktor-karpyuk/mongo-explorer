@@ -9,6 +9,8 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.unit.dp
 import io.mex.AppContext
 import io.mex.mongo.MongoRegistry
+import io.mex.ui.io.ExportDialog
+import io.mex.ui.io.ImportDialog
 import io.mex.ui.mutate.DeleteDialog
 import io.mex.ui.mutate.InsertDialog
 import io.mex.ui.mutate.ReplaceDialog
@@ -62,6 +64,8 @@ fun QueryView(
                 TextButton(onClick = { dialog = "update" }) { Text("Update") }
                 TextButton(onClick = { dialog = "replace" }) { Text("Replace") }
                 TextButton(onClick = { dialog = "delete" }) { Text("Delete") }
+                TextButton(onClick = { dialog = "export" }) { Text("Export") }
+                TextButton(onClick = { dialog = "import" }) { Text("Import") }
                 Button(onClick = { run() }, enabled = !running) {
                     Text(if (running) "Running…" else "Run ⌘↵")
                 }
@@ -91,6 +95,8 @@ fun QueryView(
         "update" -> UpdateDialog(registry, connectionId, db, collection, draft.filter, { dialog = null }) { onDone() }
         "replace" -> ReplaceDialog(registry, connectionId, db, collection, draft.filter, "{}", { dialog = null }) { onDone() }
         "delete" -> DeleteDialog(registry, connectionId, db, collection, draft.filter, { dialog = null }) { onDone() }
+        "export" -> ExportDialog(registry, connectionId, db, collection, draft.filter) { dialog = null }
+        "import" -> ImportDialog(registry, connectionId, db, collection, { dialog = null }) { onDone() }
     }
 }
 
