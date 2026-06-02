@@ -2,7 +2,7 @@
 
 Kotlin 2.0 + Compose Multiplatform 1.7 desktop app on JDK 21.
 
-Status: **0.1.0-alpha** — Phase A scaffold.
+Status: **0.1.0-alpha** — all 15 phases (A–O) landed on `develop` 2026-06-01.
 
 ## Layout
 
