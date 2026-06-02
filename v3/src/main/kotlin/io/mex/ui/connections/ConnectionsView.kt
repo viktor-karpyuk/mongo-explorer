@@ -16,12 +16,18 @@ import io.mex.data.ConnectionSummary
 import io.mex.mongo.ConnectionState
 import io.mex.mongo.MongoRegistry
 import io.mex.ui.components.StatePill
+import io.mex.ui.state.Selection
+import io.mex.ui.state.SelectionStore
 import io.mex.util.formatUriPreview
 import kotlinx.coroutines.launch
 
 @Composable
-fun ConnectionsView(ctx: AppContext, registry: MongoRegistry) {
-    val vm = rememberConnectionsViewModel(ctx, registry)
+fun ConnectionsView(
+    ctx: AppContext,
+    registry: MongoRegistry,
+    vm: ConnectionsViewModel,
+    selection: SelectionStore? = null,
+) {
     val states by vm.states.collectAsState()
     val scope = rememberCoroutineScope()
 
@@ -49,7 +55,14 @@ fun ConnectionsView(ctx: AppContext, registry: MongoRegistry) {
                     ConnectionCard(
                         conn = conn,
                         state = states[conn.id] ?: ConnectionState.Disconnected,
-                        onOpen = { scope.launch { vm.open(conn.id) } },
+                        onOpen = {
+                            scope.launch {
+                                val s = vm.open(conn.id)
+                                if (s is ConnectionState.Connected) {
+                                    selection?.select(Selection.ConnectionView(conn.id))
+                                }
+                            }
+                        },
                         onClose = { scope.launch { vm.close(conn.id) } },
                         onEdit = {
                             scope.launch {

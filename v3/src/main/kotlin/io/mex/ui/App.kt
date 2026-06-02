@@ -12,6 +12,7 @@ import io.mex.mongo.MongoRegistry
 import io.mex.ui.cluster.ConnectionPanel
 import io.mex.ui.coll.CollPanel
 import io.mex.ui.connections.ConnectionsView
+import io.mex.ui.connections.ConnectionsViewModel
 import io.mex.ui.db.DbStatsPanel
 import io.mex.ui.migration.MigrationsView
 import io.mex.ui.query.QueryStore
@@ -31,6 +32,7 @@ fun App(ctx: AppContext) {
     val queries = remember { QueryStore(ctx, registry) }
     val migrations = remember { MigrationRunner(ctx, registry) }
     val prefs = remember { PrefsStore(ctx.prefs) }
+    val connectionsVm = remember { ConnectionsViewModel(ctx, registry) }
 
     val states by registry.states.collectAsState()
     LaunchedEffect(states) {
@@ -49,12 +51,12 @@ fun App(ctx: AppContext) {
                     modifier = Modifier.width(280.dp).fillMaxHeight(),
                     color = MaterialTheme.colorScheme.surface,
                 ) {
-                    Tree(ctx, registry, selection, namespaces)
+                    Tree(ctx, registry, selection, namespaces, connectionsVm)
                 }
                 VerticalDivider()
                 Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                     when (val s = selection.current) {
-                        Selection.Welcome -> ConnectionsView(ctx, registry)
+                        Selection.Welcome -> ConnectionsView(ctx, registry, connectionsVm, selection)
                         Selection.Migrations -> MigrationsView(ctx, registry, migrations)
                         Selection.Settings -> SettingsView(ctx, prefs)
                         is Selection.ConnectionView -> ConnectionPanel(ctx, s.connectionId, registry)

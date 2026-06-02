@@ -24,6 +24,7 @@ import io.mex.mongo.createCollection
 import io.mex.mongo.createDatabase
 import io.mex.mongo.dropCollection
 import io.mex.mongo.dropDatabase
+import io.mex.ui.connections.ConnectionsViewModel
 import io.mex.ui.state.NamespacesStore
 import io.mex.ui.state.Selection
 import io.mex.ui.state.SelectionStore
@@ -38,10 +39,10 @@ fun Tree(
     registry: MongoRegistry,
     selection: SelectionStore,
     namespaces: NamespacesStore,
+    vm: ConnectionsViewModel,
 ) {
     val states by registry.states.collectAsState()
-    val connections = remember { ctx.connections.list() }
-    val connected = connections.filter { states[it.id] is ConnectionState.Connected }
+    val connected = vm.list.filter { states[it.id] is ConnectionState.Connected }
 
     var filter by remember { mutableStateOf("") }
     val current = selection.current
