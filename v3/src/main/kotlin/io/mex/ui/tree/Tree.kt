@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -58,6 +60,7 @@ fun Tree(
     }
 
     var sortAsc by remember { mutableStateOf(true) }
+    var pendingDrop by remember { mutableStateOf<PendingDrop?>(null) }
 
     Column(
         modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface),
@@ -129,13 +132,7 @@ fun Tree(
                                 namespaces.loadCollections(conn.id, db.name)
                             }
                         },
-                        onDrop = {
-                            scope.launch {
-                                val client = registry.client(conn.id) ?: return@launch
-                                withContext(Dispatchers.IO) { dropDatabase(client, db.name) }
-                                namespaces.loadDatabases(conn.id)
-                            }
-                        },
+                        onDrop = { pendingDrop = PendingDrop.Db(conn.id, db.name) },
                     )
 
                     if (expanded) {
@@ -163,15 +160,7 @@ fun Tree(
                                 onSelect = {
                                     selection.select(Selection.Collection(conn.id, db.name, c.name))
                                 },
-                                onDrop = {
-                                    scope.launch {
-                                        val client = registry.client(conn.id) ?: return@launch
-                                        withContext(Dispatchers.IO) {
-                                            dropCollection(client, db.name, c.name)
-                                        }
-                                        namespaces.loadCollections(conn.id, db.name)
-                                    }
-                                },
+                                onDrop = { pendingDrop = PendingDrop.Coll(conn.id, db.name, c.name) },
                             )
                         }
                     }
@@ -194,6 +183,79 @@ fun Tree(
             }
         }
     }
+
+    pendingDrop?.let { target ->
+        DropConfirmDialog(
+            target = target,
+            onCancel = { pendingDrop = null },
+            onConfirm = {
+                val captured = target
+                pendingDrop = null
+                scope.launch {
+                    val client = registry.client(captured.connectionId) ?: return@launch
+                    when (captured) {
+                        is PendingDrop.Db -> {
+                            withContext(Dispatchers.IO) { dropDatabase(client, captured.db) }
+                            namespaces.loadDatabases(captured.connectionId)
+                        }
+                        is PendingDrop.Coll -> {
+                            withContext(Dispatchers.IO) {
+                                dropCollection(client, captured.db, captured.coll)
+                            }
+                            namespaces.loadCollections(captured.connectionId, captured.db)
+                        }
+                    }
+                }
+            },
+        )
+    }
+}
+
+private sealed class PendingDrop {
+    abstract val connectionId: String
+    data class Db(override val connectionId: String, val db: String) : PendingDrop()
+    data class Coll(override val connectionId: String, val db: String, val coll: String) : PendingDrop()
+}
+
+@Composable
+private fun DropConfirmDialog(
+    target: PendingDrop,
+    onCancel: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val (label, ns) = when (target) {
+        is PendingDrop.Db -> "database" to target.db
+        is PendingDrop.Coll -> "collection" to "${target.db}.${target.coll}"
+    }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        icon = {
+            Icon(
+                imageVector = Icons.Outlined.Delete,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+            )
+        },
+        title = { Text("Drop $label?") },
+        text = {
+            Text(
+                "This will permanently drop \"$ns\" on the server. " +
+                    "All documents and indexes inside are deleted. This cannot be undone.",
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError,
+                ),
+            ) { Text("Drop $label") }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable
