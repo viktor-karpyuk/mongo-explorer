@@ -100,37 +100,16 @@ fun ConnectionsView(
     }
 
     confirmingDelete?.let { target ->
-        AlertDialog(
-            onDismissRequest = { confirmingDelete = null },
-            icon = {
-                Icon(
-                    imageVector = Icons.Outlined.Delete,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error,
-                )
+        io.mex.ui.components.ConfirmDangerDialog(
+            title = "Delete connection?",
+            text = "This will permanently remove \"${target.name}\" from this app. " +
+                "The MongoDB cluster itself is untouched. This cannot be undone.",
+            confirmLabel = "Delete",
+            onConfirm = {
+                vm.delete(target.id)
+                confirmingDelete = null
             },
-            title = { Text("Delete connection?") },
-            text = {
-                Text(
-                    "This will permanently remove \"${target.name}\" from this app. " +
-                        "The MongoDB cluster itself is untouched. This cannot be undone.",
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        vm.delete(target.id)
-                        confirmingDelete = null
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = MaterialTheme.colorScheme.onError,
-                    ),
-                ) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmingDelete = null }) { Text("Cancel") }
-            },
+            onCancel = { confirmingDelete = null },
         )
     }
 }

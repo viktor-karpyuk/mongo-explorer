@@ -23,6 +23,7 @@ import io.mex.util.formatCount
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import io.mex.ui.components.ConfirmDangerDialog
 
 @Composable
 fun IndexesPanel(connectionId: String, db: String, collection: String, registry: MongoRegistry) {
@@ -30,6 +31,7 @@ fun IndexesPanel(connectionId: String, db: String, collection: String, registry:
     var stats by remember(connectionId, db, collection) { mutableStateOf<Map<String, IndexStat>>(emptyMap()) }
     var error by remember(connectionId, db, collection) { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
+    var confirmingDropIndex by remember(connectionId, db, collection) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     fun load() {
@@ -85,19 +87,9 @@ fun IndexesPanel(connectionId: String, db: String, collection: String, registry:
                         modifier = Modifier.padding(end = 8.dp),
                     )
                     TextButton(
-                        onClick = {
-                            if (idx.name == "_id_") return@TextButton
-                            val confirm = javax.swing.JOptionPane.showInputDialog(null, "Type the index name to drop:", idx.name)
-                            if (confirm == idx.name) {
-                                scope.launch {
-                                    val client = registry.client(connectionId) ?: return@launch
-                                    withContext(Dispatchers.IO) { dropIndex(client, db, collection, idx.name) }
-                                    load()
-                                }
-                            }
-                        },
+                        onClick = { confirmingDropIndex = idx.name },
                         enabled = idx.name != "_id_",
-                    ) { Text("Drop") }
+                    ) { Text("Drop", color = MaterialTheme.colorScheme.error) }
                 }
             }
         }
@@ -118,6 +110,30 @@ fun IndexesPanel(connectionId: String, db: String, collection: String, registry:
                     }
                 }
             },
+        )
+    }
+
+    confirmingDropIndex?.let { name ->
+        ConfirmDangerDialog(
+            title = "Drop index?",
+            text = "This will permanently drop \"$name\" on $db.$collection. " +
+                "Queries that relied on it will fall back to a collection scan until " +
+                "rebuilt. This cannot be undone.",
+            confirmLabel = "Drop index",
+            onConfirm = {
+                val capturedName = name
+                confirmingDropIndex = null
+                scope.launch {
+                    val client = registry.client(connectionId) ?: return@launch
+                    try {
+                        withContext(Dispatchers.IO) { dropIndex(client, db, collection, capturedName) }
+                        load()
+                    } catch (e: Exception) {
+                        error = e.message
+                    }
+                }
+            },
+            onCancel = { confirmingDropIndex = null },
         )
     }
 }

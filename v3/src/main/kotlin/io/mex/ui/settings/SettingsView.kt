@@ -11,12 +11,14 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.mex.AppContext
 import io.mex.data.UriHistoryEntry
+import io.mex.ui.components.ConfirmDangerDialog
 import io.mex.ui.state.PrefsStore
 import io.mex.ui.state.ThemePref
 
 @Composable
 fun SettingsView(ctx: AppContext, prefs: PrefsStore) {
     var history by remember { mutableStateOf<List<UriHistoryEntry>>(emptyList()) }
+    var confirmingDelete by remember { mutableStateOf<UriHistoryEntry?>(null) }
     LaunchedEffect(Unit) { history = ctx.uriHistory.list() }
 
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -63,10 +65,9 @@ fun SettingsView(ctx: AppContext, prefs: PrefsStore) {
                 history.forEach { h ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(h.preview, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                        TextButton(onClick = {
-                            ctx.uriHistory.delete(h.id)
-                            history = ctx.uriHistory.list()
-                        }) { Text("✕") }
+                        TextButton(onClick = { confirmingDelete = h }) {
+                            Text("✕", color = MaterialTheme.colorScheme.error)
+                        }
                     }
                 }
             }
@@ -88,5 +89,20 @@ fun SettingsView(ctx: AppContext, prefs: PrefsStore) {
                 }
             }
         }
+    }
+
+    confirmingDelete?.let { entry ->
+        ConfirmDangerDialog(
+            title = "Forget this URI?",
+            text = "Remove \"${entry.preview}\" from the URI history. " +
+                "Saved connections that use this URI are unaffected.",
+            confirmLabel = "Forget",
+            onConfirm = {
+                ctx.uriHistory.delete(entry.id)
+                history = ctx.uriHistory.list()
+                confirmingDelete = null
+            },
+            onCancel = { confirmingDelete = null },
+        )
     }
 }

@@ -23,6 +23,7 @@ import io.mex.migration.MigrationRunner
 import io.mex.migration.preflight
 import io.mex.mongo.ConnectionState
 import io.mex.mongo.MongoRegistry
+import io.mex.ui.components.ConfirmDangerDialog
 import io.mex.mongo.listCollections
 import io.mex.mongo.listDatabases
 import io.mex.util.formatCount
@@ -35,6 +36,7 @@ fun MigrationsView(ctx: AppContext, registry: MongoRegistry, runner: MigrationRu
     var jobs by remember { mutableStateOf<List<MigrationJob>>(emptyList()) }
     val progress = remember { mutableStateMapOf<String, MigrationProgress>() }
     var showNew by remember { mutableStateOf(false) }
+    var confirmingDelete by remember { mutableStateOf<MigrationJob?>(null) }
     val scope = rememberCoroutineScope()
 
     fun reload() { jobs = ctx.migrations.list() }
@@ -64,7 +66,7 @@ fun MigrationsView(ctx: AppContext, registry: MongoRegistry, runner: MigrationRu
                         onStart = { runner.start(job.id) },
                         onPause = { runner.pause(job.id) },
                         onCancel = { runner.cancel(job.id) },
-                        onDelete = { ctx.migrations.delete(job.id); reload() },
+                        onDelete = { confirmingDelete = job },
                     )
                 }
             }
@@ -81,6 +83,21 @@ fun MigrationsView(ctx: AppContext, registry: MongoRegistry, runner: MigrationRu
                 showNew = false
                 reload()
             },
+        )
+    }
+
+    confirmingDelete?.let { job ->
+        ConfirmDangerDialog(
+            title = "Delete migration job?",
+            text = "This removes the migration history entry from the local store. " +
+                "Any data already copied to the target remains. This cannot be undone.",
+            confirmLabel = "Delete",
+            onConfirm = {
+                ctx.migrations.delete(job.id)
+                confirmingDelete = null
+                reload()
+            },
+            onCancel = { confirmingDelete = null },
         )
     }
 }
