@@ -4,6 +4,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -127,6 +129,18 @@ private fun ConnectionCard(
                     )
                 }
                 StatePill(state)
+                Spacer(modifier = Modifier.width(6.dp))
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Outlined.Delete,
+                        contentDescription = "Delete",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
 
             if (state is ConnectionState.Error) {
@@ -159,7 +173,6 @@ private fun ConnectionCard(
                 }
                 TextButton(onClick = onEdit) { Text("Edit") }
                 TextButton(onClick = onDuplicate) { Text("Duplicate") }
-                TextButton(onClick = onDelete) { Text("Delete") }
             }
         }
     }
