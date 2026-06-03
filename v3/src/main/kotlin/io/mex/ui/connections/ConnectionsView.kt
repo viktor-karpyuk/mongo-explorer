@@ -34,6 +34,7 @@ fun ConnectionsView(
     val scope = rememberCoroutineScope()
 
     var editing by remember { mutableStateOf<Pair<Boolean, ConnectionRecord?>>(false to null) }
+    var confirmingDelete by remember { mutableStateOf<ConnectionSummary?>(null) }
 
     Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
         Row(
@@ -73,7 +74,7 @@ fun ConnectionsView(
                             }
                         },
                         onDuplicate = { vm.duplicate(conn.id) },
-                        onDelete = { vm.delete(conn.id) },
+                        onDelete = { confirmingDelete = conn },
                         previewProvider = {
                             val record = ctx.connections.get(conn.id) ?: return@ConnectionCard "…"
                             formatUriPreview(record.uri)
@@ -95,6 +96,41 @@ fun ConnectionsView(
                 editing = false to null
             },
             onTest = vm::test,
+        )
+    }
+
+    confirmingDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { confirmingDelete = null },
+            icon = {
+                Icon(
+                    imageVector = Icons.Outlined.Delete,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            },
+            title = { Text("Delete connection?") },
+            text = {
+                Text(
+                    "This will permanently remove \"${target.name}\" from this app. " +
+                        "The MongoDB cluster itself is untouched. This cannot be undone.",
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        vm.delete(target.id)
+                        confirmingDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingDelete = null }) { Text("Cancel") }
+            },
         )
     }
 }
