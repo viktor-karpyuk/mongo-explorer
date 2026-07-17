@@ -188,11 +188,7 @@ private fun PreviewPanel(
                         .verticalScroll(rememberScrollState())
                         .padding(12.dp),
                 ) {
-                    Text(
-                        prettyPrint(raw),
-                        fontFamily = FontFamily.Monospace,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                    HighlightedJson(raw)
                 }
             }
         }
@@ -337,18 +333,6 @@ private fun RowScope.CellView(v: JsonElement?) {
     }
 }
 
-private fun colorFor(t: EjsonType): Color = when (t) {
-    EjsonType.Number, EjsonType.Long, EjsonType.Decimal -> Color(0xFF60A5FA)
-    EjsonType.Boolean -> Color(0xFFFBBF24)
-    EjsonType.Null -> Color.Gray
-    EjsonType.ObjectId -> Color(0xFF34D399)
-    EjsonType.Date -> Color(0xFFA78BFA)
-    EjsonType.Binary, EjsonType.Regex -> Color(0xFFF472B6)
-    EjsonType.MinKey, EjsonType.MaxKey -> Color.DarkGray
-    EjsonType.ArrayT, EjsonType.ObjectT -> Color.Gray
-    else -> Color.Unspecified
-}
-
 @Composable
 private fun TreeBody(rows: List<String>, selectedIndex: Int, onSelect: (Int) -> Unit) {
     Column(
@@ -471,12 +455,9 @@ private fun JsonBody(rows: List<String>) {
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 12.dp)
                     .padding(bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(
-                    text,
-                    fontFamily = FontFamily.Monospace,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                rows.forEach { row -> HighlightedJson(row) }
             }
         }
     }
