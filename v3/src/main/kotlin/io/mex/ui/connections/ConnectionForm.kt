@@ -35,8 +35,8 @@ fun ConnectionForm(
     val scope = rememberCoroutineScope()
 
     // Manual (host & credentials) mode — an alternative way to author the same URI.
-    var manualMode by remember { mutableStateOf(false) }
     val prefill = remember { initial?.uri?.let { parseManualUri(it) } }
+    var manualMode by remember { mutableStateOf(prefill?.user?.isNotBlank() == true) }
     var srv by remember { mutableStateOf(prefill?.srv ?: false) }
     var host by remember { mutableStateOf(prefill?.host ?: "localhost") }
     var port by remember { mutableStateOf(prefill?.port ?: "27017") }
@@ -80,6 +80,7 @@ fun ConnectionForm(
 
                 Column(
                     modifier = Modifier
+                        .weight(1f, fill = false)
                         .padding(18.dp)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -196,28 +197,34 @@ fun ConnectionForm(
                         maxLines = 4,
                     )
 
-                    testResult?.let { r ->
-                        Surface(
-                            tonalElevation = 2.dp,
-                            color = if (r.ok)
-                                MaterialTheme.colorScheme.primaryContainer
-                            else
-                                MaterialTheme.colorScheme.errorContainer,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                text = if (r.ok)
-                                    "Reachable · MongoDB ${r.serverVersion} · ${r.topology} · ${r.pingMs} ms"
-                                else
-                                    "Failed: ${r.error}",
-                                modifier = Modifier.padding(10.dp),
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                    }
                 }
 
                 HorizontalDivider()
+                // Kept outside the scroll area so the outcome of Test connection is always visible.
+                testResult?.let { r ->
+                    Surface(
+                        tonalElevation = 2.dp,
+                        color = if (r.ok)
+                            MaterialTheme.colorScheme.primaryContainer
+                        else
+                            MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp)
+                            .padding(top = 10.dp),
+                        shape = MaterialTheme.shapes.small,
+                    ) {
+                        Text(
+                            text = if (r.ok)
+                                "Reachable · MongoDB ${r.serverVersion} · ${r.topology} · ${r.pingMs} ms"
+                            else
+                                "Failed: ${r.error}",
+                            modifier = Modifier.padding(10.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 3,
+                        )
+                    }
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
