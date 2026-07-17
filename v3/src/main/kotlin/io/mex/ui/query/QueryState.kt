@@ -13,6 +13,12 @@ import io.mex.mongo.MongoRegistry
 import io.mex.mongo.executeFind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 class QueryDraft {
     var filter by mutableStateOf("{}")
@@ -60,7 +66,13 @@ class QueryStore(private val ctx: AppContext, private val registry: MongoRegistr
                     database = db,
                     collection = collection,
                     kind = QueryKind.find,
-                    body = """{"filter":"${d.filter}","projection":"${d.projection}","sort":"${d.sort}","skip":${d.skip},"limit":${d.limit}}""",
+                    body = buildJsonObject {
+                        put("filter", d.filter)
+                        put("projection", d.projection)
+                        put("sort", d.sort)
+                        put("skip", d.skip)
+                        put("limit", d.limit)
+                    }.toString(),
                     durationMs = if (res is FindResult.Ok) res.durationMs else (res as FindResult.Failed).durationMs,
                     rowCount = if (res is FindResult.Ok) res.rows.size else null,
                     error = if (res is FindResult.Failed) res.error else null,
@@ -86,3 +98,23 @@ class QueryStore(private val ctx: AppContext, private val registry: MongoRegistr
 
 fun nsKey(connectionId: String, db: String, collection: String) =
     "$connectionId::$db.$collection"
+
+/** The find parameters stored in a query_history row's `body` column. */
+data class FindBody(
+    val filter: String,
+    val projection: String,
+    val sort: String,
+    val skip: Int?,
+    val limit: Int?,
+)
+
+fun parseFindBody(body: String): FindBody? = runCatching {
+    val o = Json.parseToJsonElement(body).jsonObject
+    FindBody(
+        filter = o["filter"]?.jsonPrimitive?.content ?: return null,
+        projection = o["projection"]?.jsonPrimitive?.content ?: "",
+        sort = o["sort"]?.jsonPrimitive?.content ?: "",
+        skip = o["skip"]?.jsonPrimitive?.intOrNull,
+        limit = o["limit"]?.jsonPrimitive?.intOrNull,
+    )
+}.getOrNull()

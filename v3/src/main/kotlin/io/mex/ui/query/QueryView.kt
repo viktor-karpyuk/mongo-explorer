@@ -6,8 +6,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.mex.AppContext
+import io.mex.data.QueryHistoryRow
+import io.mex.data.QueryKind
+import io.mex.util.formatAgo
 import io.mex.mongo.MongoRegistry
 import io.mex.ui.io.ExportDialog
 import io.mex.ui.io.ImportDialog
@@ -70,6 +75,14 @@ fun QueryView(
                 TextButton(onClick = { dialog = "delete" }) { Text("Delete") }
                 TextButton(onClick = { dialog = "export" }) { Text("Export") }
                 TextButton(onClick = { dialog = "import" }) { Text("Import") }
+                HistoryButton(ctx, connectionId, db, collection) { body ->
+                    draft.filter = body.filter
+                    draft.projection = body.projection
+                    draft.sort = body.sort
+                    body.skip?.let { draft.skip = it }
+                    body.limit?.let { draft.limit = it.coerceAtLeast(1) }
+                    run()
+                }
                 Button(onClick = { run() }, enabled = !running) {
                     Text(if (running) "Running…" else "Run ⌘↵")
                 }
@@ -149,6 +162,82 @@ private fun prettyDoc(rowEjson: String): String = runCatching {
         prettyPrintIndent = "  "
     }.encodeToString(kotlinx.serialization.json.JsonElement.serializer(), element)
 }.getOrDefault(rowEjson)
+
+@Composable
+private fun HistoryButton(
+    ctx: AppContext,
+    connectionId: String,
+    db: String,
+    collection: String,
+    onPick: (FindBody) -> Unit,
+) {
+    var open by remember(connectionId, db, collection) { mutableStateOf(false) }
+    var entries by remember { mutableStateOf<List<Pair<QueryHistoryRow, FindBody>>>(emptyList()) }
+    LaunchedEffect(open) {
+        if (open) {
+            entries = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                ctx.queryHistory.list(connectionId)
+                    .filter { it.database == db && it.collection == collection && it.kind == QueryKind.find }
+                    .mapNotNull { row -> parseFindBody(row.body)?.let { row to it } }
+                    .take(20)
+            }
+        }
+    }
+    Box {
+        TextButton(onClick = { open = true }) { Text("History") }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            modifier = Modifier.widthIn(min = 320.dp, max = 520.dp),
+        ) {
+            if (entries.isEmpty()) {
+                DropdownMenuItem(
+                    text = { Text("No queries run here yet.", style = MaterialTheme.typography.bodySmall) },
+                    onClick = { open = false },
+                    enabled = false,
+                )
+            }
+            entries.forEach { (row, body) ->
+                DropdownMenuItem(
+                    text = { HistoryEntry(row, body) },
+                    onClick = {
+                        open = false
+                        onPick(body)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryEntry(row: QueryHistoryRow, body: FindBody) {
+    Column {
+        Text(
+            body.filter.ifBlank { "{}" },
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        val outcome = when {
+            row.error != null -> "failed"
+            row.rowCount != null -> "${row.rowCount} rows"
+            else -> ""
+        }
+        val meta = buildList {
+            add(formatAgo(row.ranAt))
+            row.durationMs?.let { add("$it ms") }
+            if (outcome.isNotEmpty()) add(outcome)
+        }.joinToString(" · ")
+        Text(
+            meta,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (row.error != null) MaterialTheme.colorScheme.error
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
 
 @Composable
 private fun QueryField(label: String, value: String, hint: String, onChange: (String) -> Unit) {

@@ -15,3 +15,13 @@ fun formatBytes(bytes: Long): String {
 }
 
 fun formatCount(n: Long): String = "%,d".format(n)
+
+fun formatAgo(epochMs: Long, now: Long = System.currentTimeMillis()): String {
+    val s = ((now - epochMs) / 1000).coerceAtLeast(0)
+    return when {
+        s < 60 -> "just now"
+        s < 3_600 -> "${s / 60}m ago"
+        s < 86_400 -> "${s / 3_600}h ago"
+        else -> "${s / 86_400}d ago"
+    }
+}
