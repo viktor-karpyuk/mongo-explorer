@@ -19,12 +19,15 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.mex.mongo.FindResult
 import io.mex.util.*
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonElement
@@ -157,6 +160,9 @@ private fun PreviewPanel(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
+            if (raw != null) {
+                CopyButton({ prettyPrint(raw) })
+            }
             if (onEditRow != null) {
                 TextButton(onClick = { raw?.let(onEditRow) }, enabled = canMutate) {
                     Text("Edit", style = MaterialTheme.typography.labelMedium)
@@ -443,13 +449,61 @@ private fun NodeView(label: String, value: JsonElement, depth: Int, root: Boolea
 private fun JsonBody(rows: List<String>) {
     val text = remember(rows) { rows.joinToString("\n\n") { prettyPrint(it) } }
     Surface(color = MaterialTheme.colorScheme.surface) {
-        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
-            Text(
-                text,
-                fontFamily = FontFamily.Monospace,
-                style = MaterialTheme.typography.bodySmall,
-            )
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "${rows.size} document${if (rows.size == 1) "" else "s"}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                CopyButton({ text }, label = "Copy all")
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp)
+                    .padding(bottom = 12.dp),
+            ) {
+                Text(
+                    text,
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
+    }
+}
+
+/** Copies the provided text and flashes "Copied ✓" for a moment. */
+@Composable
+private fun CopyButton(textProvider: () -> String?, label: String = "Copy") {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1500)
+            copied = false
+        }
+    }
+    TextButton(
+        onClick = {
+            textProvider()?.let {
+                clipboard.setText(AnnotatedString(it))
+                copied = true
+            }
+        },
+    ) {
+        Text(
+            if (copied) "Copied ✓" else label,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (copied) MaterialTheme.colorScheme.primary else Color.Unspecified,
+        )
     }
 }
 
