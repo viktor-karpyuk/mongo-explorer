@@ -10,6 +10,7 @@ import io.mex.data.QueryKind
 import io.mex.mongo.FindRequest
 import io.mex.mongo.FindResult
 import io.mex.mongo.MongoRegistry
+import io.mex.mongo.executeCount
 import io.mex.mongo.executeFind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -33,10 +34,31 @@ class QueryStore(private val ctx: AppContext, private val registry: MongoRegistr
     private val drafts = mutableStateMapOf<String, QueryDraft>()
     private val results = mutableStateMapOf<String, FindResult>()
     private val running = mutableStateMapOf<String, Boolean>()
+    private val totals = mutableStateMapOf<String, Long>()
 
     fun draft(key: String): QueryDraft = drafts.getOrPut(key) { QueryDraft() }
     fun result(key: String): FindResult? = results[key]
     fun running(key: String): Boolean = running[key] == true
+    fun total(key: String): Long? = totals[key]
+
+    /** Refreshes the exact matched count for the draft's filter. Cheap for indexed/empty filters. */
+    suspend fun refreshCount(key: String, connectionId: String, db: String, collection: String) {
+        val client = registry.client(connectionId) ?: return
+        val d = draft(key)
+        val n = withContext(Dispatchers.IO) {
+            executeCount(
+                client,
+                FindRequest(
+                    connectionId = connectionId,
+                    db = db,
+                    collection = collection,
+                    filter = d.filter,
+                    maxTimeMs = d.maxTimeMs,
+                ),
+            )
+        }
+        if (n != null) totals[key] = n else totals.remove(key)
+    }
 
     suspend fun run(key: String, connectionId: String, db: String, collection: String) {
         val client = registry.client(connectionId) ?: return

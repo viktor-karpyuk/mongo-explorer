@@ -39,7 +39,10 @@ fun QueryView(
     val running = store.running(key)
     val scope = rememberCoroutineScope()
 
-    fun run() = scope.launch { store.run(key, connectionId, db, collection) }
+    fun run() = scope.launch {
+        store.run(key, connectionId, db, collection)
+        store.refreshCount(key, connectionId, db, collection)
+    }
     fun next() = scope.launch { store.nextPage(key, connectionId, db, collection) }
     fun prev() = scope.launch { store.prevPage(key, connectionId, db, collection) }
 
@@ -102,6 +105,7 @@ fun QueryView(
             running = running,
             skip = draft.skip,
             limit = draft.limit,
+            total = store.total(key),
             onPrev = { prev() },
             onNext = { next() },
             onEditRow = { doc ->

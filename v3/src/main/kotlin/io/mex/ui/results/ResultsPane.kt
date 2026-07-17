@@ -42,6 +42,7 @@ fun ResultsPane(
     running: Boolean,
     skip: Int,
     limit: Int,
+    total: Long? = null,
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onEditRow: ((doc: String) -> Unit)? = null,
@@ -100,6 +101,7 @@ fun ResultsPane(
             running = running,
             skip = skip,
             limit = limit,
+            total = total,
             onPrev = onPrev,
             onNext = onNext,
         )
@@ -536,6 +538,7 @@ private fun Pager(
     running: Boolean,
     skip: Int,
     limit: Int,
+    total: Long?,
     onPrev: () -> Unit,
     onNext: () -> Unit,
 ) {
@@ -550,7 +553,8 @@ private fun Pager(
         TextButton(onClick = onPrev, enabled = skip > 0 && !running) { Text("← Prev") }
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-            "rows ${if (rowsCount == 0) 0 else skip + 1}–${skip + rowsCount}",
+            "rows ${if (rowsCount == 0) 0 else skip + 1}–${skip + rowsCount}" +
+                (total?.let { " of ${formatCount(it)}" } ?: ""),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -569,7 +573,7 @@ private fun Pager(
         ) { Text("Next →") }
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-            "page $limit",
+            "limit $limit",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

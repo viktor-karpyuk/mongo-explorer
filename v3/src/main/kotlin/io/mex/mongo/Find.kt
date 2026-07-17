@@ -31,6 +31,14 @@ private val EJSON_SETTINGS: JsonWriterSettings = JsonWriterSettings.builder()
     .outputMode(JsonMode.EXTENDED)
     .build()
 
+/** Exact matched-document count for the request's filter, or null on error/timeout. */
+fun executeCount(client: MongoClient, req: FindRequest): Long? = runCatching {
+    val opts = com.mongodb.client.model.CountOptions()
+    if (req.maxTimeMs > 0) opts.maxTime(req.maxTimeMs, TimeUnit.MILLISECONDS)
+    client.getDatabase(req.db).getCollection(req.collection)
+        .countDocuments(parseFilter(req.filter), opts)
+}.getOrNull()
+
 fun executeFind(client: MongoClient, req: FindRequest): FindResult {
     val t0 = System.nanoTime()
     return runCatching {
