@@ -53,6 +53,10 @@ compose.desktop {
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi,
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb,
             )
+            // jlink strips the runtime to the modules listed here; these four are
+            // needed at runtime: java.sql (sqlite-jdbc), java.naming (mongodb+srv
+            // DNS lookups), jdk.crypto.ec (TLS handshakes), jdk.unsupported (Unsafe).
+            modules("java.sql", "java.naming", "jdk.crypto.ec", "jdk.unsupported")
             packageName = "Mongo Explorer v3"
             // Compose Desktop requires MAJOR >= 1 for the installer version.
             packageVersion = "1.0.0"
