@@ -101,9 +101,13 @@ fun collStats(client: MongoClient, db: String, collection: String): CollStats {
     )
 }
 
-fun createDatabase(client: MongoClient, db: String) {
-    client.getDatabase(db).createCollection("_mex_init")
-    client.getDatabase(db).getCollection("_mex_init").drop()
+/**
+ * MongoDB has no explicit create-database command and does not list empty
+ * databases, so a database only becomes visible once it holds a collection.
+ * The initial collection is therefore kept, not dropped.
+ */
+fun createDatabase(client: MongoClient, db: String, initialCollection: String) {
+    client.getDatabase(db).createCollection(initialCollection)
 }
 
 fun dropDatabase(client: MongoClient, db: String) {

@@ -61,6 +61,7 @@ fun Tree(
 
     var sortAsc by remember { mutableStateOf(true) }
     var pendingDrop by remember { mutableStateOf<PendingDrop?>(null) }
+    var creating by remember { mutableStateOf<CreateTarget?>(null) }
 
     Column(
         modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface),
@@ -122,16 +123,7 @@ fun Tree(
                         selected = isDbSel,
                         onToggle = { scope.launch { namespaces.toggleExpanded(conn.id, db.name) } },
                         onSelect = { selection.select(Selection.Database(conn.id, db.name)) },
-                        onCreateColl = {
-                            val name = singlePrompt("New collection name", "") ?: return@DbRow
-                            scope.launch {
-                                val client = registry.client(conn.id) ?: return@launch
-                                withContext(Dispatchers.IO) {
-                                    createCollection(client, db.name, CreateCollectionInput(name))
-                                }
-                                namespaces.loadCollections(conn.id, db.name)
-                            }
-                        },
+                        onCreateColl = { creating = CreateTarget.Collection(conn.id, db.name) },
                         onDrop = { pendingDrop = PendingDrop.Db(conn.id, db.name) },
                     )
 
@@ -168,20 +160,45 @@ fun Tree(
 
                 // Connection-level "Create database" trigger
                 TextButton(
-                    onClick = {
-                        val name = singlePrompt("New database name", "") ?: return@TextButton
-                        scope.launch {
-                            val client = registry.client(conn.id) ?: return@launch
-                            withContext(Dispatchers.IO) { createDatabase(client, name) }
-                            namespaces.loadDatabases(conn.id)
-                        }
-                    },
+                    onClick = { creating = CreateTarget.Database(conn.id, conn.name) },
                     modifier = Modifier.padding(start = 14.dp, top = 2.dp, bottom = 6.dp),
                 ) {
                     Text("+ Database", style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
+    }
+
+    creating?.let { target ->
+        CreateNamespaceDialog(
+            target = target,
+            onClose = { creating = null },
+            onCreate = { db, coll ->
+                val client = registry.client(target.connectionId)
+                if (client == null) {
+                    "Not connected."
+                } else {
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching {
+                            when (target) {
+                                is CreateTarget.Database -> createDatabase(client, db, coll)
+                                is CreateTarget.Collection ->
+                                    createCollection(client, db, CreateCollectionInput(coll))
+                            }
+                        }
+                    }
+                    result.fold(
+                        onSuccess = {
+                            namespaces.loadDatabases(target.connectionId)
+                            namespaces.expand(target.connectionId, db)
+                            selection.select(Selection.Collection(target.connectionId, db, coll))
+                            null
+                        },
+                        onFailure = { it.message ?: it::class.java.simpleName },
+                    )
+                }
+            },
+        )
     }
 
     pendingDrop?.let { target ->
@@ -309,10 +326,4 @@ private fun CollRow(
             DropdownMenuItem(text = { Text("Drop collection") }, onClick = { menu = false; onDrop() })
         }
     }
-}
-
-private fun singlePrompt(title: String, initial: String): String? {
-    // Compose Desktop has no native prompt — fall back to javax.swing for now.
-    return javax.swing.JOptionPane.showInputDialog(null, title, initial)
-        ?.takeIf { it.isNotBlank() }
 }

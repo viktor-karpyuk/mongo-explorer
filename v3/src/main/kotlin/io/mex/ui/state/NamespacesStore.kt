@@ -49,6 +49,13 @@ class NamespacesStore(private val registry: MongoRegistry) {
         }
     }
 
+    /** Idempotent expand — used after creating a namespace so the new row is visible. */
+    suspend fun expand(connectionId: String, db: String) {
+        val cache = cache(connectionId)
+        cache.expanded.value = cache.expanded.value + db
+        loadCollections(connectionId, db)
+    }
+
     suspend fun toggleExpanded(connectionId: String, db: String) {
         val cache = cache(connectionId)
         val current = cache.expanded.value
