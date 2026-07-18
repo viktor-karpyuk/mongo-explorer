@@ -12,7 +12,7 @@ data class MemberInfo(
     val uptime: Long,
     val pingMs: Long?,
     val lagSeconds: Long?,
-    val priority: Int,
+    val priority: Double,
     val votes: Int,
 )
 
@@ -25,10 +25,49 @@ data class TopologyInfo(
 
 data class HealthReport(val score: Int, val reasons: List<String>)
 
+/** One member as declared in rs.conf (config-side view, independent of runtime state). */
+data class RsMemberConfig(
+    val id: Int,
+    val host: String,
+    val priority: Double,
+    val votes: Int,
+    val arbiterOnly: Boolean,
+    val hidden: Boolean,
+    val buildIndexes: Boolean,
+    val secondaryDelaySecs: Long,
+    val tags: Map<String, String>,
+)
+
+/** A single rs.conf settings entry, pre-rendered for display. */
+data class RsSetting(
+    val label: String,
+    val value: String,
+    val isDefault: Boolean,
+)
+
+/** Structured replSetGetConfig result; [json] keeps the pretty EJSON for copy/raw view. */
+data class RsConfig(
+    val setName: String,
+    val version: Int,
+    val term: Long?,
+    val protocolVersion: Long?,
+    val configServer: Boolean,
+    val members: List<RsMemberConfig>,
+    val settings: List<RsSetting>,
+    val replicaSetId: String?,
+    val json: String,
+) {
+    val votingMembers: Int get() = members.count { it.votes > 0 }
+    val majority: Int get() = votingMembers / 2 + 1
+    val arbiters: Int get() = members.count { it.arbiterOnly }
+    val hiddenMembers: Int get() = members.count { it.hidden }
+    val delayedMembers: Int get() = members.count { it.secondaryDelaySecs > 0 }
+}
+
 data class ClusterSnapshot(
     val topology: TopologyInfo,
     val health: HealthReport,
-    val rsConfigJson: String?,
+    val rsConfig: RsConfig?,
 )
 
 private val STATE_BY_CODE = mapOf(
@@ -37,7 +76,8 @@ private val STATE_BY_CODE = mapOf(
     9 to "ROLLBACK", 10 to "REMOVED",
 )
 
-private val EJSON: JsonWriterSettings = JsonWriterSettings.builder().outputMode(JsonMode.EXTENDED).build()
+private val PRETTY_EJSON: JsonWriterSettings =
+    JsonWriterSettings.builder().outputMode(JsonMode.EXTENDED).indent(true).build()
 
 fun clusterSnapshot(client: MongoClient): ClusterSnapshot {
     val admin = client.getDatabase("admin")
@@ -47,7 +87,7 @@ fun clusterSnapshot(client: MongoClient): ClusterSnapshot {
     var setName: String? = null
     var primary: String? = null
     val members = mutableListOf<MemberInfo>()
-    var rsConfigJson: String? = null
+    var rsConfig: RsConfig? = null
 
     if (hello["msg"] == "isdbgrid") {
         type = "sharded"
@@ -55,15 +95,13 @@ fun clusterSnapshot(client: MongoClient): ClusterSnapshot {
         type = "replicaset"
         setName = hello.getString("setName")
         primary = hello["primary"] as? String
+        rsConfig = runCatching {
+            val cfg = admin.runCommand(Document("replSetGetConfig", 1))
+            parseRsConfig((cfg["config"] as? Document) ?: cfg)
+        }.getOrNull()
         runCatching {
             val status = admin.runCommand(Document("replSetGetStatus", 1))
-            val priorities = runCatching {
-                val cfg = admin.runCommand(Document("replSetGetConfig", 1))
-                val cfgMembers = ((cfg["config"] as? Document)?.get("members") as? List<*>).orEmpty()
-                cfgMembers.filterIsInstance<Document>().associate {
-                    it.getString("host") to ((it["priority"] as? Number)?.toInt() to (it["votes"] as? Number)?.toInt())
-                }
-            }.getOrDefault(emptyMap())
+            val byHost = rsConfig?.members?.associateBy { it.host }.orEmpty()
             val sm = (status["members"] as? List<*>).orEmpty().filterIsInstance<Document>()
             for (m in sm) {
                 val name = m.getString("name")
@@ -76,21 +114,82 @@ fun clusterSnapshot(client: MongoClient): ClusterSnapshot {
                     uptime = (m["uptime"] as? Number)?.toLong() ?: 0L,
                     pingMs = (m["pingMs"] as? Number)?.toLong(),
                     lagSeconds = optime?.let { ((System.currentTimeMillis() - it.time) / 1000).coerceAtLeast(0) },
-                    priority = priorities[name]?.first ?: 1,
-                    votes = priorities[name]?.second ?: 1,
+                    priority = byHost[name]?.priority ?: 1.0,
+                    votes = byHost[name]?.votes ?: 1,
                 )
             }
         }
-        rsConfigJson = runCatching {
-            val cfg = admin.runCommand(Document("replSetGetConfig", 1))
-            ((cfg["config"] as? Document) ?: cfg).toJson(EJSON)
-        }.getOrNull()
     } else {
         type = "standalone"
     }
 
     val topology = TopologyInfo(type, setName, primary, members)
-    return ClusterSnapshot(topology, scoreHealth(topology), rsConfigJson)
+    return ClusterSnapshot(topology, scoreHealth(topology), rsConfig)
+}
+
+private fun parseRsConfig(cfg: Document): RsConfig {
+    val members = (cfg["members"] as? List<*>).orEmpty().filterIsInstance<Document>().map { m ->
+        RsMemberConfig(
+            id = (m["_id"] as? Number)?.toInt() ?: -1,
+            host = m.getString("host") ?: "?",
+            priority = (m["priority"] as? Number)?.toDouble() ?: 1.0,
+            votes = (m["votes"] as? Number)?.toInt() ?: 1,
+            arbiterOnly = m["arbiterOnly"] == true,
+            hidden = m["hidden"] == true,
+            buildIndexes = m["buildIndexes"] != false,
+            // secondaryDelaySecs since 5.0; slaveDelay before.
+            secondaryDelaySecs = ((m["secondaryDelaySecs"] ?: m["slaveDelay"]) as? Number)?.toLong() ?: 0L,
+            tags = (m["tags"] as? Document)?.entries?.associate { it.key to it.value.toString() }.orEmpty(),
+        )
+    }
+
+    val s = cfg["settings"] as? Document
+    val settings = buildList {
+        fun add(label: String, raw: Any?, default: Any?, render: (Any) -> String = Any::toString) {
+            val effective = raw ?: default ?: return
+            add(RsSetting(label, render(effective), raw == null || numEq(raw, default)))
+        }
+        add("Chaining allowed", s?.get("chainingAllowed"), true)
+        add("Heartbeat interval", s?.get("heartbeatIntervalMillis"), 2_000) { renderMillis(it) }
+        add("Heartbeat timeout", s?.get("heartbeatTimeoutSecs"), 10) { "$it s" }
+        add("Election timeout", s?.get("electionTimeoutMillis"), 10_000) { renderMillis(it) }
+        add("Catch-up timeout", s?.get("catchUpTimeoutMillis"), -1) {
+            if ((it as Number).toLong() == -1L) "unlimited" else renderMillis(it)
+        }
+        add("Catch-up takeover delay", s?.get("catchUpTakeoverDelayMillis"), 30_000) { renderMillis(it) }
+        add("Majority journal default", cfg["writeConcernMajorityJournalDefault"], true)
+        val modes = s?.get("getLastErrorModes") as? Document
+        if (modes != null && modes.isNotEmpty()) {
+            add(RsSetting("Custom write-concern modes", modes.keys.joinToString(", "), false))
+        }
+        val gleDefaults = s?.get("getLastErrorDefaults") as? Document
+        if (gleDefaults != null && !(gleDefaults.size == 2 && numEq(gleDefaults["w"], 1) && numEq(gleDefaults["wtimeout"], 0))) {
+            add(RsSetting("getLastError defaults", gleDefaults.toJson(), false))
+        }
+    }
+
+    return RsConfig(
+        setName = cfg.getString("_id") ?: "?",
+        version = (cfg["version"] as? Number)?.toInt() ?: 0,
+        term = (cfg["term"] as? Number)?.toLong(),
+        protocolVersion = (cfg["protocolVersion"] as? Number)?.toLong(),
+        configServer = cfg["configsvr"] == true,
+        members = members,
+        settings = settings,
+        replicaSetId = (s?.get("replicaSetId"))?.toString(),
+        json = cfg.toJson(PRETTY_EJSON),
+    )
+}
+
+/** Numeric-tolerant equality: BSON hands back Integer/Long/Double interchangeably. */
+private fun numEq(a: Any?, b: Any?): Boolean = when {
+    a is Number && b is Number -> a.toDouble() == b.toDouble()
+    else -> a == b
+}
+
+private fun renderMillis(v: Any): String {
+    val ms = (v as Number).toLong()
+    return if (ms % 1000 == 0L) "${ms / 1000} s" else "$ms ms"
 }
 
 private fun scoreHealth(t: TopologyInfo): HealthReport {
