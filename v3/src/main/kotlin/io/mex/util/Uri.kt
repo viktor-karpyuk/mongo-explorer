@@ -22,8 +22,13 @@ fun parseMongoUri(uri: String): ParsedUri? = runCatching {
 }.getOrNull()
 
 fun formatUriPreview(uri: String): String {
-    val p = parseMongoUri(uri) ?: return uri
+    // Multi-host URIs (host1,host2) defeat java.net.URI, so the fallback must
+    // still strip credentials rather than echo the raw URI.
+    val p = parseMongoUri(uri) ?: return redactCredentials(uri)
     val port = p.port?.let { ":$it" } ?: ""
     val db = p.database?.let { "/$it" } ?: ""
     return "${p.protocol}://${p.host}$port$db"
 }
+
+fun redactCredentials(uri: String): String =
+    Regex("(mongodb(\\+srv)?://)([^@/]+@)").replace(uri, "$1***@")

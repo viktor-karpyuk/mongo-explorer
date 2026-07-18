@@ -303,20 +303,26 @@ internal data class ManualFields(
     val authDb: String,
 )
 
+/** Percent-decodes without URLDecoder's "+ means space" form-encoding rule. */
+private fun percentDecode(s: String): String =
+    java.net.URLDecoder.decode(s.replace("+", "%2B"), Charsets.UTF_8)
+
 /** Best-effort decomposition of a single-host URI into form fields; null for shapes the form can't express. */
 internal fun parseManualUri(uri: String): ManualFields? = runCatching {
     val u = java.net.URI(uri.trim())
     if (u.scheme != "mongodb" && u.scheme != "mongodb+srv") return null
-    val userInfo = u.userInfo?.split(":", limit = 2)
-    val authSource = (u.query ?: "").split("&")
+    // Split the RAW userinfo, then decode each part exactly once — URI.getUserInfo()
+    // is already decoded, and stacking URLDecoder on it corrupts %/+ passwords.
+    val userInfo = u.rawUserInfo?.split(":", limit = 2)
+    val authSource = (u.rawQuery ?: "").split("&")
         .firstOrNull { it.startsWith("authSource=") }
         ?.substringAfter("=")
     ManualFields(
         srv = u.scheme == "mongodb+srv",
         host = u.host ?: return null,
         port = u.port.takeIf { it >= 0 }?.toString() ?: "27017",
-        user = userInfo?.getOrNull(0)?.let { java.net.URLDecoder.decode(it, Charsets.UTF_8) } ?: "",
-        pass = userInfo?.getOrNull(1)?.let { java.net.URLDecoder.decode(it, Charsets.UTF_8) } ?: "",
-        authDb = authSource?.let { java.net.URLDecoder.decode(it, Charsets.UTF_8) } ?: "",
+        user = userInfo?.getOrNull(0)?.let { percentDecode(it) } ?: "",
+        pass = userInfo?.getOrNull(1)?.let { percentDecode(it) } ?: "",
+        authDb = authSource?.let { percentDecode(it) } ?: "",
     )
 }.getOrNull()
