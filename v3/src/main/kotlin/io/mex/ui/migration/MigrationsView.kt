@@ -1,5 +1,6 @@
 package io.mex.ui.migration
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -14,11 +15,14 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import io.mex.AppContext
+import io.mex.data.ConflictPolicy
 import io.mex.data.MigrationJob
 import io.mex.data.MigrationNs
+import io.mex.data.MigrationPhase
 import io.mex.data.MigrationProgress
 import io.mex.data.MigrationSpec
 import io.mex.data.MigrationStatus
+import io.mex.data.NsReport
 import io.mex.migration.MigrationRunner
 import io.mex.migration.preflight
 import io.mex.mongo.ConnectionState
@@ -37,6 +41,7 @@ fun MigrationsView(ctx: AppContext, registry: MongoRegistry, runner: MigrationRu
     val progress = remember { mutableStateMapOf<String, MigrationProgress>() }
     var showNew by remember { mutableStateOf(false) }
     var confirmingDelete by remember { mutableStateOf<MigrationJob?>(null) }
+    var reportFor by remember { mutableStateOf<MigrationJob?>(null) }
     val scope = rememberCoroutineScope()
 
     fun reload() { jobs = ctx.migrations.list() }
@@ -67,6 +72,7 @@ fun MigrationsView(ctx: AppContext, registry: MongoRegistry, runner: MigrationRu
                         onPause = { runner.pause(job.id) },
                         onCancel = { runner.cancel(job.id) },
                         onDelete = { confirmingDelete = job },
+                        onReport = { reportFor = job },
                     )
                 }
             }
@@ -85,6 +91,8 @@ fun MigrationsView(ctx: AppContext, registry: MongoRegistry, runner: MigrationRu
             },
         )
     }
+
+    reportFor?.let { job -> ReportDialog(job, onClose = { reportFor = null }) }
 
     confirmingDelete?.let { job ->
         ConfirmDangerDialog(
@@ -111,6 +119,7 @@ private fun JobRow(
     onPause: () -> Unit,
     onCancel: () -> Unit,
     onDelete: () -> Unit,
+    onReport: () -> Unit,
 ) {
     val sourceName = connections.connections.list().find { it.id == job.spec.sourceId }?.name ?: "?"
     val targetName = connections.connections.list().find { it.id == job.spec.targetId }?.name ?: "?"
@@ -125,10 +134,39 @@ private fun JobRow(
         Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(job.status.name, color = statusColor, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(90.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("$sourceName → $targetName", style = MaterialTheme.typography.bodyMedium)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("$sourceName → $targetName", style = MaterialTheme.typography.bodyMedium)
+                    // Verdict chip once a verified job has its report (MIG-UI-3/5).
+                    if (job.status == MigrationStatus.completed && job.spec.verify) {
+                        job.report?.let { r ->
+                            val (label, tint) = if (r.ok) "verified ✓" to Color(0xFF4ADE80) else "verify failed" to Color(0xFFFBBF24)
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = tint,
+                                modifier = Modifier
+                                    .background(tint.copy(alpha = 0.12f), MaterialTheme.shapes.small)
+                                    .padding(horizontal = 6.dp, vertical = 1.dp),
+                            )
+                        }
+                    }
+                }
+                val phaseLabel = when (progress?.phase) {
+                    MigrationPhase.copy -> "copying"
+                    MigrationPhase.indexes -> "indexes"
+                    MigrationPhase.verify -> "verifying"
+                    null -> null
+                }
+                val live = progress?.takeIf { job.status == MigrationStatus.running || job.status == MigrationStatus.paused }
                 Text(
-                    "${job.spec.namespaces.size} namespace(s)" +
-                        progress?.let { " · ${it.currentNs?.let { ns -> "${ns.db}.${ns.coll}" } ?: ""} · ${formatCount(it.copied)}" }.orEmpty(),
+                    buildString {
+                        append("${job.spec.namespaces.size} namespace(s) · ${job.spec.conflictPolicy.name}")
+                        live?.currentNs?.let { ns -> append(" · ${ns.db}.${ns.coll}") }
+                        if (live != null && phaseLabel != null) append(" · $phaseLabel")
+                        live?.let { append(" · ${formatCount(it.copied)}") }
+                        live?.takeIf { it.skipped > 0 }?.let { append(" · skipped ${formatCount(it.skipped)}") }
+                        live?.takeIf { it.docErrors > 0 }?.let { append(" · errors ${formatCount(it.docErrors)}") }
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace,
@@ -141,8 +179,88 @@ private fun JobRow(
                     TextButton(onClick = onPause) { Text("Pause") }
                     TextButton(onClick = onCancel) { Text("Cancel") }
                 }
-                else -> TextButton(onClick = onDelete) { Text("Delete") }
+                else -> {
+                    if (job.report != null) TextButton(onClick = onReport) { Text("Report") }
+                    TextButton(onClick = onDelete) { Text("Delete") }
+                }
             }
+        }
+    }
+}
+
+/** Per-namespace verification report (MIG-UI-4). Read-only. */
+@Composable
+private fun ReportDialog(job: MigrationJob, onClose: () -> Unit) {
+    val report = job.report ?: return
+    Dialog(onDismissRequest = onClose) {
+        Surface(modifier = Modifier.width(760.dp).heightIn(max = 640.dp), shape = MaterialTheme.shapes.medium, tonalElevation = 6.dp) {
+            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Migration report", style = MaterialTheme.typography.titleMedium)
+                    val (label, tint) = if (report.ok) "PASSED" to Color(0xFF4ADE80) else "FAILED" to Color(0xFFF87171)
+                    Text(label, style = MaterialTheme.typography.labelSmall, color = tint)
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        "policy ${job.spec.conflictPolicy.name}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Row {
+                    ReportHeaderCell("NAMESPACE", Modifier.weight(1f))
+                    ReportHeaderCell("SOURCE", Modifier.width(90.dp))
+                    ReportHeaderCell("TARGET", Modifier.width(90.dp))
+                    ReportHeaderCell("SKIP", Modifier.width(60.dp))
+                    ReportHeaderCell("ERR", Modifier.width(50.dp))
+                    ReportHeaderCell("INDEXES", Modifier.width(70.dp))
+                    ReportHeaderCell("RESULT", Modifier.width(56.dp))
+                }
+                HorizontalDivider()
+                Column(modifier = Modifier.verticalScroll(rememberScrollState()).weight(1f, fill = false)) {
+                    report.rows.forEach { row -> ReportRow(row) }
+                }
+                Row {
+                    Spacer(modifier = Modifier.weight(1f))
+                    TextButton(onClick = onClose) { Text("Close") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReportHeaderCell(text: String, modifier: Modifier) {
+    Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
+}
+
+@Composable
+private fun ReportRow(row: NsReport) {
+    fun count(v: Long) = if (v < 0) "—" else formatCount(v)
+    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+        Row {
+            Text("${row.db}.${row.coll}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f))
+            Text(count(row.sourceCount), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, modifier = Modifier.width(90.dp))
+            Text(count(row.targetCount), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, modifier = Modifier.width(90.dp))
+            Text(count(row.skipped), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, modifier = Modifier.width(60.dp))
+            Text(count(row.errors), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, modifier = Modifier.width(50.dp))
+            Text(
+                if (row.missingIndexes.isEmpty()) "${row.indexesCopied} ✓" else "${row.indexesCopied} of ${row.indexesCopied + row.missingIndexes.size}",
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.width(70.dp),
+            )
+            Text(
+                if (row.ok) "✓" else "✗",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (row.ok) Color(0xFF4ADE80) else Color(0xFFF87171),
+                modifier = Modifier.width(56.dp),
+            )
+        }
+        row.missingIndexes.forEach {
+            Text("  missing index: $it", style = MaterialTheme.typography.labelSmall, color = Color(0xFFFBBF24))
+        }
+        row.errorSamples.forEach {
+            Text("  $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
         }
     }
 }
@@ -167,6 +285,11 @@ private fun NewMigrationDialog(
     val selected = remember { mutableStateMapOf<String, Boolean>() } // "db.coll" -> true
     var preflightResult by remember { mutableStateOf<io.mex.data.PreflightResult?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var policy by remember { mutableStateOf(ConflictPolicy.abort) }
+    var policyMenu by remember { mutableStateOf(false) }
+    var copyIndexes by remember { mutableStateOf(true) }
+    var verify by remember { mutableStateOf(true) }
+    var dropConfirmed by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(sourceId) {
@@ -215,12 +338,59 @@ private fun NewMigrationDialog(
                     }
                 }
 
+                // Options — MIG-UI-1.
+                Text("Options", style = MaterialTheme.typography.titleSmall)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("ON CONFLICT", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Box {
+                        OutlinedButton(onClick = { policyMenu = true }) { Text(policyLabel(policy)) }
+                        DropdownMenu(expanded = policyMenu, onDismissRequest = { policyMenu = false }) {
+                            ConflictPolicy.entries.forEach { p ->
+                                DropdownMenuItem(
+                                    text = { Column { Text(policyLabel(p)); Text(policyHint(p), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                                    onClick = { policyMenu = false; policy = p; if (p != ConflictPolicy.drop) dropConfirmed = false; preflightResult = null },
+                                )
+                            }
+                        }
+                    }
+                    Text(policyHint(policy), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = copyIndexes, onCheckedChange = { copyIndexes = it })
+                    Text("Copy indexes — recreate secondary indexes on the target after documents.", style = MaterialTheme.typography.bodySmall)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = verify, onCheckedChange = { verify = it })
+                    Text("Verify after copy — compare document counts and index definitions when the copy finishes.", style = MaterialTheme.typography.bodySmall)
+                }
+                if (policy == ConflictPolicy.drop) {
+                    // MIG-CONFLICT-5 — Create stays disabled until the consequence is acknowledged.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = dropConfirmed, onCheckedChange = { dropConfirmed = it })
+                        Text(
+                            "I understand each selected target collection will be dropped before copying.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+
                 preflightResult?.let { r ->
                     Surface(color = if (r.ok) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer) {
                         Column(modifier = Modifier.padding(8.dp)) {
                             Text(if (r.ok) "Preflight passed." else "Preflight has failures.", style = MaterialTheme.typography.labelMedium)
                             r.checks.forEach {
-                                Text("${if (it.ok) "✓" else "✗"} ${it.name}${it.detail?.let { d -> " — $d" }.orEmpty()}", style = MaterialTheme.typography.labelSmall)
+                                val mark = when { it.warn -> "⚠"; it.ok -> "✓"; else -> "✗" }
+                                Text(
+                                    "$mark ${it.name}${it.detail?.let { d -> " — $d" }.orEmpty()}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = when {
+                                        it.warn -> Color(0xFFB45309)
+                                        it.ok -> Color.Unspecified
+                                        else -> MaterialTheme.colorScheme.error
+                                    },
+                                )
                             }
                         }
                     }
@@ -238,7 +408,7 @@ private fun NewMigrationDialog(
                                 try {
                                     val s = registry.client(sourceId) ?: return@launch
                                     val t = registry.client(targetId) ?: return@launch
-                                    preflightResult = withContext(Dispatchers.IO) { preflight(s, t, namespaces) }
+                                    preflightResult = withContext(Dispatchers.IO) { preflight(s, t, namespaces, policy) }
                                 } finally { busy = false }
                             }
                         },
@@ -247,13 +417,37 @@ private fun NewMigrationDialog(
                     Spacer(modifier = Modifier.weight(1f))
                     TextButton(onClick = onClose) { Text("Cancel") }
                     Button(
-                        onClick = { onCreate(MigrationSpec(sourceId, targetId, namespaces)) },
-                        enabled = preflightResult?.ok == true && !busy,
+                        onClick = {
+                            onCreate(
+                                MigrationSpec(
+                                    sourceId, targetId, namespaces,
+                                    conflictPolicy = policy,
+                                    copyIndexes = copyIndexes,
+                                    verify = verify,
+                                ),
+                            )
+                        },
+                        enabled = preflightResult?.ok == true && !busy &&
+                            (policy != ConflictPolicy.drop || dropConfirmed),
                     ) { Text("Create migration") }
                 }
             }
         }
     }
+}
+
+private fun policyLabel(p: ConflictPolicy): String = when (p) {
+    ConflictPolicy.abort -> "Abort on conflict"
+    ConflictPolicy.append -> "Append (target wins)"
+    ConflictPolicy.upsert -> "Upsert (source wins)"
+    ConflictPolicy.drop -> "Drop target first"
+}
+
+private fun policyHint(p: ConflictPolicy): String = when (p) {
+    ConflictPolicy.abort -> "Stop the job on the first duplicate _id."
+    ConflictPolicy.append -> "Keep existing target documents; skip duplicates."
+    ConflictPolicy.upsert -> "Overwrite target documents with the same _id."
+    ConflictPolicy.drop -> "Drop each target collection before copying."
 }
 
 @Composable

@@ -79,6 +79,15 @@ class MigrationJobsRepo(private val store: Store) {
         }
     }
 
+    fun setReport(id: String, report: VerificationReport) {
+        conn.prepareStatement("UPDATE migration_jobs SET report = ?, heartbeat_at = ? WHERE id = ?").use { ps ->
+            ps.setString(1, json.encodeToString(report))
+            ps.setLong(2, System.currentTimeMillis())
+            ps.setString(3, id)
+            ps.executeUpdate()
+        }
+    }
+
     fun setCheckpoint(id: String, cp: MigrationCheckpoint) {
         conn.prepareStatement("UPDATE migration_jobs SET checkpoint = ?, heartbeat_at = ? WHERE id = ?").use { ps ->
             ps.setString(1, json.encodeToString(cp))
@@ -96,7 +105,12 @@ class MigrationJobsRepo(private val store: Store) {
     }
 
     private fun parse(rs: java.sql.ResultSet): MigrationJob {
-        val cp = rs.getString("checkpoint")?.let { json.decodeFromString<MigrationCheckpoint>(it) }
+        val cp = rs.getString("checkpoint")?.let {
+            runCatching { json.decodeFromString<MigrationCheckpoint>(it) }.getOrNull()
+        }
+        val report = rs.getString("report")?.let {
+            runCatching { json.decodeFromString<VerificationReport>(it) }.getOrNull()
+        }
         return MigrationJob(
             id = rs.getString("id"),
             spec = json.decodeFromString(rs.getString("spec")),
@@ -105,6 +119,7 @@ class MigrationJobsRepo(private val store: Store) {
             finishedAt = rs.getLong("finished_at").takeIf { !rs.wasNull() },
             error = rs.getString("error"),
             checkpoint = cp,
+            report = report,
         )
     }
 }

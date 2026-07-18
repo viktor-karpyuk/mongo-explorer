@@ -69,6 +69,14 @@ minus heavy auth methods. ~80 features.
 - [x] _id-cursor checkpoint + pause / resume / cancel
 - [x] Orphan reconciliation on boot
 
+### 9b. Migration hardening (v3.1 — `docs/v3/v3.1/`)
+- [x] Secondary-index migration (verbatim createIndexes replay; failures are warnings)
+- [x] Conflict policies: abort / append (target wins) / upsert (source wins) / drop-first
+- [x] Unordered bulk writes + per-document error ledger + `docErrorLimit` job gate
+- [x] Post-copy verification (count rules per policy + index diff) with persisted report + report dialog
+- [x] Canonical-EJSON `_id` checkpoints (fixes string-sliced resume)
+- [x] Preflight shows per-namespace source/target counts + non-empty-target warning
+
 ## 10. I/O
 - [x] Export JSON / NDJSON / CSV (streaming)
 - [x] Import JSON / NDJSON / CSV (dry-run + commit)

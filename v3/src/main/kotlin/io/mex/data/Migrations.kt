@@ -67,4 +67,9 @@ internal val MIGRATIONS: List<Migration> = listOf(
             CREATE INDEX idx_migration_jobs_status ON migration_jobs(status);
         """.trimIndent(),
     ),
+    // v3.1 migration hardening — persisted verification report (MIG-VERIFY-4).
+    Migration(
+        version = 2,
+        sql = "ALTER TABLE migration_jobs ADD COLUMN report TEXT",
+    ),
 )
