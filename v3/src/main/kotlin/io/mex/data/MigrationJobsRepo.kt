@@ -9,12 +9,17 @@ private val json = Json { ignoreUnknownKeys = true }
 class MigrationJobsRepo(private val store: Store) {
     private val conn get() = store.conn
 
+    /**
+     * Marks jobs that were mid-copy when the app died as failed so they aren't shown as running.
+     *
+     * Only `running` is reconciled: `paused` is a deliberate at-rest state whose checkpoint must
+     * survive a restart, and orphaning it used to make the job unresumable from the UI.
+     */
     fun reconcileOrphans() {
         conn.prepareStatement(
             """
-            UPDATE migration_jobs SET status = 'failed', error = 'orphaned at restart'
-            WHERE status IN ('running','paused') AND heartbeat_at IS NOT NULL
-              AND heartbeat_at < ?
+            UPDATE migration_jobs SET status = 'failed', error = 'interrupted — the app closed while this job was running'
+            WHERE status = 'running' AND heartbeat_at IS NOT NULL AND heartbeat_at < ?
             """.trimIndent(),
         ).use { ps ->
             ps.setLong(1, System.currentTimeMillis() - 60_000)
@@ -55,14 +60,18 @@ class MigrationJobsRepo(private val store: Store) {
         return get(id)!!
     }
 
-    fun setStatus(id: String, status: MigrationStatus, error: String? = null) {
+    /**
+     * @param clearError wipes a previous failure message when a job is restarted or resumed,
+     *   so a stale error doesn't hang around under a now-running job.
+     */
+    fun setStatus(id: String, status: MigrationStatus, error: String? = null, clearError: Boolean = false) {
         val now = System.currentTimeMillis()
         conn.prepareStatement(
             """
             UPDATE migration_jobs SET status = ?,
               started_at = COALESCE(started_at, CASE WHEN ? = 'running' THEN ? ELSE NULL END),
-              finished_at = CASE WHEN ? IN ('completed','failed') THEN ? ELSE finished_at END,
-              error = COALESCE(?, error),
+              finished_at = CASE WHEN ? IN ('completed','failed','cancelled') THEN ? ELSE finished_at END,
+              error = CASE WHEN ? THEN NULL ELSE COALESCE(?, error) END,
               heartbeat_at = ?
             WHERE id = ?
             """.trimIndent(),
@@ -72,9 +81,17 @@ class MigrationJobsRepo(private val store: Store) {
             ps.setLong(3, now)
             ps.setString(4, status.name)
             ps.setLong(5, now)
-            ps.setString(6, error)
-            ps.setLong(7, now)
-            ps.setString(8, id)
+            ps.setBoolean(6, clearError)
+            ps.setString(7, error)
+            ps.setLong(8, now)
+            ps.setString(9, id)
+            ps.executeUpdate()
+        }
+    }
+
+    fun clearReport(id: String) {
+        conn.prepareStatement("UPDATE migration_jobs SET report = NULL WHERE id = ?").use { ps ->
+            ps.setString(1, id)
             ps.executeUpdate()
         }
     }

@@ -16,6 +16,17 @@ fun formatBytes(bytes: Long): String {
 
 fun formatCount(n: Long): String = "%,d".format(n)
 
+/** Compact elapsed/remaining duration, e.g. "45s", "3m 20s", "2h 5m". */
+fun formatDuration(seconds: Long): String {
+    val s = seconds.coerceAtLeast(0)
+    return when {
+        s < 60 -> "${s}s"
+        s < 3_600 -> "${s / 60}m ${s % 60}s"
+        s < 86_400 -> "${s / 3_600}h ${(s % 3_600) / 60}m"
+        else -> "${s / 86_400}d ${(s % 86_400) / 3_600}h"
+    }
+}
+
 fun formatAgo(epochMs: Long, now: Long = System.currentTimeMillis()): String {
     val s = ((now - epochMs) / 1000).coerceAtLeast(0)
     return when {

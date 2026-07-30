@@ -72,4 +72,39 @@ internal val MIGRATIONS: List<Migration> = listOf(
         version = 2,
         sql = "ALTER TABLE migration_jobs ADD COLUMN report TEXT",
     ),
+    // v3.2 — 'cancelled' becomes a first-class status so a user-initiated stop is no
+    // longer indistinguishable from a genuine failure. SQLite cannot alter a CHECK
+    // constraint in place, so the table is rebuilt.
+    Migration(
+        version = 3,
+        sql = """
+            CREATE TABLE migration_jobs_new (
+              id              TEXT PRIMARY KEY,
+              source_conn_id  TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+              target_conn_id  TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+              spec            TEXT NOT NULL,
+              status          TEXT NOT NULL CHECK (status IN
+                                ('pending','running','paused','completed','failed','cancelled')),
+              heartbeat_at    INTEGER,
+              started_at      INTEGER,
+              finished_at     INTEGER,
+              checkpoint      TEXT,
+              error           TEXT,
+              report          TEXT
+            );
+
+            INSERT INTO migration_jobs_new
+              (id, source_conn_id, target_conn_id, spec, status, heartbeat_at,
+               started_at, finished_at, checkpoint, error, report)
+              SELECT id, source_conn_id, target_conn_id, spec, status, heartbeat_at,
+                     started_at, finished_at, checkpoint, error, report
+              FROM migration_jobs;
+
+            DROP TABLE migration_jobs;
+
+            ALTER TABLE migration_jobs_new RENAME TO migration_jobs;
+
+            CREATE INDEX idx_migration_jobs_status ON migration_jobs(status)
+        """.trimIndent(),
+    ),
 )
