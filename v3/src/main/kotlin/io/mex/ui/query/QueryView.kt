@@ -48,6 +48,10 @@ fun QueryView(
     fun first() = scope.launch { store.firstPage(key, connectionId, db, collection) }
     fun pageSize(n: Int) = scope.launch { store.setPageSize(key, n, connectionId, db, collection) }
 
+    // Sampled once per namespace; drives field-path autocomplete in the query inputs.
+    LaunchedEffect(key) { store.loadSchema(key, connectionId, db, collection) }
+    val schemaFields = store.schema(key)
+
     var dialog by remember(connectionId, db, collection) { mutableStateOf<String?>(null) }
     // Holds the pre-filled state when Edit/Delete is invoked from a result row.
     var rowEdit by remember(connectionId, db, collection) { mutableStateOf<Pair<String, String>?>(null) }
@@ -92,9 +96,33 @@ fun QueryView(
                     Text(if (running) "Running…" else "Run ⌘↵")
                 }
             }
-            QueryField("Filter", draft.filter, "{ status: \"active\" }") { draft.filter = it }
-            QueryField("Projection", draft.projection, "{ name: 1, _id: 0 }") { draft.projection = it }
-            QueryField("Sort", draft.sort, "{ createdAt: -1 }") { draft.sort = it }
+            SuggestingQueryField(
+                label = "Filter",
+                value = draft.filter,
+                hint = "{ status: \"active\" }",
+                fields = schemaFields,
+                context = FieldContext.filter,
+                onChange = { draft.filter = it },
+                onSubmit = { run() },
+            )
+            SuggestingQueryField(
+                label = "Projection",
+                value = draft.projection,
+                hint = "{ name: 1, _id: 0 }",
+                fields = schemaFields,
+                context = FieldContext.projection,
+                onChange = { draft.projection = it },
+                onSubmit = { run() },
+            )
+            SuggestingQueryField(
+                label = "Sort",
+                value = draft.sort,
+                hint = "{ createdAt: -1 }",
+                fields = schemaFields,
+                context = FieldContext.sort,
+                onChange = { draft.sort = it },
+                onSubmit = { run() },
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 NumberField("Skip", draft.skip) { draft.skip = it }
                 NumberField("Limit", draft.limit) { draft.limit = it.coerceAtLeast(1) }
@@ -247,29 +275,27 @@ private fun HistoryEntry(row: QueryHistoryRow, body: FindBody) {
     }
 }
 
+/**
+ * Numeric input that keeps the raw string while editing.
+ *
+ * Parsing on every keystroke and falling back to the previous value made the field
+ * impossible to clear — backspacing to empty instantly restored the old number.
+ */
 @Composable
-private fun QueryField(label: String, value: String, hint: String, onChange: (String) -> Unit) {
+fun NumberField(label: String, value: Int, modifier: Modifier = Modifier, onChange: (Int) -> Unit) {
+    var raw by remember(value) { mutableStateOf(value.toString()) }
+    val parsed = raw.toIntOrNull()
+    val invalid = raw.isNotEmpty() && parsed == null
     OutlinedTextField(
-        value = value,
-        onValueChange = onChange,
-        label = { Text(label, style = MaterialTheme.typography.labelSmall) },
-        placeholder = { Text(hint, style = MaterialTheme.typography.bodySmall) },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-        textStyle = MaterialTheme.typography.bodySmall.copy(
-            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-        ),
-    )
-}
-
-@Composable
-private fun NumberField(label: String, value: Int, onChange: (Int) -> Unit) {
-    OutlinedTextField(
-        value = value.toString(),
-        onValueChange = { onChange(it.toIntOrNull() ?: value) },
+        value = raw,
+        onValueChange = {
+            raw = it.filter { c -> c.isDigit() }
+            raw.toIntOrNull()?.let(onChange)
+        },
         label = { Text(label, style = MaterialTheme.typography.labelSmall) },
         singleLine = true,
-        modifier = Modifier.width(140.dp),
+        isError = invalid,
+        modifier = modifier.width(140.dp),
         textStyle = MaterialTheme.typography.bodySmall.copy(
             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
         ),

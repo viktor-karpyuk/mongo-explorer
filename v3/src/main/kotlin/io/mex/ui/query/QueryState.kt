@@ -10,6 +10,8 @@ import io.mex.data.QueryKind
 import io.mex.mongo.FindRequest
 import io.mex.mongo.FindResult
 import io.mex.mongo.MongoRegistry
+import io.mex.mongo.SchemaField
+import io.mex.mongo.analyzeSchema
 import io.mex.mongo.executeCount
 import io.mex.mongo.executeFind
 import kotlinx.coroutines.Dispatchers
@@ -35,11 +37,28 @@ class QueryStore(private val ctx: AppContext, private val registry: MongoRegistr
     private val results = mutableStateMapOf<String, FindResult>()
     private val running = mutableStateMapOf<String, Boolean>()
     private val totals = mutableStateMapOf<String, Long>()
+    private val schemas = mutableStateMapOf<String, List<SchemaField>>()
 
     fun draft(key: String): QueryDraft = drafts.getOrPut(key) { QueryDraft() }
     fun result(key: String): FindResult? = results[key]
     fun running(key: String): Boolean = running[key] == true
     fun total(key: String): Long? = totals[key]
+
+    /** Sampled field paths backing query autocomplete; empty until [loadSchema] finishes. */
+    fun schema(key: String): List<SchemaField> = schemas[key].orEmpty()
+
+    /**
+     * Samples the collection once per namespace so the editor can suggest field paths.
+     * Deliberately small — this runs when a collection is opened, not per keystroke.
+     */
+    suspend fun loadSchema(key: String, connectionId: String, db: String, collection: String) {
+        if (schemas.containsKey(key)) return
+        val client = registry.client(connectionId) ?: return
+        val report = withContext(Dispatchers.IO) {
+            runCatching { analyzeSchema(client, db, collection, sampleSize = 200) }.getOrNull()
+        }
+        schemas[key] = report?.fields.orEmpty()
+    }
 
     /** Refreshes the exact matched count for the draft's filter. Cheap for indexed/empty filters. */
     suspend fun refreshCount(key: String, connectionId: String, db: String, collection: String) {
