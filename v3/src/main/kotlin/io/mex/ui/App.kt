@@ -44,6 +44,17 @@ fun App(ctx: AppContext) {
         for ((id, state) in states) {
             if (state !is ConnectionState.Connected) namespaces.reset(id)
         }
+        // A panel bound to a closed connection can never load anything — it would sit on
+        // "Loading…" forever — so send the user somewhere that still works.
+        val bound = when (val s = selection.current) {
+            is Selection.ConnectionView -> s.connectionId
+            is Selection.Database -> s.connectionId
+            is Selection.Collection -> s.connectionId
+            else -> null
+        }
+        if (bound != null && states[bound] !is ConnectionState.Connected) {
+            selection.select(Selection.Welcome)
+        }
     }
 
     MexTheme(theme = prefs.theme) {

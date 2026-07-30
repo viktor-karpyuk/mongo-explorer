@@ -41,7 +41,9 @@ class ConnectionsViewModel(
         reload()
     }
 
-    fun delete(id: String) {
+    /** Closes the live client first — deleting the record alone leaked the MongoClient. */
+    suspend fun delete(id: String) {
+        registry.disconnect(id)
         ctx.connections.delete(id)
         reload()
     }

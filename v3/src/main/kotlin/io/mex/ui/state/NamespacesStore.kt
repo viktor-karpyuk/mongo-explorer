@@ -18,6 +18,9 @@ class NsCache {
     val collections = mutableStateMapOf<String, List<CollectionInfo>>()
     val collectionsLoading = mutableStateMapOf<String, Boolean>()
     val expanded = mutableStateOf<Set<String>>(emptySet())
+
+    /** Whether the whole cluster subtree is shown. Collapsing folds every database away. */
+    var connExpanded by mutableStateOf(true)
 }
 
 class NamespacesStore(private val registry: MongoRegistry) {
@@ -26,6 +29,11 @@ class NamespacesStore(private val registry: MongoRegistry) {
 
     fun cache(connectionId: String): NsCache =
         _byConnection.getOrPut(connectionId) { NsCache() }
+
+    fun toggleConnExpanded(connectionId: String) {
+        val c = cache(connectionId)
+        c.connExpanded = !c.connExpanded
+    }
 
     suspend fun loadDatabases(connectionId: String) {
         val client = registry.client(connectionId) ?: return
@@ -47,6 +55,34 @@ class NamespacesStore(private val registry: MongoRegistry) {
         } finally {
             cache.collectionsLoading[db] = false
         }
+    }
+
+    /**
+     * Loads collections for every database that hasn't been listed yet.
+     *
+     * The sidebar filter matches against loaded rows only, so without this a search for a
+     * collection name silently misses every database the user never expanded.
+     */
+    suspend fun loadAllCollections(connectionId: String) {
+        val cache = cache(connectionId)
+        for (db in cache.databases.map { it.name }) {
+            if (cache.collections[db] == null && cache.collectionsLoading[db] != true) {
+                loadCollections(connectionId, db)
+            }
+        }
+    }
+
+    /** Re-reads databases and every already-loaded collection list from the server. */
+    suspend fun refresh(connectionId: String) {
+        val cache = cache(connectionId)
+        val known = cache.collections.keys.toList()
+        loadDatabases(connectionId)
+        val live = cache.databases.map { it.name }.toSet()
+        known.filter { it !in live }.forEach {
+            cache.collections.remove(it)
+            cache.expanded.value = cache.expanded.value - it
+        }
+        for (db in known.filter { it in live }) loadCollections(connectionId, db)
     }
 
     /** Idempotent expand — used after creating a namespace so the new row is visible. */

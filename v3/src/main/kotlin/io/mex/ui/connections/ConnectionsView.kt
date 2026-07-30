@@ -106,7 +106,7 @@ fun ConnectionsView(
                 "The MongoDB cluster itself is untouched. This cannot be undone.",
             confirmLabel = "Delete",
             onConfirm = {
-                vm.delete(target.id)
+                scope.launch { vm.delete(target.id) }
                 confirmingDelete = null
             },
             onCancel = { confirmingDelete = null },

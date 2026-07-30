@@ -3,20 +3,51 @@ package io.mex.ui.cluster
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.mex.AppContext
+import io.mex.mongo.ConnectionState
 import io.mex.mongo.MongoRegistry
+import io.mex.ui.components.StatePill
 import io.mex.ui.monitor.MonitoringPanel
 import io.mex.ui.shell.ShellPanel
+import kotlinx.coroutines.launch
 
 enum class ConnTab { Cluster, Monitoring, Shell }
 
 @Composable
 fun ConnectionPanel(ctx: AppContext, connectionId: String, registry: MongoRegistry) {
     var tab by remember(connectionId) { mutableStateOf(ConnTab.Cluster) }
+    val states by registry.states.collectAsState()
+    val state = states[connectionId] ?: ConnectionState.Disconnected
+    val name = remember(connectionId) { ctx.connections.list().find { it.id == connectionId }?.name ?: "Connection" }
+    val scope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxSize()) {
+        // Cluster-level identity and lifecycle live here; without them the only way to
+        // close a connection was to leave for the Connections screen.
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            StatePill(state)
+            Spacer(modifier = Modifier.weight(1f))
+            if (state is ConnectionState.Connected) {
+                Text(
+                    "${state.topology} · v${state.serverVersion}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(onClick = { scope.launch { registry.disconnect(connectionId) } }) {
+                    Text("Disconnect")
+                }
+            }
+        }
+        HorizontalDivider()
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
             TabBtn("Cluster", tab == ConnTab.Cluster) { tab = ConnTab.Cluster }
             TabBtn("Monitoring", tab == ConnTab.Monitoring) { tab = ConnTab.Monitoring }
