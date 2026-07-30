@@ -1,9 +1,12 @@
 package io.mex.ui.shell
 
+import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -11,6 +14,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.mex.AppContext
@@ -25,6 +30,7 @@ fun ShellPanel(ctx: AppContext, connectionId: String) {
     val history = remember(connectionId) { mutableStateListOf<String>() }
     var historyCursor by remember(connectionId) { mutableStateOf(-1) }
     val scrollState = rememberScrollState()
+    val clipboard = LocalClipboardManager.current
 
     DisposableEffect(connectionId) { onDispose { session?.close() } }
 
@@ -45,6 +51,10 @@ fun ShellPanel(ctx: AppContext, connectionId: String) {
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Shell", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            if (output.isNotEmpty()) {
+                TextButton(onClick = { clipboard.setText(AnnotatedString(output)) }) { Text("Copy output") }
+                TextButton(onClick = { output = "" }) { Text("Clear") }
+            }
             if (session == null) {
                 Button(onClick = {
                     val record = ctx.connections.get(connectionId) ?: return@Button
@@ -58,7 +68,7 @@ fun ShellPanel(ctx: AppContext, connectionId: String) {
         }
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-            "Press Enter to send · Shift+Enter for newline · Cmd/Ctrl+↑/↓ for history",
+            "Press Enter to send · Shift+Enter for newline · ↑/↓ for history",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -68,12 +78,21 @@ fun ShellPanel(ctx: AppContext, connectionId: String) {
             shape = RoundedCornerShape(4.dp),
             modifier = Modifier.fillMaxWidth().weight(1f),
         ) {
-            Column(modifier = Modifier.padding(10.dp).verticalScroll(scrollState)) {
-                Text(
-                    output.ifEmpty { "(no output yet — start a session)" },
-                    color = Color(0xFFD4D7DF),
-                    fontFamily = FontFamily.Monospace,
-                    style = MaterialTheme.typography.bodySmall,
+            Box {
+                // Selectable so mongosh output can actually be copied out of the pane.
+                SelectionContainer {
+                    Column(modifier = Modifier.fillMaxSize().padding(10.dp).verticalScroll(scrollState)) {
+                        Text(
+                            output.ifEmpty { "(no output yet — start a session)" },
+                            color = Color(0xFFD4D7DF),
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+                VerticalScrollbar(
+                    adapter = rememberScrollbarAdapter(scrollState),
+                    modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
                 )
             }
         }
@@ -95,14 +114,16 @@ fun ShellPanel(ctx: AppContext, connectionId: String) {
                         }
                         true
                     }
-                    e.key == Key.DirectionUp && (e.isMetaPressed || e.isCtrlPressed) -> {
+                    // Plain ↑/↓ is what a terminal user reaches for; the modifier variant
+                    // stays available for anyone already used to it.
+                    e.key == Key.DirectionUp -> {
                         if (history.isNotEmpty()) {
                             historyCursor = minOf(historyCursor + 1, history.size - 1)
                             input = history.getOrNull(historyCursor) ?: ""
                         }
                         true
                     }
-                    e.key == Key.DirectionDown && (e.isMetaPressed || e.isCtrlPressed) -> {
+                    e.key == Key.DirectionDown -> {
                         if (historyCursor > 0) {
                             historyCursor--
                             input = history.getOrNull(historyCursor) ?: ""

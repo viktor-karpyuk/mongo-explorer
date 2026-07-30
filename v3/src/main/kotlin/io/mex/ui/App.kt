@@ -57,13 +57,26 @@ fun App(ctx: AppContext) {
         }
     }
 
+    // Keeps the latency shown in the state pill honest rather than frozen at connect time.
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(30_000)
+            for ((id, state) in registry.states.value) {
+                if (state is ConnectionState.Connected) registry.refreshPing(id)
+            }
+        }
+    }
+
     MexTheme(theme = prefs.theme) {
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                TopBar(selection = selection)
+                TopBar(
+                    selection = selection,
+                    connectedCount = states.values.count { it is ConnectionState.Connected },
+                )
                 HorizontalDivider()
                 Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
                     Surface(
@@ -97,7 +110,7 @@ fun App(ctx: AppContext) {
 }
 
 @Composable
-private fun TopBar(selection: SelectionStore) {
+private fun TopBar(selection: SelectionStore, connectedCount: Int) {
     val current = selection.current
     Row(
         modifier = Modifier
@@ -120,6 +133,14 @@ private fun TopBar(selection: SelectionStore) {
         }
         TopBarItem("Settings", current is Selection.Settings) {
             selection.select(Selection.Settings)
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        if (connectedCount > 0) {
+            Text(
+                "$connectedCount cluster${if (connectedCount == 1) "" else "s"} connected",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

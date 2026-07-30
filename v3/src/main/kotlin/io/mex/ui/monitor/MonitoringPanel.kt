@@ -22,6 +22,7 @@ import io.mex.mongo.listSlowOps
 import io.mex.mongo.setProfilerLevel
 import io.mex.mongo.tick
 import io.mex.ui.components.Sparkline
+import io.mex.ui.query.NumberField
 import io.mex.util.formatBytes
 import io.mex.util.formatCount
 import kotlinx.coroutines.Dispatchers
@@ -150,17 +151,24 @@ private fun ProfilerSection(connectionId: String, registry: MongoRegistry) {
     var profile by remember { mutableStateOf(ProfilerLevel(0, 100)) }
     var slow by remember { mutableStateOf<List<SlowOp>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
+    var loaded by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(false) }
+    var levelMenu by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     fun load() {
         scope.launch {
             val client = registry.client(connectionId) ?: return@launch
+            loading = true
             try {
                 profile = withContext(Dispatchers.IO) { getProfilerLevel(client, dbName) }
                 slow = withContext(Dispatchers.IO) { listSlowOps(client, dbName) }
                 error = null
+                loaded = true
             } catch (e: Exception) {
                 error = e.message
+            } finally {
+                loading = false
             }
         }
     }
@@ -171,21 +179,31 @@ private fun ProfilerSection(connectionId: String, registry: MongoRegistry) {
             Spacer(modifier = Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(dbName, { dbName = it }, label = { Text("Database") }, singleLine = true, modifier = Modifier.width(180.dp))
-                OutlinedTextField(
-                    profile.level.toString(),
-                    { profile = profile.copy(level = it.toIntOrNull() ?: profile.level) },
-                    label = { Text("Level 0/1/2") },
-                    singleLine = true,
-                    modifier = Modifier.width(120.dp),
-                )
-                OutlinedTextField(
-                    profile.slowMs.toString(),
-                    { profile = profile.copy(slowMs = it.toIntOrNull() ?: profile.slowMs) },
-                    label = { Text("slowMs") },
-                    singleLine = true,
-                    modifier = Modifier.width(120.dp),
-                )
-                OutlinedButton(onClick = { load() }) { Text("Load") }
+                // Only 0, 1 and 2 are valid profiler levels, so offer them rather than
+                // accepting any integer through a free-text field.
+                Box {
+                    OutlinedButton(onClick = { levelMenu = true }, modifier = Modifier.width(140.dp)) {
+                        Text("level ${profile.level} ⌄", style = MaterialTheme.typography.labelSmall)
+                    }
+                    DropdownMenu(expanded = levelMenu, onDismissRequest = { levelMenu = false }) {
+                        listOf(
+                            0 to "off",
+                            1 to "slow operations only",
+                            2 to "all operations",
+                        ).forEach { (lvl, desc) ->
+                            DropdownMenuItem(
+                                text = { Text("$lvl — $desc") },
+                                onClick = { levelMenu = false; profile = profile.copy(level = lvl) },
+                            )
+                        }
+                    }
+                }
+                NumberField("slowMs", profile.slowMs, Modifier.width(120.dp)) {
+                    profile = profile.copy(slowMs = it)
+                }
+                OutlinedButton(onClick = { load() }, enabled = !loading) {
+                    Text(if (loading) "Loading…" else "Load")
+                }
                 Button(onClick = {
                     scope.launch {
                         val client = registry.client(connectionId) ?: return@launch
@@ -198,6 +216,16 @@ private fun ProfilerSection(connectionId: String, registry: MongoRegistry) {
             }
             error?.let { Spacer(modifier = Modifier.height(4.dp)); Text(it, color = MaterialTheme.colorScheme.error) }
             Spacer(modifier = Modifier.height(8.dp))
+            if (loaded && slow.isEmpty() && error == null) {
+                Text(
+                    if (profile.level == 0)
+                        "No slow operations recorded. The profiler is off (level 0) for \"$dbName\" — " +
+                            "set level 1 to capture operations slower than ${profile.slowMs} ms."
+                    else "No operations slower than ${profile.slowMs} ms recorded for \"$dbName\".",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             slow.forEach { op ->
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),

@@ -46,6 +46,33 @@ class MongoRegistry {
             }
         }
 
+    /**
+     * Re-pings an open connection and republishes its state.
+     *
+     * The pill used to show the latency measured once at connect time forever, which
+     * turns into misinformation after the session has been open for a while. A failed
+     * probe surfaces as an error rather than silently keeping the stale "connected".
+     */
+    suspend fun refreshPing(id: String): Unit = withContext(Dispatchers.IO) {
+        val client = clients[id] ?: return@withContext
+        if (_states.value[id] !is ConnectionState.Connected) return@withContext
+        try {
+            val info = probeServer(client)
+            val previous = _states.value[id] as? ConnectionState.Connected
+            setState(
+                id,
+                ConnectionState.Connected(
+                    pingMs = info.pingMs,
+                    serverVersion = info.version,
+                    topology = info.topology,
+                    connectedAt = previous?.connectedAt ?: System.currentTimeMillis(),
+                ),
+            )
+        } catch (e: Exception) {
+            setState(id, ConnectionState.Error(e.message ?: e::class.java.simpleName))
+        }
+    }
+
     suspend fun disconnect(id: String): Unit = withContext(Dispatchers.IO) {
         clients.remove(id)?.runCatching { close() }
         setState(id, ConnectionState.Disconnected)

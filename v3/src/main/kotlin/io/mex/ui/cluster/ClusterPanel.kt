@@ -43,6 +43,9 @@ fun ClusterPanel(connectionId: String, registry: MongoRegistry) {
             val client = registry.client(connectionId) ?: return@launch
             try {
                 snap = withContext(Dispatchers.IO) { clusterSnapshot(client) }
+                // Clearing on success matters — a single transient failure used to leave a
+                // permanent error banner sitting above perfectly healthy data.
+                error = null
             } catch (e: Exception) {
                 error = e.message
             }

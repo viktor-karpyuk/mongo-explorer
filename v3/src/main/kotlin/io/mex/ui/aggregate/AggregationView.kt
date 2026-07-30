@@ -19,6 +19,7 @@ import io.mex.mongo.STAGE_OPERATORS
 import io.mex.mongo.StageDraft
 import io.mex.mongo.TEMPLATES
 import io.mex.mongo.executeAggregate
+import io.mex.ui.query.NumberField
 import io.mex.ui.results.ResultsPane
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -106,20 +107,8 @@ fun AggregationView(
                     }
                 }
             }
-            OutlinedTextField(
-                value = limit.toString(),
-                onValueChange = { limit = it.toIntOrNull() ?: limit },
-                label = { Text("Limit", style = MaterialTheme.typography.labelSmall) },
-                singleLine = true,
-                modifier = Modifier.width(100.dp),
-            )
-            OutlinedTextField(
-                value = maxTimeMs.toString(),
-                onValueChange = { maxTimeMs = it.toLongOrNull() ?: maxTimeMs },
-                label = { Text("maxTimeMs", style = MaterialTheme.typography.labelSmall) },
-                singleLine = true,
-                modifier = Modifier.width(120.dp),
-            )
+            NumberField("Limit", limit, Modifier.width(100.dp)) { limit = it.coerceAtLeast(1) }
+            NumberField("maxTimeMs", maxTimeMs.toInt(), Modifier.width(120.dp)) { maxTimeMs = it.toLong() }
             Button(
                 onClick = { runUpTo() },
                 enabled = !running && stages.isNotEmpty(),
