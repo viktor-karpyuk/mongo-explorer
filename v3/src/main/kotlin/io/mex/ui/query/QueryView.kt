@@ -45,6 +45,8 @@ fun QueryView(
     }
     fun next() = scope.launch { store.nextPage(key, connectionId, db, collection) }
     fun prev() = scope.launch { store.prevPage(key, connectionId, db, collection) }
+    fun first() = scope.launch { store.firstPage(key, connectionId, db, collection) }
+    fun pageSize(n: Int) = scope.launch { store.setPageSize(key, n, connectionId, db, collection) }
 
     var dialog by remember(connectionId, db, collection) { mutableStateOf<String?>(null) }
     // Holds the pre-filled state when Edit/Delete is invoked from a result row.
@@ -108,6 +110,8 @@ fun QueryView(
             total = store.total(key),
             onPrev = { prev() },
             onNext = { next() },
+            onFirst = { first() },
+            onLimitChange = { pageSize(it) },
             onEditRow = { doc ->
                 val id = extractIdEjson(doc) ?: return@ResultsPane
                 rowEdit = """{ "_id": $id }""" to prettyDoc(doc)

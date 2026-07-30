@@ -42,10 +42,17 @@ fun AggregationView(
     var templateMenu by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    fun runUpTo(upTo: Int = stages.size - 1) {
+    // The pipeline the current result came from, so paging re-runs the same stages
+    // even if the user has since edited the editor.
+    var skip by remember(connectionId, db, collection) { mutableStateOf(0) }
+    var lastUpTo by remember(connectionId, db, collection) { mutableStateOf(-1) }
+
+    fun runUpTo(upTo: Int = stages.size - 1, atSkip: Int = 0) {
         scope.launch {
             val client = registry.client(connectionId) ?: return@launch
             running = true
+            skip = atSkip
+            lastUpTo = upTo
             try {
                 val enabled = stages.take(upTo + 1).filter { it.enabled }
                 val req = AggregateRequest(
@@ -55,6 +62,7 @@ fun AggregationView(
                     pipeline = enabled.map { it.operator to it.body },
                     limit = limit,
                     maxTimeMs = maxTimeMs,
+                    skip = atSkip,
                 )
                 val res = withContext(Dispatchers.IO) { executeAggregate(client, req) }
                 result = res
@@ -153,10 +161,14 @@ fun AggregationView(
         ResultsPane(
             result = result,
             running = running,
-            skip = 0,
+            skip = skip,
             limit = limit,
-            onPrev = {},
-            onNext = {},
+            // Paging appends $skip/$limit to the pipeline and re-runs it — the buttons
+            // used to be wired to no-ops while still rendering as enabled.
+            onPrev = { runUpTo(lastUpTo, (skip - limit).coerceAtLeast(0)) },
+            onNext = { runUpTo(lastUpTo, skip + limit) },
+            onFirst = { runUpTo(lastUpTo, 0) },
+            onLimitChange = { limit = it; runUpTo(lastUpTo, 0) },
         )
     }
 }

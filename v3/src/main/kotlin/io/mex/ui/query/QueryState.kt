@@ -116,6 +116,19 @@ class QueryStore(private val ctx: AppContext, private val registry: MongoRegistr
         d.skip = (d.skip - d.limit).coerceAtLeast(0)
         run(key, connectionId, db, collection)
     }
+
+    suspend fun firstPage(key: String, connectionId: String, db: String, collection: String) {
+        draft(key).skip = 0
+        run(key, connectionId, db, collection)
+    }
+
+    /** Changing page size restarts from page one so the offset stays meaningful. */
+    suspend fun setPageSize(key: String, size: Int, connectionId: String, db: String, collection: String) {
+        val d = draft(key)
+        d.limit = size.coerceAtLeast(1)
+        d.skip = 0
+        run(key, connectionId, db, collection)
+    }
 }
 
 fun nsKey(connectionId: String, db: String, collection: String) =

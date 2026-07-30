@@ -1,20 +1,29 @@
 package io.mex.ui.results
 
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
@@ -28,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import io.mex.mongo.FindResult
 import io.mex.util.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonElement
@@ -45,6 +55,8 @@ fun ResultsPane(
     total: Long? = null,
     onPrev: () -> Unit,
     onNext: () -> Unit,
+    onFirst: (() -> Unit)? = null,
+    onLimitChange: ((Int) -> Unit)? = null,
     onEditRow: ((doc: String) -> Unit)? = null,
     onDeleteRow: ((idEjson: String) -> Unit)? = null,
 ) {
@@ -55,6 +67,22 @@ fun ResultsPane(
     val isError = result is FindResult.Failed
     LaunchedEffect(isError) { if (isError) tab = ResultTab.Error }
 
+    val rows = (result as? FindResult.Ok)?.rows
+    val listState = rememberLazyListState()
+    val treeScroll = rememberScrollState()
+    val focusRequester = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
+
+    // ↑/↓ step the selection through rows and keep it scrolled into view; without this
+    // the only way to walk documents was clicking each row.
+    fun move(delta: Int) {
+        val count = rows?.size ?: 0
+        if (count == 0) return
+        val next = if (selectedIndex < 0) 0 else (selectedIndex + delta).coerceIn(0, count - 1)
+        selectedIndex = next
+        if (tab == ResultTab.Table) scope.launch { listState.animateScrollToItem(next) }
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         TabRow(tab = tab, hasError = isError, onSelect = { tab = it })
         // Split container — measure its height so the drag delta maps to a fraction.
@@ -64,14 +92,34 @@ fun ResultsPane(
             },
         ) {
             // Result body
-            Box(modifier = Modifier.weight(splitFraction).fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .weight(splitFraction)
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
+                    .focusable()
+                    .onPreviewKeyEvent { e ->
+                        if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (e.key) {
+                            Key.DirectionDown -> { move(1); true }
+                            Key.DirectionUp -> { move(-1); true }
+                            Key.Home -> { move(-Int.MAX_VALUE / 2); true }
+                            Key.MoveEnd -> { move(Int.MAX_VALUE / 2); true }
+                            else -> false
+                        }
+                    },
+            ) {
+                val select: (Int) -> Unit = { i ->
+                    selectedIndex = i
+                    focusRequester.requestFocus()
+                }
                 when {
                     running && result == null -> CenterText("Running…")
                     result == null -> CenterText("Run a query to see results.")
                     result is FindResult.Failed && tab == ResultTab.Error -> ErrorBody(result.error)
                     result is FindResult.Ok -> when (tab) {
-                        ResultTab.Table -> TableBody(result.rows, selectedIndex) { selectedIndex = it }
-                        ResultTab.Tree -> TreeBody(result.rows, selectedIndex) { selectedIndex = it }
+                        ResultTab.Table -> TableBody(result.rows, selectedIndex, listState, select)
+                        ResultTab.Tree -> TreeBody(result.rows, selectedIndex, treeScroll, select)
                         ResultTab.Json -> JsonBody(result.rows)
                         ResultTab.Error -> ErrorBody("(no error)")
                     }
@@ -90,7 +138,7 @@ fun ResultsPane(
             // Preview / edit panel
             PreviewPanel(
                 modifier = Modifier.weight(1f - splitFraction).fillMaxWidth(),
-                rows = (result as? FindResult.Ok)?.rows,
+                rows = rows,
                 selectedIndex = selectedIndex,
                 onEditRow = onEditRow,
                 onDeleteRow = onDeleteRow,
@@ -104,6 +152,8 @@ fun ResultsPane(
             total = total,
             onPrev = onPrev,
             onNext = onNext,
+            onFirst = onFirst,
+            onLimitChange = onLimitChange,
         )
     }
 }
@@ -182,13 +232,25 @@ private fun PreviewPanel(
                     if (rows.isNullOrEmpty()) "Run a query to see rows."
                     else "Click a row to preview.",
                 )
-                else -> Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(12.dp),
-                ) {
-                    HighlightedJson(raw)
+                else -> {
+                    val scroll = rememberScrollState()
+                    // SelectionContainer so any fragment of the document — a value, an
+                    // _id, one nested field — can be swept and copied, not just the whole
+                    // thing via the Copy button.
+                    SelectionContainer {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(scroll)
+                                .padding(12.dp),
+                        ) {
+                            HighlightedJson(raw)
+                        }
+                    }
+                    VerticalScrollbar(
+                        adapter = rememberScrollbarAdapter(scroll),
+                        modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                    )
                 }
             }
         }
@@ -238,7 +300,12 @@ private fun CenterText(text: String) {
 }
 
 @Composable
-private fun TableBody(rows: List<String>, selectedIndex: Int, onSelect: (Int) -> Unit) {
+private fun TableBody(
+    rows: List<String>,
+    selectedIndex: Int,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    onSelect: (Int) -> Unit,
+) {
     val parsed = remember(rows) { rows.map { parseRow(it) } }
     val columns = remember(rows) { collectColumns(rows) }
     if (columns.isEmpty()) {
@@ -256,30 +323,36 @@ private fun TableBody(rows: List<String>, selectedIndex: Int, onSelect: (Int) ->
             columns.forEach { c -> HeaderCell(c) }
         }
         HorizontalDivider()
-        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            items(parsed.size) { i ->
-                val doc = parsed[i]
-                val isSelected = i == selectedIndex
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            if (isSelected)
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                            else
-                                Color.Transparent,
-                        )
-                        .clickable { onSelect(i) }
-                        .padding(vertical = 2.dp),
-                ) {
-                    IndexCell((i + 1).toString(), selected = isSelected)
-                    columns.forEach { col ->
-                        val v = doc?.get(col)
-                        CellView(v)
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                items(parsed.size) { i ->
+                    val doc = parsed[i]
+                    val isSelected = i == selectedIndex
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                if (isSelected)
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                else
+                                    Color.Transparent,
+                            )
+                            .clickable { onSelect(i) }
+                            .padding(vertical = 2.dp),
+                    ) {
+                        IndexCell((i + 1).toString(), selected = isSelected)
+                        columns.forEach { col ->
+                            val v = doc?.get(col)
+                            CellView(v)
+                        }
                     }
+                    HorizontalDivider(thickness = 0.5.dp)
                 }
-                HorizontalDivider(thickness = 0.5.dp)
             }
+            VerticalScrollbar(
+                adapter = rememberScrollbarAdapter(listState),
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+            )
         }
     }
 }
@@ -334,9 +407,15 @@ private fun RowScope.CellView(v: JsonElement?) {
 }
 
 @Composable
-private fun TreeBody(rows: List<String>, selectedIndex: Int, onSelect: (Int) -> Unit) {
+private fun TreeBody(
+    rows: List<String>,
+    selectedIndex: Int,
+    scroll: ScrollState,
+    onSelect: (Int) -> Unit,
+) {
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(scroll).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         rows.forEachIndexed { i, row ->
@@ -359,14 +438,21 @@ private fun TreeBody(rows: List<String>, selectedIndex: Int, onSelect: (Int) -> 
                         color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    if (parsed != null) {
-                        NodeView("", parsed, 0, root = true)
-                    } else {
-                        Text(row, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                    SelectionContainer {
+                        if (parsed != null) {
+                            NodeView("", parsed, 0, root = true)
+                        } else {
+                            Text(row, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
             }
         }
+    }
+        VerticalScrollbar(
+            adapter = rememberScrollbarAdapter(scroll),
+            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+        )
     }
 }
 
@@ -448,16 +534,24 @@ private fun JsonBody(rows: List<String>) {
                 )
                 CopyButton({ text }, label = "Copy all")
             }
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp)
-                    .padding(bottom = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                rows.forEach { row -> HighlightedJson(row) }
+            val scroll = rememberScrollState()
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                SelectionContainer {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(scroll)
+                            .padding(horizontal = 12.dp)
+                            .padding(bottom = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        rows.forEach { row -> HighlightedJson(row) }
+                    }
+                }
+                VerticalScrollbar(
+                    adapter = rememberScrollbarAdapter(scroll),
+                    modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                )
             }
         }
     }
@@ -513,6 +607,8 @@ private fun ErrorBody(message: String) {
     }
 }
 
+private val PAGE_SIZES = listOf(25, 50, 100, 250, 500)
+
 @Composable
 private fun Pager(
     result: FindResult?,
@@ -522,8 +618,14 @@ private fun Pager(
     total: Long?,
     onPrev: () -> Unit,
     onNext: () -> Unit,
+    onFirst: (() -> Unit)?,
+    onLimitChange: ((Int) -> Unit)?,
 ) {
     val rowsCount = (result as? FindResult.Ok)?.rows?.size ?: 0
+    val page = if (limit > 0) skip / limit + 1 else 1
+    val pageCount = if (total != null && limit > 0) ((total + limit - 1) / limit).coerceAtLeast(1) else null
+    var sizeMenu by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -531,32 +633,61 @@ private fun Pager(
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (onFirst != null) {
+            TextButton(onClick = onFirst, enabled = skip > 0 && !running) { Text("« First") }
+        }
         TextButton(onClick = onPrev, enabled = skip > 0 && !running) { Text("← Prev") }
-        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            buildString {
+                append("page $page")
+                pageCount?.let { append(" of $it") }
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        TextButton(
+            onClick = onNext,
+            enabled = result is FindResult.Ok && result.hasMore && !running,
+        ) { Text("Next →") }
+
+        Spacer(modifier = Modifier.width(12.dp))
         Text(
             "rows ${if (rowsCount == 0) 0 else skip + 1}–${skip + rowsCount}" +
                 (total?.let { " of ${formatCount(it)}" } ?: ""),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
         Spacer(modifier = Modifier.weight(1f))
         if (result is FindResult.Ok) {
             Text(
-                "${result.rows.size} rows · ${result.durationMs} ms${if (result.hasMore) " · more available" else ""}",
+                "${result.durationMs} ms",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(modifier = Modifier.width(8.dp))
         }
-        TextButton(
-            onClick = onNext,
-            enabled = result is FindResult.Ok && result.hasMore && !running,
-        ) { Text("Next →") }
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            "limit $limit",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        // Page size belongs next to the paging controls, not only in the query form.
+        if (onLimitChange != null) {
+            Box {
+                TextButton(onClick = { sizeMenu = true }) {
+                    Text("$limit / page ⌄", style = MaterialTheme.typography.labelSmall)
+                }
+                DropdownMenu(expanded = sizeMenu, onDismissRequest = { sizeMenu = false }) {
+                    PAGE_SIZES.forEach { n ->
+                        DropdownMenuItem(
+                            text = { Text("$n per page") },
+                            onClick = { sizeMenu = false; onLimitChange(n) },
+                        )
+                    }
+                }
+            }
+        } else {
+            Text(
+                "limit $limit",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

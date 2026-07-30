@@ -13,6 +13,8 @@ data class AggregateRequest(
     val pipeline: List<Pair<String, String>>, // operator → body
     val limit: Int = 50,
     val maxTimeMs: Long = 60_000,
+    /** Documents to skip, appended as a `$skip` stage so results can be paged. */
+    val skip: Int = 0,
 )
 
 private val EJSON_SETTINGS: JsonWriterSettings = JsonWriterSettings.builder()
@@ -23,10 +25,16 @@ fun executeAggregate(client: MongoClient, req: AggregateRequest): FindResult {
     val t0 = System.nanoTime()
     return runCatching {
         val limit = req.limit.coerceAtLeast(1)
-        val stages = req.pipeline.map { (op, body) ->
+        val user = req.pipeline.map { (op, body) ->
             require(op.startsWith("$")) { "Stage operator must start with $: $op" }
             Document(op, parseDocument(body))
-        } + Document("\$limit", limit + 1)
+        }
+        // Paging stages go after the user's pipeline so they window its output.
+        val paging = buildList {
+            if (req.skip > 0) add(Document("\$skip", req.skip))
+            add(Document("\$limit", limit + 1))
+        }
+        val stages = user + paging
 
         var cursor = client.getDatabase(req.db).getCollection(req.collection)
             .aggregate(stages)
