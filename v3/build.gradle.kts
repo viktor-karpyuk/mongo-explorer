@@ -42,6 +42,12 @@ dependencies {
 
     // Logging
     implementation("org.slf4j:slf4j-simple:2.0.16")
+
+    testImplementation(kotlin("test"))
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 compose.desktop {
