@@ -87,6 +87,12 @@ minus heavy auth methods. ~80 features.
 - [x] Progress bar with rate + ETA, job timestamps, report export
 - [x] Quiescent-source preflight warning; secondary-read and collection-option knobs
 
+### 9d. DBA operations (v3.3 — `docs/v3/dba-gap-analysis-2026-07.md`)
+- [x] Operations tab: live `$currentOp` (2 s) with filter, idle/system toggles, COLLSCAN + lock-wait badges
+- [x] killOp behind typed confirm (opid passed back verbatim; mongos string opids supported)
+- [x] Per-connection read-only mode (schema v4) enforced across every mutating affordance
+- [x] Read-only connections excluded as migration targets; runner double-checks pre-existing jobs
+
 ## 10. I/O
 - [x] Export JSON / NDJSON / CSV (streaming)
 - [x] Import JSON / NDJSON / CSV (dry-run + commit)
