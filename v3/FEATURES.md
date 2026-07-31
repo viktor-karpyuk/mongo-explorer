@@ -101,6 +101,9 @@ minus heavy auth methods. ~80 features.
 - [x] Storage tab: sortable per-collection weight (reclaimable % via freeStorageSize), estate totals
 - [x] Unused-index candidates (`$indexStats` × `listIndexes`, TTL-excluded, unique-badged) with gated drop
 - [x] TTL index overview
+- [x] Backups view: mongodump orchestration (full/db/collection, gzip) + SQLite catalog (schema v5)
+- [x] Restore with dry-run-first gating, --drop consequence spelled out, db rename via nsFrom/nsTo
+- [x] Live tool logs, cancel, managed on-disk layout under dataDir/backups
 
 ## 10. I/O
 - [x] Export JSON / NDJSON / CSV (streaming)
