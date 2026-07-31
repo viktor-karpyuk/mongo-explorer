@@ -107,4 +107,10 @@ internal val MIGRATIONS: List<Migration> = listOf(
             CREATE INDEX idx_migration_jobs_status ON migration_jobs(status)
         """.trimIndent(),
     ),
+    // v3.3 — per-connection read-only mode (DBA-RO-1): a production connection can be
+    // flagged so every mutating affordance in the UI is disabled for it.
+    Migration(
+        version = 4,
+        sql = "ALTER TABLE connections ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0",
+    ),
 )

@@ -52,6 +52,9 @@ fun QueryView(
     LaunchedEffect(key) { store.loadSchema(key, connectionId, db, collection) }
     val schemaFields = store.schema(key)
 
+    // DBA-RO-1 — a read-only connection exposes no mutating affordances at all.
+    val readOnly = remember(connectionId) { ctx.connections.isReadOnly(connectionId) }
+
     var dialog by remember(connectionId, db, collection) { mutableStateOf<String?>(null) }
     // Holds the pre-filled state when Edit/Delete is invoked from a result row.
     var rowEdit by remember(connectionId, db, collection) { mutableStateOf<Pair<String, String>?>(null) }
@@ -76,14 +79,22 @@ fun QueryView(
                 Text(
                     "$db.$collection",
                     style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = { dialog = "insert" }) { Text("Insert") }
-                TextButton(onClick = { dialog = "update" }) { Text("Update") }
-                TextButton(onClick = { dialog = "replace" }) { Text("Replace") }
-                TextButton(onClick = { dialog = "delete" }) { Text("Delete") }
+                if (readOnly) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    io.mex.ui.components.ReadOnlyBadge()
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                if (!readOnly) {
+                    TextButton(onClick = { dialog = "insert" }) { Text("Insert") }
+                    TextButton(onClick = { dialog = "update" }) { Text("Update") }
+                    TextButton(onClick = { dialog = "replace" }) { Text("Replace") }
+                    TextButton(onClick = { dialog = "delete" }) { Text("Delete") }
+                }
                 TextButton(onClick = { dialog = "export" }) { Text("Export") }
-                TextButton(onClick = { dialog = "import" }) { Text("Import") }
+                if (!readOnly) {
+                    TextButton(onClick = { dialog = "import" }) { Text("Import") }
+                }
                 HistoryButton(ctx, connectionId, db, collection) { body ->
                     draft.filter = body.filter
                     draft.projection = body.projection
@@ -140,11 +151,12 @@ fun QueryView(
             onNext = { next() },
             onFirst = { first() },
             onLimitChange = { pageSize(it) },
-            onEditRow = { doc ->
-                val id = extractIdEjson(doc) ?: return@ResultsPane
+            // Null callbacks make the preview's Edit/Delete disappear entirely.
+            onEditRow = if (readOnly) null else fun(doc: String) {
+                val id = extractIdEjson(doc) ?: return
                 rowEdit = """{ "_id": $id }""" to prettyDoc(doc)
             },
-            onDeleteRow = { idEjson ->
+            onDeleteRow = if (readOnly) null else fun(idEjson: String) {
                 rowDeleteFilter = """{ "_id": $idEjson }"""
             },
         )

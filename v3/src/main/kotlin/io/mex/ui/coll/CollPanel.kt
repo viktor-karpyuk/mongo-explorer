@@ -26,6 +26,7 @@ fun CollPanel(
     collection: String,
 ) {
     var tab by remember(connectionId, db, collection) { mutableStateOf(CollTab.Query) }
+    val readOnly = remember(connectionId) { ctx.connections.isReadOnly(connectionId) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -44,8 +45,8 @@ fun CollPanel(
                 CollTab.Query -> QueryView(ctx, registry, connectionId, db, collection, queries)
                 CollTab.Aggregate -> AggregationView(ctx, registry, connectionId, db, collection)
                 CollTab.Schema -> SchemaPanel(connectionId, db, collection, registry)
-                CollTab.Indexes -> IndexesPanel(connectionId, db, collection, registry)
-                CollTab.Validator -> ValidatorPanel(connectionId, db, collection, registry)
+                CollTab.Indexes -> IndexesPanel(connectionId, db, collection, registry, readOnly)
+                CollTab.Validator -> ValidatorPanel(connectionId, db, collection, registry, readOnly)
                 CollTab.Stats -> CollStatsPanel(connectionId, db, collection, registry)
             }
         }

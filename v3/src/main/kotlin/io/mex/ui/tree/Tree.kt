@@ -152,6 +152,7 @@ fun Tree(
                         state = row.state,
                         expanded = row.expanded,
                         selected = current is Selection.ConnectionView && current.connectionId == row.conn.id,
+                        readOnly = row.conn.readOnly,
                         onToggle = { namespaces.toggleConnExpanded(row.conn.id) },
                         onSelect = { selection.select(Selection.ConnectionView(row.conn.id)) },
                         onDisconnect = { scope.launch { vm.close(row.conn.id) } },
@@ -163,6 +164,7 @@ fun Tree(
                         db = row.db,
                         expanded = row.expanded,
                         selected = row.selected,
+                        readOnly = vm.isReadOnly(row.connId),
                         onToggle = { scope.launch { namespaces.toggleExpanded(row.connId, row.db.name) } },
                         onSelect = { selection.select(Selection.Database(row.connId, row.db.name)) },
                         onCreateColl = { creating = CreateTarget.Collection(row.connId, row.db.name) },
@@ -172,6 +174,7 @@ fun Tree(
                     is TreeRow.Coll -> CollRow(
                         c = row.info,
                         selected = row.selected,
+                        readOnly = vm.isReadOnly(row.connId),
                         onSelect = { selection.select(Selection.Collection(row.connId, row.db, row.info.name)) },
                         onDrop = { pendingDrop = PendingDrop.Coll(row.connId, row.db, row.info.name) },
                     )
@@ -343,6 +346,7 @@ private fun ConnRow(
     state: ConnectionState,
     expanded: Boolean,
     selected: Boolean,
+    readOnly: Boolean,
     onToggle: () -> Unit,
     onSelect: () -> Unit,
     onDisconnect: () -> Unit,
@@ -382,6 +386,10 @@ private fun ConnRow(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        if (readOnly) {
+            io.mex.ui.components.ReadOnlyBadge(compact = true)
+            Spacer(modifier = Modifier.width(4.dp))
+        }
         TextButton(onClick = { menu = true }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(24.dp)) {
             Text("⋯")
         }
@@ -391,10 +399,12 @@ private fun ConnRow(
                     text = { Text("Refresh") },
                     onClick = { menu = false; onRefresh() },
                 )
-                DropdownMenuItem(
-                    text = { Text("Create database…") },
-                    onClick = { menu = false; onCreateDb() },
-                )
+                if (!readOnly) {
+                    DropdownMenuItem(
+                        text = { Text("Create database…") },
+                        onClick = { menu = false; onCreateDb() },
+                    )
+                }
                 HorizontalDivider()
                 DropdownMenuItem(
                     text = { Text("Disconnect", color = MaterialTheme.colorScheme.error) },
@@ -419,6 +429,7 @@ private fun DbRow(
     db: DatabaseInfo,
     expanded: Boolean,
     selected: Boolean,
+    readOnly: Boolean,
     onToggle: () -> Unit,
     onSelect: () -> Unit,
     onCreateColl: () -> Unit,
@@ -452,13 +463,17 @@ private fun DbRow(
             Text("⋯")
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            DropdownMenuItem(text = { Text("Create collection…") }, onClick = { menu = false; onCreateColl() })
+            if (!readOnly) {
+                DropdownMenuItem(text = { Text("Create collection…") }, onClick = { menu = false; onCreateColl() })
+            }
             DropdownMenuItem(text = { Text("Refresh collections") }, onClick = { menu = false; onRefresh() })
-            HorizontalDivider()
-            DropdownMenuItem(
-                text = { Text("Drop database", color = MaterialTheme.colorScheme.error) },
-                onClick = { menu = false; onDrop() },
-            )
+            if (!readOnly) {
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text("Drop database", color = MaterialTheme.colorScheme.error) },
+                    onClick = { menu = false; onDrop() },
+                )
+            }
         }
     }
 }
@@ -467,6 +482,7 @@ private fun DbRow(
 private fun CollRow(
     c: CollectionInfo,
     selected: Boolean,
+    readOnly: Boolean,
     onSelect: () -> Unit,
     onDrop: () -> Unit,
 ) {
@@ -495,14 +511,17 @@ private fun CollRow(
                 color = MaterialTheme.colorScheme.tertiary,
             )
         }
-        TextButton(onClick = { menu = true }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(24.dp)) {
-            Text("⋯")
-        }
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            DropdownMenuItem(
-                text = { Text("Drop collection", color = MaterialTheme.colorScheme.error) },
-                onClick = { menu = false; onDrop() },
-            )
+        // Drop is the only action here, so a read-only connection gets no menu at all.
+        if (!readOnly) {
+            TextButton(onClick = { menu = true }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(24.dp)) {
+                Text("⋯")
+            }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(
+                    text = { Text("Drop collection", color = MaterialTheme.colorScheme.error) },
+                    onClick = { menu = false; onDrop() },
+                )
+            }
         }
     }
 }

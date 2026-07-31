@@ -396,8 +396,15 @@ private fun NewMigrationDialog(
     val list = remember(states) {
         ctx.connections.list().filter { states[it.id] is ConnectionState.Connected }
     }
+    // Reading from a read-only connection is fine; writing into one is exactly what the
+    // flag exists to prevent, so those never appear as targets (DBA-RO-1).
+    val targetList = remember(list) { list.filter { !it.readOnly } }
     var sourceId by remember { mutableStateOf(list.firstOrNull()?.id ?: "") }
-    var targetId by remember { mutableStateOf(list.getOrNull(1)?.id ?: list.firstOrNull()?.id ?: "") }
+    var targetId by remember {
+        mutableStateOf(
+            targetList.firstOrNull { it.id != sourceId }?.id ?: targetList.firstOrNull()?.id ?: "",
+        )
+    }
     var sourceMenu by remember { mutableStateOf(false) }
     var targetMenu by remember { mutableStateOf(false) }
     var dbs by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -460,8 +467,15 @@ private fun NewMigrationDialog(
                         PickConnection("Source", sourceId, sourceMenu, { sourceMenu = it }, list) { sourceId = it }
                     }
                     Box(modifier = Modifier.weight(1f)) {
-                        PickConnection("Target", targetId, targetMenu, { targetMenu = it }, list) { targetId = it }
+                        PickConnection("Target", targetId, targetMenu, { targetMenu = it }, targetList) { targetId = it }
                     }
+                }
+                if (targetList.isEmpty()) {
+                    Text(
+                        "No writable target — every open connection is read-only.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
                 if (sourceId == targetId && sourceId.isNotEmpty()) {
                     Text(

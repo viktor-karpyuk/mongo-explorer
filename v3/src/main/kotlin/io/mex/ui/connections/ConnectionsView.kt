@@ -136,7 +136,10 @@ private fun ConnectionCard(
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.Top) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(conn.name, style = MaterialTheme.typography.titleMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(conn.name, style = MaterialTheme.typography.titleMedium)
+                        if (conn.readOnly) io.mex.ui.components.ReadOnlyBadge()
+                    }
                     Text(
                         preview,
                         style = MaterialTheme.typography.bodySmall,

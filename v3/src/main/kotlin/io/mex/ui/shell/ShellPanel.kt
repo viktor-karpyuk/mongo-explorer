@@ -23,7 +23,7 @@ import io.mex.shell.MongoShellSession
 import io.mex.shell.ShellEvent
 
 @Composable
-fun ShellPanel(ctx: AppContext, connectionId: String) {
+fun ShellPanel(ctx: AppContext, connectionId: String, readOnly: Boolean = false) {
     var session by remember(connectionId) { mutableStateOf<MongoShellSession?>(null) }
     var output by remember(connectionId) { mutableStateOf("") }
     var input by remember(connectionId) { mutableStateOf("") }
@@ -67,6 +67,17 @@ fun ShellPanel(ctx: AppContext, connectionId: String) {
             }
         }
         Spacer(modifier = Modifier.height(6.dp))
+        if (readOnly) {
+            // mongosh runs with whatever privileges the URI grants — the app cannot restrict
+            // it, so the honest thing is a visible warning rather than a false sense of safety.
+            Text(
+                "⚠ This connection is marked read-only, but mongosh is a raw shell — commands you type " +
+                    "here are NOT restricted by the app.",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFFFBBF24),
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+        }
         Text(
             "Press Enter to send · Shift+Enter for newline · ↑/↓ for history",
             style = MaterialTheme.typography.labelSmall,

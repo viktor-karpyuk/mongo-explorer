@@ -16,7 +16,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun ValidatorPanel(connectionId: String, db: String, collection: String, registry: MongoRegistry) {
+fun ValidatorPanel(
+    connectionId: String,
+    db: String,
+    collection: String,
+    registry: MongoRegistry,
+    readOnly: Boolean = false,
+) {
     var body by remember(connectionId, db, collection) { mutableStateOf("") }
     var level by remember(connectionId, db, collection) { mutableStateOf("moderate") }
     var action by remember(connectionId, db, collection) { mutableStateOf("error") }
@@ -60,8 +66,9 @@ fun ValidatorPanel(connectionId: String, db: String, collection: String, registr
             LevelSelector("Level", listOf("off", "moderate", "strict"), level) { level = it }
             LevelSelector("Action", listOf("warn", "error"), action) { action = it }
             Spacer(modifier = Modifier.weight(1f))
+            if (readOnly) io.mex.ui.components.ReadOnlyBadge()
             OutlinedButton(onClick = { load() }) { Text("Revert") }
-            Button(onClick = {
+            Button(enabled = !readOnly, onClick = {
                 scope.launch {
                     val client = registry.client(connectionId) ?: return@launch
                     try {

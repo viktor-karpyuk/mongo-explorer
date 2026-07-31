@@ -50,9 +50,13 @@ class ConnectionsViewModel(
 
     fun duplicate(id: String) {
         val record = ctx.connections.get(id) ?: return
-        ctx.connections.create(ConnectionInput("${record.name} (copy)", record.uri, record.notes))
+        ctx.connections.create(
+            ConnectionInput("${record.name} (copy)", record.uri, record.notes, readOnly = record.readOnly),
+        )
         reload()
     }
+
+    fun isReadOnly(id: String): Boolean = list.firstOrNull { it.id == id }?.readOnly ?: false
 
     suspend fun open(id: String): ConnectionState {
         val record = ctx.connections.get(id) ?: return ConnectionState.Error("Connection not found")

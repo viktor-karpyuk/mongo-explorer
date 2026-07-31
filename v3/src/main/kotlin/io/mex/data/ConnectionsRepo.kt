@@ -10,7 +10,7 @@ class ConnectionsRepo(private val store: Store) {
         val out = mutableListOf<ConnectionSummary>()
         conn.prepareStatement(
             """
-            SELECT id, name, notes, created_at, updated_at, last_used_at
+            SELECT id, name, notes, created_at, updated_at, last_used_at, read_only
             FROM connections
             ORDER BY COALESCE(last_used_at, updated_at) DESC
             """.trimIndent(),
@@ -24,6 +24,7 @@ class ConnectionsRepo(private val store: Store) {
                         createdAt = rs.getLong("created_at"),
                         updatedAt = rs.getLong("updated_at"),
                         lastUsedAt = rs.getLong("last_used_at").takeIf { !rs.wasNull() },
+                        readOnly = rs.getInt("read_only") != 0,
                     )
                 }
             }
@@ -45,7 +46,18 @@ class ConnectionsRepo(private val store: Store) {
                     createdAt = rs.getLong("created_at"),
                     updatedAt = rs.getLong("updated_at"),
                     lastUsedAt = rs.getLong("last_used_at").takeIf { !rs.wasNull() },
+                    readOnly = rs.getInt("read_only") != 0,
                 )
+            }
+        }
+    }
+
+    /** Fast lookup used by every mutating affordance in the UI (DBA-RO-1). */
+    fun isReadOnly(id: String): Boolean {
+        conn.prepareStatement("SELECT read_only FROM connections WHERE id = ?").use { ps ->
+            ps.setString(1, id)
+            ps.executeQuery().use { rs ->
+                return rs.next() && rs.getInt("read_only") != 0
             }
         }
     }
@@ -56,8 +68,8 @@ class ConnectionsRepo(private val store: Store) {
         val cipher = Secrets.encrypt(input.uri)
         conn.prepareStatement(
             """
-            INSERT INTO connections (id, name, uri_cipher, notes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO connections (id, name, uri_cipher, notes, created_at, updated_at, read_only)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
         ).use { ps ->
             ps.setString(1, id)
@@ -66,6 +78,7 @@ class ConnectionsRepo(private val store: Store) {
             ps.setString(4, input.notes)
             ps.setLong(5, now)
             ps.setLong(6, now)
+            ps.setInt(7, if (input.readOnly) 1 else 0)
             ps.executeUpdate()
         }
         return ConnectionSummary(
@@ -75,6 +88,7 @@ class ConnectionsRepo(private val store: Store) {
             createdAt = now,
             updatedAt = now,
             lastUsedAt = null,
+            readOnly = input.readOnly,
         )
     }
 
@@ -85,7 +99,7 @@ class ConnectionsRepo(private val store: Store) {
         conn.prepareStatement(
             """
             UPDATE connections
-            SET name = ?, uri_cipher = ?, notes = ?, updated_at = ?
+            SET name = ?, uri_cipher = ?, notes = ?, updated_at = ?, read_only = ?
             WHERE id = ?
             """.trimIndent(),
         ).use { ps ->
@@ -93,7 +107,8 @@ class ConnectionsRepo(private val store: Store) {
             ps.setBytes(2, cipher)
             ps.setString(3, input.notes)
             ps.setLong(4, now)
-            ps.setString(5, id)
+            ps.setInt(5, if (input.readOnly) 1 else 0)
+            ps.setString(6, id)
             ps.executeUpdate()
         }
         return list().firstOrNull { it.id == id }

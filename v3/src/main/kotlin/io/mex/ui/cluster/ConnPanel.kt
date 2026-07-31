@@ -10,12 +10,14 @@ import androidx.compose.ui.unit.dp
 import io.mex.AppContext
 import io.mex.mongo.ConnectionState
 import io.mex.mongo.MongoRegistry
+import io.mex.ui.components.ReadOnlyBadge
 import io.mex.ui.components.StatePill
 import io.mex.ui.monitor.MonitoringPanel
+import io.mex.ui.ops.OpsPanel
 import io.mex.ui.shell.ShellPanel
 import kotlinx.coroutines.launch
 
-enum class ConnTab { Cluster, Monitoring, Shell }
+enum class ConnTab { Cluster, Operations, Monitoring, Shell }
 
 @Composable
 fun ConnectionPanel(ctx: AppContext, connectionId: String, registry: MongoRegistry) {
@@ -23,6 +25,7 @@ fun ConnectionPanel(ctx: AppContext, connectionId: String, registry: MongoRegist
     val states by registry.states.collectAsState()
     val state = states[connectionId] ?: ConnectionState.Disconnected
     val name = remember(connectionId) { ctx.connections.list().find { it.id == connectionId }?.name ?: "Connection" }
+    val readOnly = remember(connectionId) { ctx.connections.isReadOnly(connectionId) }
     val scope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -35,6 +38,7 @@ fun ConnectionPanel(ctx: AppContext, connectionId: String, registry: MongoRegist
         ) {
             Text(name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             StatePill(state)
+            if (readOnly) ReadOnlyBadge()
             Spacer(modifier = Modifier.weight(1f))
             if (state is ConnectionState.Connected) {
                 Text(
@@ -50,6 +54,7 @@ fun ConnectionPanel(ctx: AppContext, connectionId: String, registry: MongoRegist
         HorizontalDivider()
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
             TabBtn("Cluster", tab == ConnTab.Cluster) { tab = ConnTab.Cluster }
+            TabBtn("Operations", tab == ConnTab.Operations) { tab = ConnTab.Operations }
             TabBtn("Monitoring", tab == ConnTab.Monitoring) { tab = ConnTab.Monitoring }
             TabBtn("Shell", tab == ConnTab.Shell) { tab = ConnTab.Shell }
         }
@@ -57,8 +62,9 @@ fun ConnectionPanel(ctx: AppContext, connectionId: String, registry: MongoRegist
         Box(modifier = Modifier.weight(1f)) {
             when (tab) {
                 ConnTab.Cluster -> ClusterPanel(connectionId, registry)
-                ConnTab.Monitoring -> MonitoringPanel(connectionId, registry)
-                ConnTab.Shell -> ShellPanel(ctx, connectionId)
+                ConnTab.Operations -> OpsPanel(connectionId, registry, readOnly)
+                ConnTab.Monitoring -> MonitoringPanel(connectionId, registry, readOnly)
+                ConnTab.Shell -> ShellPanel(ctx, connectionId, readOnly)
             }
         }
     }

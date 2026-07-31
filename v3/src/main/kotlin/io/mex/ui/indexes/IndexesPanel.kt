@@ -26,7 +26,13 @@ import kotlinx.coroutines.withContext
 import io.mex.ui.components.ConfirmDangerDialog
 
 @Composable
-fun IndexesPanel(connectionId: String, db: String, collection: String, registry: MongoRegistry) {
+fun IndexesPanel(
+    connectionId: String,
+    db: String,
+    collection: String,
+    registry: MongoRegistry,
+    readOnly: Boolean = false,
+) {
     var indexes by remember(connectionId, db, collection) { mutableStateOf<List<IndexInfo>>(emptyList()) }
     var stats by remember(connectionId, db, collection) { mutableStateOf<Map<String, IndexStat>>(emptyMap()) }
     var error by remember(connectionId, db, collection) { mutableStateOf<String?>(null) }
@@ -51,7 +57,11 @@ fun IndexesPanel(connectionId: String, db: String, collection: String, registry:
     Column(modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState())) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Indexes · $db.$collection", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            Button(onClick = { creating = true }) { Text("+ Create index") }
+            if (readOnly) {
+                io.mex.ui.components.ReadOnlyBadge()
+            } else {
+                Button(onClick = { creating = true }) { Text("+ Create index") }
+            }
         }
         Spacer(modifier = Modifier.height(12.dp))
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -86,10 +96,12 @@ fun IndexesPanel(connectionId: String, db: String, collection: String, registry:
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(end = 8.dp),
                     )
-                    TextButton(
-                        onClick = { confirmingDropIndex = idx.name },
-                        enabled = idx.name != "_id_",
-                    ) { Text("Drop", color = MaterialTheme.colorScheme.error) }
+                    if (!readOnly) {
+                        TextButton(
+                            onClick = { confirmingDropIndex = idx.name },
+                            enabled = idx.name != "_id_",
+                        ) { Text("Drop", color = MaterialTheme.colorScheme.error) }
+                    }
                 }
             }
         }

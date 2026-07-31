@@ -34,7 +34,7 @@ import kotlinx.coroutines.withContext
 private const val HISTORY = 60
 
 @Composable
-fun MonitoringPanel(connectionId: String, registry: MongoRegistry) {
+fun MonitoringPanel(connectionId: String, registry: MongoRegistry, readOnly: Boolean = false) {
     val opsRate = remember { mutableStateListOf<Double>() }
     val netIn = remember { mutableStateListOf<Double>() }
     val netOut = remember { mutableStateListOf<Double>() }
@@ -122,7 +122,7 @@ fun MonitoringPanel(connectionId: String, registry: MongoRegistry) {
             items(metrics) { MetricCard(it) }
         }
         Spacer(modifier = Modifier.height(20.dp))
-        ProfilerSection(connectionId, registry)
+        ProfilerSection(connectionId, registry, readOnly)
     }
 }
 
@@ -146,7 +146,7 @@ private fun MetricCard(m: Metric) {
 }
 
 @Composable
-private fun ProfilerSection(connectionId: String, registry: MongoRegistry) {
+private fun ProfilerSection(connectionId: String, registry: MongoRegistry, readOnly: Boolean = false) {
     var dbName by remember { mutableStateOf("admin") }
     var profile by remember { mutableStateOf(ProfilerLevel(0, 100)) }
     var slow by remember { mutableStateOf<List<SlowOp>>(emptyList()) }
@@ -204,7 +204,8 @@ private fun ProfilerSection(connectionId: String, registry: MongoRegistry) {
                 OutlinedButton(onClick = { load() }, enabled = !loading) {
                     Text(if (loading) "Loading…" else "Load")
                 }
-                Button(onClick = {
+                // setProfilerLevel writes server state, so it honours read-only mode.
+                Button(enabled = !readOnly, onClick = {
                     scope.launch {
                         val client = registry.client(connectionId) ?: return@launch
                         try {

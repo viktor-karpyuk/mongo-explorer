@@ -238,6 +238,12 @@ class MigrationRunner(
     fun start(jobId: String) {
         val job = ctx.migrations.get(jobId) ?: return
         if (active.containsKey(jobId)) return
+        // The picker already hides read-only targets, but a job created before the flag
+        // was set (or flipped later) must still refuse to write (DBA-RO-1).
+        if (ctx.connections.isReadOnly(job.spec.targetId)) {
+            ctx.migrations.setStatus(jobId, MigrationStatus.failed, "Target connection is marked read-only")
+            return
+        }
         val source = registry.client(job.spec.sourceId) ?: return run {
             ctx.migrations.setStatus(jobId, MigrationStatus.failed, "Source connection not open")
         }

@@ -29,6 +29,7 @@ fun ConnectionForm(
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var uri by remember { mutableStateOf(initial?.uri ?: "mongodb://localhost:27017") }
     var notes by remember { mutableStateOf(initial?.notes ?: "") }
+    var readOnly by remember { mutableStateOf(initial?.readOnly ?: false) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<TestResult?>(null) }
     var showHistory by remember { mutableStateOf(false) }
@@ -197,6 +198,19 @@ fun ConnectionForm(
                         maxLines = 4,
                     )
 
+                    // DBA-RO-1 — the guard rail for production clusters.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = readOnly, onCheckedChange = { readOnly = it })
+                        Column {
+                            Text("Read-only connection", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Disables every write action for this connection: inserts, updates, deletes, " +
+                                    "drops, index/validator changes and migrations targeting it. Use for production.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
 
                 HorizontalDivider()
@@ -247,7 +261,14 @@ fun ConnectionForm(
                     TextButton(onClick = onCancel) { Text("Cancel") }
                     Button(
                         onClick = {
-                            onSave(ConnectionInput(name.trim(), effectiveUri(), notes.takeIf { it.isNotBlank() }))
+                            onSave(
+                                ConnectionInput(
+                                    name.trim(),
+                                    effectiveUri(),
+                                    notes.takeIf { it.isNotBlank() },
+                                    readOnly = readOnly,
+                                ),
+                            )
                         },
                         enabled = name.isNotBlank() && canSubmit,
                     ) { Text("Save") }
