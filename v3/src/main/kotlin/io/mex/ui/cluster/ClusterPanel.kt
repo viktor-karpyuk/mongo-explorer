@@ -86,6 +86,10 @@ fun ClusterPanel(connectionId: String, registry: MongoRegistry) {
                 }
             }
 
+            if (s.topology.type == "replicaset") {
+                ReplicationSection(connectionId, registry)
+            }
+
             if (s.topology.members.isNotEmpty()) {
                 Text("Members", style = MaterialTheme.typography.titleMedium)
                 LazyVerticalGrid(

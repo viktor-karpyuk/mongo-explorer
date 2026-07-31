@@ -103,17 +103,27 @@ fun clusterSnapshot(client: MongoClient): ClusterSnapshot {
             val status = admin.runCommand(Document("replSetGetStatus", 1))
             val byHost = rsConfig?.members?.associateBy { it.host }.orEmpty()
             val sm = (status["members"] as? List<*>).orEmpty().filterIsInstance<Document>()
+            // Lag is measured against the primary's optime, not the local wall clock —
+            // clock skew made the old now-based number nonsense on idle clusters.
+            val primaryOptime = sm.firstOrNull { (it["state"] as? Number)?.toInt() == 1 }
+                ?.let { it["optimeDate"] as? java.util.Date }?.time
             for (m in sm) {
                 val name = m.getString("name")
                 val stateCode = (m["state"] as? Number)?.toInt() ?: 6
-                val optime = m["optimeDate"] as? java.util.Date
+                val optime = (m["optimeDate"] as? java.util.Date)?.time
+                val lag = when {
+                    stateCode == 1 -> 0L
+                    stateCode == 2 && optime != null && primaryOptime != null ->
+                        ((primaryOptime - optime) / 1000).coerceAtLeast(0)
+                    else -> null
+                }
                 members += MemberInfo(
                     name = name,
                     state = STATE_BY_CODE[stateCode] ?: "UNKNOWN",
                     health = ((m["health"] as? Number)?.toInt() ?: 0),
                     uptime = (m["uptime"] as? Number)?.toLong() ?: 0L,
                     pingMs = (m["pingMs"] as? Number)?.toLong(),
-                    lagSeconds = optime?.let { ((System.currentTimeMillis() - it.time) / 1000).coerceAtLeast(0) },
+                    lagSeconds = lag,
                     priority = byHost[name]?.priority ?: 1.0,
                     votes = byHost[name]?.votes ?: 1,
                 )
