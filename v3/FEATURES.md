@@ -92,6 +92,10 @@ minus heavy auth methods. ~80 features.
 - [x] killOp behind typed confirm (opid passed back verbatim; mongos string opids supported)
 - [x] Per-connection read-only mode (schema v4) enforced across every mutating affordance
 - [x] Read-only connections excluded as migration targets; runner double-checks pre-existing jobs
+- [x] Security tab: estate-wide user list (`usersInfo.forAllDBs`) + user CRUD (create / edit roles / change password / drop)
+- [x] Role browser (`rolesInfo` per db) with privilege expansion + custom-role create/drop
+- [x] Access check: "who can read/write/drop/index db.coll" from server-expanded `inheritedPrivileges`
+- [x] Dangerous-account insights: superusers, roleless users, unused custom roles
 
 ## 10. I/O
 - [x] Export JSON / NDJSON / CSV (streaming)
