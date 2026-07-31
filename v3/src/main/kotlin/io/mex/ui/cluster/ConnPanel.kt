@@ -14,12 +14,13 @@ import io.mex.ui.components.ReadOnlyBadge
 import io.mex.ui.components.StatePill
 import io.mex.ui.monitor.MonitoringPanel
 import io.mex.ui.ops.OpsPanel
+import io.mex.ui.diagnostics.DiagnosticsPanel
 import io.mex.ui.security.SecurityPanel
 import io.mex.ui.shell.ShellPanel
 import io.mex.ui.storage.StoragePanel
 import kotlinx.coroutines.launch
 
-enum class ConnTab { Cluster, Operations, Monitoring, Security, Storage, Shell }
+enum class ConnTab { Cluster, Operations, Monitoring, Security, Storage, Diagnostics, Shell }
 
 @Composable
 fun ConnectionPanel(ctx: AppContext, connectionId: String, registry: MongoRegistry) {
@@ -60,6 +61,7 @@ fun ConnectionPanel(ctx: AppContext, connectionId: String, registry: MongoRegist
             TabBtn("Monitoring", tab == ConnTab.Monitoring) { tab = ConnTab.Monitoring }
             TabBtn("Security", tab == ConnTab.Security) { tab = ConnTab.Security }
             TabBtn("Storage", tab == ConnTab.Storage) { tab = ConnTab.Storage }
+            TabBtn("Diagnostics", tab == ConnTab.Diagnostics) { tab = ConnTab.Diagnostics }
             TabBtn("Shell", tab == ConnTab.Shell) { tab = ConnTab.Shell }
         }
         HorizontalDivider()
@@ -70,6 +72,7 @@ fun ConnectionPanel(ctx: AppContext, connectionId: String, registry: MongoRegist
                 ConnTab.Monitoring -> MonitoringPanel(connectionId, registry, readOnly)
                 ConnTab.Security -> SecurityPanel(connectionId, registry, readOnly)
                 ConnTab.Storage -> StoragePanel(connectionId, registry, readOnly)
+                ConnTab.Diagnostics -> DiagnosticsPanel(connectionId, registry)
                 ConnTab.Shell -> ShellPanel(ctx, connectionId, readOnly)
             }
         }
