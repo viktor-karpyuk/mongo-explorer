@@ -26,7 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private enum class SecTab { Users, Roles, Access }
+private enum class SecTab { Users, Roles, Access, Audit }
 
 /**
  * Users & roles administration (DBA-RBAC-1..4): estate-wide user list with dangerous-account
@@ -113,6 +113,7 @@ fun SecurityPanel(connectionId: String, registry: MongoRegistry, readOnly: Boole
             SecTabBtn("Users", tab == SecTab.Users) { tab = SecTab.Users }
             SecTabBtn("Roles", tab == SecTab.Roles) { tab = SecTab.Roles }
             SecTabBtn("Access check", tab == SecTab.Access) { tab = SecTab.Access }
+            SecTabBtn("Audit", tab == SecTab.Audit) { tab = SecTab.Audit }
         }
         HorizontalDivider()
         Box(modifier = Modifier.weight(1f)) {
@@ -120,6 +121,7 @@ fun SecurityPanel(connectionId: String, registry: MongoRegistry, readOnly: Boole
                 SecTab.Users -> UsersTab(connectionId, registry, users, roles, dbs, readOnly, onChanged = { load() })
                 SecTab.Roles -> RolesTab(connectionId, registry, roles, dbs, readOnly, onChanged = { load() })
                 SecTab.Access -> AccessTab(connectionId, registry, users, dbs)
+                SecTab.Audit -> AuditTab(connectionId, registry)
             }
         }
     }
