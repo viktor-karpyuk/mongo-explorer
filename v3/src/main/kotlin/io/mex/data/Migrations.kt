@@ -113,4 +113,28 @@ internal val MIGRATIONS: List<Migration> = listOf(
         version = 4,
         sql = "ALTER TABLE connections ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0",
     ),
+    // v3.4 — backup catalog (DBA-BKP-1). connection_id is informational, not a FK:
+    // a backup must outlive the connection it was taken from.
+    Migration(
+        version = 5,
+        sql = """
+            CREATE TABLE backups (
+              id              TEXT PRIMARY KEY,
+              connection_id   TEXT,
+              connection_name TEXT NOT NULL,
+              scope_db        TEXT,
+              scope_coll      TEXT,
+              gzip            INTEGER NOT NULL DEFAULT 1,
+              path            TEXT NOT NULL,
+              status          TEXT NOT NULL CHECK (status IN
+                                ('running','completed','failed','cancelled')),
+              error           TEXT,
+              started_at      INTEGER NOT NULL,
+              finished_at     INTEGER,
+              size_bytes      INTEGER
+            );
+
+            CREATE INDEX idx_backups_started ON backups(started_at DESC)
+        """.trimIndent(),
+    ),
 )

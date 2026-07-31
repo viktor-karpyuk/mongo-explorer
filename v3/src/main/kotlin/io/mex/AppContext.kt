@@ -1,5 +1,6 @@
 package io.mex
 
+import io.mex.data.BackupsRepo
 import io.mex.data.ConnectionsRepo
 import io.mex.data.MigrationJobsRepo
 import io.mex.data.PrefsRepo
@@ -16,13 +17,20 @@ class AppContext(
     val prefs: PrefsRepo,
     val queryHistory: QueryHistoryRepo,
     val migrations: MigrationJobsRepo,
+    val backups: BackupsRepo,
+    val dataDir: Path,
 ) : AutoCloseable {
+    /** Managed location for mongodump output; every catalog row's path lives under it. */
+    val backupsDir: Path get() = dataDir.resolve("backups")
+
     override fun close() = store.close()
 
     companion object {
         fun bootstrap(): AppContext {
-            val store = Store.open(dbPath())
+            val dir = dataDir()
+            val store = Store.open(dir.resolve("mex-v3.db"))
             val migrations = MigrationJobsRepo(store).also { it.reconcileOrphans() }
+            val backups = BackupsRepo(store).also { it.reconcileOrphans() }
             return AppContext(
                 store = store,
                 connections = ConnectionsRepo(store),
@@ -30,19 +38,20 @@ class AppContext(
                 prefs = PrefsRepo(store),
                 queryHistory = QueryHistoryRepo(store),
                 migrations = migrations,
+                backups = backups,
+                dataDir = dir,
             )
         }
 
-        private fun dbPath(): Path {
+        private fun dataDir(): Path {
             val home = System.getProperty("user.home")
-            val base = when {
+            return when {
                 System.getProperty("os.name").startsWith("Mac", ignoreCase = true) ->
                     Paths.get(home, "Library", "Application Support", "MongoExplorerV3")
                 System.getProperty("os.name").startsWith("Windows", ignoreCase = true) ->
                     Paths.get(System.getenv("APPDATA") ?: home, "MongoExplorerV3")
                 else -> Paths.get(home, ".local", "share", "mex-v3")
             }
-            return base.resolve("mex-v3.db")
         }
     }
 }

@@ -11,9 +11,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.mex.AppContext
+import io.mex.backup.BackupRunner
 import io.mex.migration.MigrationRunner
 import io.mex.mongo.ConnectionState
 import io.mex.mongo.MongoRegistry
+import io.mex.ui.backup.BackupsView
 import io.mex.ui.cluster.ConnectionPanel
 import io.mex.ui.coll.CollPanel
 import io.mex.ui.connections.ConnectionsView
@@ -36,6 +38,7 @@ fun App(ctx: AppContext) {
     val namespaces = remember { NamespacesStore(registry) }
     val queries = remember { QueryStore(ctx, registry) }
     val migrations = remember { MigrationRunner(ctx, registry) }
+    val backups = remember { BackupRunner(ctx, ctx.backupsDir) }
     val prefs = remember { PrefsStore(ctx.prefs) }
     val connectionsVm = remember { ConnectionsViewModel(ctx, registry) }
 
@@ -90,6 +93,7 @@ fun App(ctx: AppContext) {
                         when (val s = selection.current) {
                             Selection.Welcome -> ConnectionsView(ctx, registry, connectionsVm, selection)
                             Selection.Migrations -> MigrationsView(ctx, registry, migrations)
+                            Selection.Backups -> BackupsView(ctx, registry, backups)
                             Selection.Settings -> SettingsView(ctx, prefs)
                             is Selection.ConnectionView -> ConnectionPanel(ctx, s.connectionId, registry)
                             is Selection.Database -> DbStatsPanel(s.connectionId, s.db, registry)
@@ -130,6 +134,9 @@ private fun TopBar(selection: SelectionStore, connectedCount: Int) {
         }
         TopBarItem("Migrations", current is Selection.Migrations) {
             selection.select(Selection.Migrations)
+        }
+        TopBarItem("Backups", current is Selection.Backups) {
+            selection.select(Selection.Backups)
         }
         TopBarItem("Settings", current is Selection.Settings) {
             selection.select(Selection.Settings)
