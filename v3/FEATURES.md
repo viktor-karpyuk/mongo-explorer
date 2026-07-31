@@ -98,6 +98,9 @@ minus heavy auth methods. ~80 features.
 - [x] Dangerous-account insights: superusers, roleless users, unused custom roles
 - [x] Replication section on Cluster tab: oplog window (severity-coloured) + per-secondary lag sparklines (5 s poll)
 - [x] Lag measured against the primary's optime everywhere (was wall-clock-relative)
+- [x] Storage tab: sortable per-collection weight (reclaimable % via freeStorageSize), estate totals
+- [x] Unused-index candidates (`$indexStats` × `listIndexes`, TTL-excluded, unique-badged) with gated drop
+- [x] TTL index overview
 
 ## 10. I/O
 - [x] Export JSON / NDJSON / CSV (streaming)
