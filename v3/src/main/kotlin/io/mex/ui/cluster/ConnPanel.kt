@@ -67,7 +67,7 @@ fun ConnectionPanel(ctx: AppContext, connectionId: String, registry: MongoRegist
         HorizontalDivider()
         Box(modifier = Modifier.weight(1f)) {
             when (tab) {
-                ConnTab.Cluster -> ClusterPanel(connectionId, registry)
+                ConnTab.Cluster -> ClusterPanel(connectionId, registry, readOnly)
                 ConnTab.Operations -> OpsPanel(connectionId, registry, readOnly)
                 ConnTab.Monitoring -> MonitoringPanel(connectionId, registry, readOnly)
                 ConnTab.Security -> SecurityPanel(connectionId, registry, readOnly)

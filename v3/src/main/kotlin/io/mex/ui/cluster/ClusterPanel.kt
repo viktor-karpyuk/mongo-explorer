@@ -33,9 +33,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun ClusterPanel(connectionId: String, registry: MongoRegistry) {
+fun ClusterPanel(connectionId: String, registry: MongoRegistry, readOnly: Boolean = false) {
     var snap by remember(connectionId) { mutableStateOf<ClusterSnapshot?>(null) }
     var error by remember(connectionId) { mutableStateOf<String?>(null) }
+    var steppingDown by remember(connectionId) { mutableStateOf(false) }
+    var editingMember by remember(connectionId) { mutableStateOf<RsMemberConfig?>(null) }
     val scope = rememberCoroutineScope()
 
     fun reload() {
@@ -57,8 +59,12 @@ fun ClusterPanel(connectionId: String, registry: MongoRegistry) {
         modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Cluster", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+            // Cluster-level admin action — replica sets only, never on read-only connections.
+            if (!readOnly && snap?.topology?.type == "replicaset" && snap?.topology?.primary != null) {
+                OutlinedButton(onClick = { steppingDown = true }) { Text("Step down primary…") }
+            }
             OutlinedButton(onClick = { reload() }) { Text("Refresh") }
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -102,8 +108,28 @@ fun ClusterPanel(connectionId: String, registry: MongoRegistry) {
                 }
             }
 
-            s.rsConfig?.let { RsConfigSection(it) }
+            s.rsConfig?.let { RsConfigSection(it, onEditMember = if (readOnly) null else { m -> editingMember = m }) }
         }
+    }
+
+    if (steppingDown) {
+        StepDownDialog(
+            connectionId = connectionId,
+            registry = registry,
+            primary = snap?.topology?.primary,
+            onClose = { steppingDown = false },
+            onDone = { reload() },
+        )
+    }
+    editingMember?.let { m ->
+        EditMemberDialog(
+            connectionId = connectionId,
+            registry = registry,
+            member = m,
+            allMembers = snap?.rsConfig?.members.orEmpty(),
+            onClose = { editingMember = null },
+            onDone = { reload() },
+        )
     }
 }
 
@@ -164,7 +190,7 @@ private fun MemberCard(m: MemberInfo) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun RsConfigSection(cfg: RsConfig) {
+private fun RsConfigSection(cfg: RsConfig, onEditMember: ((RsMemberConfig) -> Unit)? = null) {
     var showJson by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
 
@@ -224,7 +250,7 @@ private fun RsConfigSection(cfg: RsConfig) {
                     )
                 }
                 cfg.members.sortedWith(compareByDescending<RsMemberConfig> { it.priority }.thenBy { it.host })
-                    .forEach { MemberConfigRow(it) }
+                    .forEach { MemberConfigRow(it, onEdit = onEditMember?.let { cb -> { cb(it) } }) }
             }
 
             if (cfg.settings.isNotEmpty()) {
@@ -264,7 +290,7 @@ private fun RsConfigSection(cfg: RsConfig) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun MemberConfigRow(m: RsMemberConfig) {
+private fun MemberConfigRow(m: RsMemberConfig, onEdit: (() -> Unit)? = null) {
     Row(verticalAlignment = Alignment.Top) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -308,6 +334,11 @@ private fun MemberConfigRow(m: RsMemberConfig) {
             color = if (m.votes != 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.width(48.dp),
         )
+        if (onEdit != null && !m.arbiterOnly) {
+            TextButton(onClick = onEdit, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                Text("Edit…", style = MaterialTheme.typography.labelSmall)
+            }
+        }
     }
 }
 
