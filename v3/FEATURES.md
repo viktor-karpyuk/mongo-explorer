@@ -104,6 +104,7 @@ minus heavy auth methods. ~80 features.
 - [x] Backups view: mongodump orchestration (full/db/collection, gzip) + SQLite catalog (schema v5)
 - [x] Restore with dry-run-first gating, --drop consequence spelled out, db rename via nsFrom/nsTo
 - [x] Live tool logs, cancel, managed on-disk layout under dataDir/backups
+- [x] Diagnostics tab: startup warnings card, filtered/searchable server log tail, parameters with curated tuned-vs-default flags
 
 ## 10. I/O
 - [x] Export JSON / NDJSON / CSV (streaming)
