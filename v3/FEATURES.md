@@ -109,6 +109,7 @@ minus heavy auth methods. ~80 features.
 - [x] Diagnostics tab: startup warnings card, filtered/searchable server log tail, parameters with curated tuned-vs-default flags
 - [x] Guided rs.stepDown with exact-command preview + typed confirm
 - [x] Per-member reconfig (priority/votes/hidden/delay): validation, fresh-config preview with majority-shift warning, typed confirm
+- [x] Compare view: collection + sampled-schema + index diff between two open connections (DBA-DIFF)
 
 ## 10. I/O
 - [x] Export JSON / NDJSON / CSV (streaming)
