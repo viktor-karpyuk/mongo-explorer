@@ -6,6 +6,7 @@ sealed class Selection {
     object Welcome : Selection()
     object Migrations : Selection()
     object Backups : Selection()
+    object Compare : Selection()
     object Settings : Selection()
     data class ConnectionView(val connectionId: String) : Selection()
     data class Database(val connectionId: String, val db: String) : Selection()

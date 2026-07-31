@@ -17,6 +17,7 @@ import io.mex.mongo.ConnectionState
 import io.mex.mongo.MongoRegistry
 import io.mex.ui.backup.BackupsView
 import io.mex.ui.cluster.ConnectionPanel
+import io.mex.ui.compare.CompareView
 import io.mex.ui.coll.CollPanel
 import io.mex.ui.connections.ConnectionsView
 import io.mex.ui.connections.ConnectionsViewModel
@@ -94,6 +95,7 @@ fun App(ctx: AppContext) {
                             Selection.Welcome -> ConnectionsView(ctx, registry, connectionsVm, selection)
                             Selection.Migrations -> MigrationsView(ctx, registry, migrations)
                             Selection.Backups -> BackupsView(ctx, registry, backups)
+                            Selection.Compare -> CompareView(ctx, registry)
                             Selection.Settings -> SettingsView(ctx, prefs)
                             is Selection.ConnectionView -> ConnectionPanel(ctx, s.connectionId, registry)
                             is Selection.Database -> DbStatsPanel(s.connectionId, s.db, registry)
@@ -137,6 +139,9 @@ private fun TopBar(selection: SelectionStore, connectedCount: Int) {
         }
         TopBarItem("Backups", current is Selection.Backups) {
             selection.select(Selection.Backups)
+        }
+        TopBarItem("Compare", current is Selection.Compare) {
+            selection.select(Selection.Compare)
         }
         TopBarItem("Settings", current is Selection.Settings) {
             selection.select(Selection.Settings)
