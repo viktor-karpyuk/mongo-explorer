@@ -77,6 +77,16 @@ minus heavy auth methods. ~80 features.
 - [x] Canonical-EJSON `_id` checkpoints (fixes string-sliced resume)
 - [x] Preflight shows per-namespace source/target counts + non-empty-target warning
 
+### 9c. Migration correctness (v3.2 — `docs/v3/migration-analysis-2026-07.md`)
+- [x] Two-phase checkpoint + idempotent replay window (crash-safe resume under abort/drop)
+- [x] Type-agnostic `$expr` resume filter (mixed-type `_id` no longer skips documents)
+- [x] `RawBsonDocument` passthrough + 12 MB byte-capped batches
+- [x] Collection-options replay (validator / collation / capped / timeseries); views rejected in preflight
+- [x] Per-document error samples surfaced in the report
+- [x] `cancelled` as a first-class status; Resume / Restart for interrupted jobs
+- [x] Progress bar with rate + ETA, job timestamps, report export
+- [x] Quiescent-source preflight warning; secondary-read and collection-option knobs
+
 ## 10. I/O
 - [x] Export JSON / NDJSON / CSV (streaming)
 - [x] Import JSON / NDJSON / CSV (dry-run + commit)
@@ -86,6 +96,11 @@ minus heavy auth methods. ~80 features.
 
 ## 12. UI / settings
 - [x] Welcome view + sidebar tree
+- [x] Collapsible cluster nodes + per-connection actions (refresh / create db / disconnect)
+- [x] Filter reaches collections in unexpanded databases
+- [x] Schema-aware autocomplete for filter / projection / sort (fields, operators, values)
+- [x] Keyboard row navigation, scrollbars and selectable JSON in the results pane
+- [x] Pagination bar (page x of y, first/prev/next, page size) on find and aggregate
 - [x] Material 3 dark / light theme toggle
 - [x] Customizable editor font size
 - [x] Tab width preference
