@@ -110,6 +110,7 @@ minus heavy auth methods. ~80 features.
 - [x] Guided rs.stepDown with exact-command preview + typed confirm
 - [x] Per-member reconfig (priority/votes/hidden/delay): validation, fresh-config preview with majority-shift warning, typed confirm
 - [x] Compare view: collection + sampled-schema + index diff between two open connections (DBA-DIFF)
+- [x] Security posture check (CIS-style): auth/TLS/binding/version/superuser/JS/cluster-auth/audit with 0–100 score (DBA-CIS)
 
 ## 10. I/O
 - [x] Export JSON / NDJSON / CSV (streaming)
