@@ -96,6 +96,8 @@ minus heavy auth methods. ~80 features.
 - [x] Role browser (`rolesInfo` per db) with privilege expansion + custom-role create/drop
 - [x] Access check: "who can read/write/drop/index db.coll" from server-expanded `inheritedPrivileges`
 - [x] Dangerous-account insights: superusers, roleless users, unused custom roles
+- [x] Replication section on Cluster tab: oplog window (severity-coloured) + per-secondary lag sparklines (5 s poll)
+- [x] Lag measured against the primary's optime everywhere (was wall-clock-relative)
 
 ## 10. I/O
 - [x] Export JSON / NDJSON / CSV (streaming)
