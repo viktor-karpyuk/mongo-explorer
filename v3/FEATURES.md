@@ -53,10 +53,12 @@ minus heavy auth methods. ~80 features.
 - [x] Per-row Edit (replaceOne by _id)
 - [x] Per-row Delete
 
-## 7. Cluster ops (read-only)
+## 7. Cluster ops
 - [x] Topology member cards (state / lag / ping)
 - [x] 0–100 health pill
 - [x] rs.conf() viewer
+- [x] Guided rs.stepDown() — command preview + typed confirm (DBA-RCFG-1)
+- [x] Guided per-member reconfig (priority/votes/hidden/delay) — validation, fresh-config preview, majority-shift warning, typed confirm (DBA-RCFG-2)
 
 ## 8. Live monitoring
 - [x] 2s serverStatus polling
@@ -105,6 +107,8 @@ minus heavy auth methods. ~80 features.
 - [x] Restore with dry-run-first gating, --drop consequence spelled out, db rename via nsFrom/nsTo
 - [x] Live tool logs, cancel, managed on-disk layout under dataDir/backups
 - [x] Diagnostics tab: startup warnings card, filtered/searchable server log tail, parameters with curated tuned-vs-default flags
+- [x] Guided rs.stepDown with exact-command preview + typed confirm
+- [x] Per-member reconfig (priority/votes/hidden/delay): validation, fresh-config preview with majority-shift warning, typed confirm
 
 ## 10. I/O
 - [x] Export JSON / NDJSON / CSV (streaming)
