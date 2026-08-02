@@ -2,6 +2,7 @@ package io.mex
 
 import io.mex.data.BackupsRepo
 import io.mex.data.ConnectionsRepo
+import io.mex.data.LabsRepo
 import io.mex.data.MigrationJobsRepo
 import io.mex.data.PrefsRepo
 import io.mex.data.QueryHistoryRepo
@@ -18,10 +19,14 @@ class AppContext(
     val queryHistory: QueryHistoryRepo,
     val migrations: MigrationJobsRepo,
     val backups: BackupsRepo,
+    val labs: LabsRepo,
     val dataDir: Path,
 ) : AutoCloseable {
     /** Managed location for mongodump output; every catalog row's path lives under it. */
     val backupsDir: Path get() = dataDir.resolve("backups")
+
+    /** Managed location for lab compose dirs; deletes are guarded to stay under it (PRV-LIFE-3). */
+    val labsDir: Path get() = dataDir.resolve("labs")
 
     override fun close() = store.close()
 
@@ -31,6 +36,7 @@ class AppContext(
             val store = Store.open(dir.resolve("mex-v3.db"))
             val migrations = MigrationJobsRepo(store).also { it.reconcileOrphans() }
             val backups = BackupsRepo(store).also { it.reconcileOrphans() }
+            val labs = LabsRepo(store).also { it.reconcileOrphans() }
             return AppContext(
                 store = store,
                 connections = ConnectionsRepo(store),
@@ -39,6 +45,7 @@ class AppContext(
                 queryHistory = QueryHistoryRepo(store),
                 migrations = migrations,
                 backups = backups,
+                labs = labs,
                 dataDir = dir,
             )
         }

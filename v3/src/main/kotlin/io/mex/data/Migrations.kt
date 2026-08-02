@@ -137,4 +137,28 @@ internal val MIGRATIONS: List<Migration> = listOf(
             CREATE INDEX idx_backups_started ON backups(started_at DESC)
         """.trimIndent(),
     ),
+    // v3.4 — local cluster provisioning (PRV-LIFE-1). connection_id is deliberately not a
+    // FK: the lab row must survive its registered connection being deleted (PRV-CONN-5).
+    Migration(
+        version = 6,
+        sql = """
+            CREATE TABLE labs (
+              id             TEXT PRIMARY KEY,
+              name           TEXT NOT NULL UNIQUE,
+              topology       TEXT NOT NULL,
+              status         TEXT NOT NULL CHECK (status IN
+                               ('provisioning','running','stopped','failed','missing')),
+              mongo_tag      TEXT NOT NULL,
+              auth           INTEGER NOT NULL DEFAULT 1,
+              port_map       TEXT,
+              connection_id  TEXT,
+              dir            TEXT NOT NULL,
+              app_major      INTEGER NOT NULL,
+              error          TEXT,
+              created_at     INTEGER NOT NULL
+            );
+
+            CREATE INDEX idx_labs_created ON labs(created_at DESC)
+        """.trimIndent(),
+    ),
 )
