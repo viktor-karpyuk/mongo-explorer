@@ -8,18 +8,13 @@ import java.util.concurrent.TimeUnit
 data class ToolInfo(val path: String, val version: String)
 
 /**
- * Locates a MongoDB Database Tools binary (mongodump/mongorestore ship separately from
- * mongosh). PATH first, then the usual install prefixes.
+ * Locates an external binary (mongodump/mongorestore, docker, …). PATH first, then the
+ * usual install prefixes; callers with tool-specific locations pass them via [extraDirs].
  */
-fun findTool(name: String): ToolInfo? {
+fun findTool(name: String, extraDirs: List<String> = emptyList()): ToolInfo? {
     val home = System.getProperty("user.home")
-    val candidates = listOf(
-        name,
-        "/opt/homebrew/bin/$name",
-        "/usr/local/bin/$name",
-        "/usr/bin/$name",
-        "$home/bin/$name",
-    )
+    val dirs = listOf("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "$home/bin") + extraDirs
+    val candidates = listOf(name) + dirs.map { "$it/$name" }
     for (candidate in candidates) {
         val version = runCatching {
             val p = ProcessBuilder(candidate, "--version").redirectErrorStream(true).start()
