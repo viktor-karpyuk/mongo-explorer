@@ -78,6 +78,9 @@ fun Tree(
     // dropped cluster vanish from the sidebar with no explanation.
     val visible = vm.list.filter { states[it.id] !is ConnectionState.Disconnected && states[it.id] != null }
     val connectedIds = visible.filter { states[it.id] is ConnectionState.Connected }.map { it.id }
+    // Lab-owned connections carry the LAB badge (PRV-CONN-4); keyed on the connection list
+    // so a freshly registered lab connection picks its badge up on the same reload.
+    val labConnIds = remember(vm.list) { ctx.labs.connectionIds() }
 
     var filter by remember { mutableStateOf("") }
     val current = selection.current
@@ -153,6 +156,7 @@ fun Tree(
                         expanded = row.expanded,
                         selected = current is Selection.ConnectionView && current.connectionId == row.conn.id,
                         readOnly = row.conn.readOnly,
+                        isLab = row.conn.id in labConnIds,
                         onToggle = { namespaces.toggleConnExpanded(row.conn.id) },
                         onSelect = { selection.select(Selection.ConnectionView(row.conn.id)) },
                         onDisconnect = { scope.launch { vm.close(row.conn.id) } },
@@ -347,6 +351,7 @@ private fun ConnRow(
     expanded: Boolean,
     selected: Boolean,
     readOnly: Boolean,
+    isLab: Boolean,
     onToggle: () -> Unit,
     onSelect: () -> Unit,
     onDisconnect: () -> Unit,
@@ -386,6 +391,10 @@ private fun ConnRow(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        if (isLab) {
+            io.mex.ui.components.LabBadge()
+            Spacer(modifier = Modifier.width(4.dp))
+        }
         if (readOnly) {
             io.mex.ui.components.ReadOnlyBadge(compact = true)
             Spacer(modifier = Modifier.width(4.dp))

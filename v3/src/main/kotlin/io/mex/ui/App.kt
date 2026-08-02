@@ -22,7 +22,9 @@ import io.mex.ui.coll.CollPanel
 import io.mex.ui.connections.ConnectionsView
 import io.mex.ui.connections.ConnectionsViewModel
 import io.mex.ui.db.DbStatsPanel
+import io.mex.provision.ProvisionRunner
 import io.mex.ui.migration.MigrationsView
+import io.mex.ui.provision.ProvisionView
 import io.mex.ui.query.QueryStore
 import io.mex.ui.settings.SettingsView
 import io.mex.ui.state.NamespacesStore
@@ -40,6 +42,7 @@ fun App(ctx: AppContext) {
     val queries = remember { QueryStore(ctx, registry) }
     val migrations = remember { MigrationRunner(ctx, registry) }
     val backups = remember { BackupRunner(ctx, ctx.backupsDir) }
+    val provisioner = remember { ProvisionRunner(ctx, registry) }
     val prefs = remember { PrefsStore(ctx.prefs) }
     val connectionsVm = remember { ConnectionsViewModel(ctx, registry) }
 
@@ -95,6 +98,7 @@ fun App(ctx: AppContext) {
                             Selection.Welcome -> ConnectionsView(ctx, registry, connectionsVm, selection)
                             Selection.Migrations -> MigrationsView(ctx, registry, migrations)
                             Selection.Backups -> BackupsView(ctx, registry, backups)
+                            Selection.Provision -> ProvisionView(ctx, provisioner, connectionsVm, selection)
                             Selection.Compare -> CompareView(ctx, registry)
                             Selection.Settings -> SettingsView(ctx, prefs)
                             is Selection.ConnectionView -> ConnectionPanel(ctx, s.connectionId, registry)
@@ -139,6 +143,9 @@ private fun TopBar(selection: SelectionStore, connectedCount: Int) {
         }
         TopBarItem("Backups", current is Selection.Backups) {
             selection.select(Selection.Backups)
+        }
+        TopBarItem("Provision", current is Selection.Provision) {
+            selection.select(Selection.Provision)
         }
         TopBarItem("Compare", current is Selection.Compare) {
             selection.select(Selection.Compare)
