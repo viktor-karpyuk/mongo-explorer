@@ -31,6 +31,8 @@ import io.mex.mongo.RsMemberConfig
 import io.mex.mongo.RsSetting
 import io.mex.mongo.clusterSnapshot
 import io.mex.mongo.directNodeUri
+import io.mex.mongo.freezeMember
+import io.mex.mongo.setBalancer
 import io.mex.ui.connections.ConnectionsViewModel
 import io.mex.ui.state.Selection
 import io.mex.ui.state.SelectionStore
@@ -53,6 +55,8 @@ fun ClusterPanel(
     var auto by remember(connectionId) { mutableStateOf(true) }
     var steppingDown by remember(connectionId) { mutableStateOf(false) }
     var editingMember by remember(connectionId) { mutableStateOf<RsMemberConfig?>(null) }
+    var freezingHost by remember(connectionId) { mutableStateOf<String?>(null) }
+    var balancerTarget by remember(connectionId) { mutableStateOf<Boolean?>(null) }
     val scope = rememberCoroutineScope()
 
     suspend fun fetch() {
@@ -159,15 +163,28 @@ fun ClusterPanel(
                     // Navigation, not mutation — available on read-only connections too;
                     // the twin record inherits the read-only flag.
                     onDirectConnect = { host -> directConnect(host) },
+                    onFreeze = if (!readOnly) {
+                        { host -> freezingHost = host }
+                    } else null,
                 )
                 ClusterTopologyDiagram(s, actions)
                 s.sharded?.balancerEnabled?.let { on ->
-                    Text(
-                        if (on) "balancer enabled" else "balancer disabled",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (on) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFFACC15),
-                        modifier = Modifier.padding(start = 20.dp, bottom = 12.dp),
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(start = 20.dp, bottom = 8.dp),
+                    ) {
+                        Text(
+                            if (on) "balancer enabled" else "balancer disabled",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (on) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFFACC15),
+                        )
+                        if (!readOnly) {
+                            TextButton(onClick = { balancerTarget = !on }) {
+                                Text(if (on) "Pause…" else "Resume…", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
                 }
             }
 
@@ -208,6 +225,39 @@ fun ClusterPanel(
             allMembers = snap?.rsConfig?.members.orEmpty(),
             onClose = { editingMember = null },
             onDone = { reload() },
+        )
+    }
+    freezingHost?.let { host ->
+        FreezeDialog(
+            host = host,
+            onRun = { secs ->
+                freezingHost = null
+                scope.launch {
+                    runCatching {
+                        val record = withContext(Dispatchers.IO) { ctx.connections.get(connectionId) }
+                            ?: error("connection record missing")
+                        withContext(Dispatchers.IO) { freezeMember(record.uri, host, secs) }
+                    }.onFailure { error = "Freeze failed: ${it.message}" }
+                    fetch()
+                }
+            },
+            onClose = { freezingHost = null },
+        )
+    }
+    balancerTarget?.let { enable ->
+        BalancerDialog(
+            enable = enable,
+            onConfirm = {
+                balancerTarget = null
+                scope.launch {
+                    runCatching {
+                        val client = registry.client(connectionId) ?: error("not connected")
+                        withContext(Dispatchers.IO) { setBalancer(client, enable) }
+                    }.onFailure { error = "Balancer change failed: ${it.message}" }
+                    fetch()
+                }
+            },
+            onClose = { balancerTarget = null },
         )
     }
 }
