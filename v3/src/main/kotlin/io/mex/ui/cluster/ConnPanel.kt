@@ -12,6 +12,8 @@ import io.mex.mongo.ConnectionState
 import io.mex.mongo.MongoRegistry
 import io.mex.ui.components.ReadOnlyBadge
 import io.mex.ui.components.StatePill
+import io.mex.ui.connections.ConnectionsViewModel
+import io.mex.ui.state.SelectionStore
 import io.mex.ui.monitor.MonitoringPanel
 import io.mex.ui.ops.OpsPanel
 import io.mex.ui.diagnostics.DiagnosticsPanel
@@ -23,7 +25,13 @@ import kotlinx.coroutines.launch
 enum class ConnTab { Cluster, Operations, Monitoring, Security, Storage, Diagnostics, Shell }
 
 @Composable
-fun ConnectionPanel(ctx: AppContext, connectionId: String, registry: MongoRegistry) {
+fun ConnectionPanel(
+    ctx: AppContext,
+    connectionId: String,
+    registry: MongoRegistry,
+    connectionsVm: ConnectionsViewModel,
+    selection: SelectionStore,
+) {
     var tab by remember(connectionId) { mutableStateOf(ConnTab.Cluster) }
     val states by registry.states.collectAsState()
     val state = states[connectionId] ?: ConnectionState.Disconnected
@@ -67,7 +75,7 @@ fun ConnectionPanel(ctx: AppContext, connectionId: String, registry: MongoRegist
         HorizontalDivider()
         Box(modifier = Modifier.weight(1f)) {
             when (tab) {
-                ConnTab.Cluster -> ClusterPanel(connectionId, registry, readOnly)
+                ConnTab.Cluster -> ClusterPanel(ctx, connectionId, registry, readOnly, connectionsVm, selection)
                 ConnTab.Operations -> OpsPanel(connectionId, registry, readOnly)
                 ConnTab.Monitoring -> MonitoringPanel(connectionId, registry, readOnly)
                 ConnTab.Security -> SecurityPanel(connectionId, registry, readOnly)

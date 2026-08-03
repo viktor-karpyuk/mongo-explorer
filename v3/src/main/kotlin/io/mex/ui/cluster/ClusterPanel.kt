@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import io.mex.AppContext
 import io.mex.mongo.ClusterSnapshot
 import io.mex.mongo.MemberInfo
 import io.mex.mongo.MongoRegistry
@@ -28,32 +29,50 @@ import io.mex.mongo.RsConfig
 import io.mex.mongo.RsMemberConfig
 import io.mex.mongo.RsSetting
 import io.mex.mongo.clusterSnapshot
+import io.mex.ui.connections.ConnectionsViewModel
+import io.mex.ui.state.SelectionStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun ClusterPanel(connectionId: String, registry: MongoRegistry, readOnly: Boolean = false) {
+fun ClusterPanel(
+    ctx: AppContext,
+    connectionId: String,
+    registry: MongoRegistry,
+    readOnly: Boolean = false,
+    connectionsVm: ConnectionsViewModel,
+    selection: SelectionStore,
+) {
     var snap by remember(connectionId) { mutableStateOf<ClusterSnapshot?>(null) }
     var error by remember(connectionId) { mutableStateOf<String?>(null) }
+    var auto by remember(connectionId) { mutableStateOf(true) }
     var steppingDown by remember(connectionId) { mutableStateOf(false) }
     var editingMember by remember(connectionId) { mutableStateOf<RsMemberConfig?>(null) }
     val scope = rememberCoroutineScope()
 
-    fun reload() {
-        scope.launch {
-            val client = registry.client(connectionId) ?: return@launch
-            try {
-                snap = withContext(Dispatchers.IO) { clusterSnapshot(client) }
-                // Clearing on success matters — a single transient failure used to leave a
-                // permanent error banner sitting above perfectly healthy data.
-                error = null
-            } catch (e: Exception) {
-                error = e.message
-            }
+    suspend fun fetch() {
+        val client = registry.client(connectionId) ?: return
+        try {
+            snap = withContext(Dispatchers.IO) { clusterSnapshot(client) }
+            // Clearing on success matters — a single transient failure used to leave a
+            // permanent error banner sitting above perfectly healthy data.
+            error = null
+        } catch (e: Exception) {
+            error = e.message
         }
     }
-    LaunchedEffect(connectionId) { reload() }
+    fun reload() { scope.launch { fetch() } }
+    // Elections, lag and drains move on their own; poll while auto is on so the
+    // diagram tells the truth without the user hammering Refresh.
+    LaunchedEffect(connectionId, auto) {
+        fetch()
+        while (auto) {
+            delay(5_000)
+            fetch()
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()),
@@ -65,6 +84,11 @@ fun ClusterPanel(connectionId: String, registry: MongoRegistry, readOnly: Boolea
             if (!readOnly && snap?.topology?.type == "replicaset" && snap?.topology?.primary != null) {
                 OutlinedButton(onClick = { steppingDown = true }) { Text("Step down primary…") }
             }
+            FilterChip(
+                selected = auto,
+                onClick = { auto = !auto },
+                label = { Text("Auto 5s", style = MaterialTheme.typography.labelSmall) },
+            )
             OutlinedButton(onClick = { reload() }) { Text("Refresh") }
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -94,15 +118,15 @@ fun ClusterPanel(connectionId: String, registry: MongoRegistry, readOnly: Boolea
 
             Text("Topology", style = MaterialTheme.typography.titleMedium)
             Card(border = CardDefaults.outlinedCardBorder()) {
-                // Centered when the diagram fits, horizontally scrollable when it doesn't.
-                Box(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-                        ClusterTopologyDiagram(s)
-                    }
-                }
+                val actions = TopologyActions(
+                    onStepDown = if (!readOnly && s.topology.primary != null) {
+                        { steppingDown = true }
+                    } else null,
+                    onEditMember = if (!readOnly) {
+                        { m -> editingMember = m }
+                    } else null,
+                )
+                ClusterTopologyDiagram(s, actions)
                 s.sharded?.balancerEnabled?.let { on ->
                     Text(
                         if (on) "balancer enabled" else "balancer disabled",

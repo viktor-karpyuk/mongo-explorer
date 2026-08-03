@@ -3,9 +3,18 @@ package io.mex.ui.cluster
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -14,10 +23,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -25,30 +37,106 @@ import androidx.compose.ui.unit.toSize
 import io.mex.mongo.ClusterSnapshot
 import io.mex.mongo.MemberInfo
 import io.mex.mongo.RouterInfo
+import io.mex.mongo.RsMemberConfig
+import io.mex.mongo.ShardInfo
+
+/**
+ * Mutating / navigating actions the diagram can offer on its nodes. A null callback
+ * means the action is unavailable (read-only connection, or the capability isn't
+ * wired) and the menu entry is simply absent.
+ */
+class TopologyActions(
+    val onStepDown: (() -> Unit)? = null,
+    val onEditMember: ((RsMemberConfig) -> Unit)? = null,
+    val onDirectConnect: ((String) -> Unit)? = null,
+    val onFreeze: ((String) -> Unit)? = null,
+    val onRemoveMember: ((RsMemberConfig) -> Unit)? = null,
+    val onRemoveShard: ((ShardInfo) -> Unit)? = null,
+)
+
+private data class MenuEntry(val label: String, val danger: Boolean = false, val onClick: () -> Unit)
+
+/** What the detail strip shows for the currently selected node. */
+private sealed class Payload {
+    class Member(val m: MemberInfo, val cfg: RsMemberConfig?) : Payload()
+    class Router(val r: RouterInfo) : Payload()
+    class Shard(val s: ShardInfo) : Payload()
+    class ConfigSvr(val rsName: String?, val hosts: List<String>) : Payload()
+    class Single(val endpoint: String?) : Payload()
+}
 
 /**
  * Node-and-wire picture of the cluster: routers over config/shards for sharded
  * clusters, primary over the other members for replica sets, a single node for
  * standalones. Wires are drawn on a canvas behind the nodes from their measured
- * positions, so row wrapping and resize keep the picture consistent.
+ * positions. Clicking a node selects it (detail strip below); the ⋮ menu holds
+ * its actions.
  */
 @Composable
-fun ClusterTopologyDiagram(snap: ClusterSnapshot) {
+fun ClusterTopologyDiagram(snap: ClusterSnapshot, actions: TopologyActions = TopologyActions()) {
+    var selected by remember { mutableStateOf<String?>(null) }
+    val payloads = payloadsFor(snap)
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
+                val select: (String) -> Unit = { key -> selected = if (selected == key) null else key }
+                when (snap.topology.type) {
+                    "sharded" -> ShardedDiagram(snap, actions, selected, select)
+                    "replicaset" -> ReplicaSetDiagram(snap, actions, selected, select)
+                    else -> StandaloneDiagram(snap.endpoint, actions, selected, select)
+                }
+            }
+        }
+        payloads[selected]?.let { p ->
+            HorizontalDivider()
+            DetailStrip(p)
+        }
+    }
+}
+
+/* ===================== node inventories (shared with strip) ===================== */
+
+private fun routersFor(snap: ClusterSnapshot): List<RouterInfo> =
+    snap.sharded?.routers?.takeIf { it.isNotEmpty() }
+        ?: listOfNotNull(snap.endpoint?.let { RouterInfo(it, 0, null) })
+
+private fun payloadsFor(snap: ClusterSnapshot): Map<String, Payload> = buildMap {
     when (snap.topology.type) {
-        "sharded" -> ShardedDiagram(snap)
-        "replicaset" -> ReplicaSetDiagram(snap.topology.members, snap.topology.primary)
-        else -> StandaloneDiagram(snap.endpoint)
+        "sharded" -> {
+            routersFor(snap).forEachIndexed { i, r -> put("r$i", Payload.Router(r)) }
+            val sh = snap.sharded
+            if (!sh?.configHosts.isNullOrEmpty()) {
+                put("cfg", Payload.ConfigSvr(sh?.configRsName, sh?.configHosts.orEmpty()))
+            }
+            sh?.shards.orEmpty().forEachIndexed { i, s -> put("s$i", Payload.Shard(s)) }
+        }
+        "replicaset" -> {
+            val cfgByHost = snap.rsConfig?.members?.associateBy { it.host }.orEmpty()
+            snap.topology.members.forEachIndexed { i, m ->
+                put("m$i", Payload.Member(m, cfgByHost[m.name]))
+            }
+        }
+        else -> put("solo", Payload.Single(snap.endpoint))
     }
 }
 
 /* ============================ layouts per type ============================ */
 
 @Composable
-private fun ShardedDiagram(snap: ClusterSnapshot) {
+private fun ShardedDiagram(
+    snap: ClusterSnapshot,
+    actions: TopologyActions,
+    selected: String?,
+    onSelect: (String) -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    val copy: (String) -> Unit = { clipboard.setText(AnnotatedString(it)) }
     val sh = snap.sharded
-    // config.mongos can be unreadable (auth) — fall back to the endpoint we're on.
-    val routers = sh?.routers?.takeIf { it.isNotEmpty() }
-        ?: listOfNotNull(snap.endpoint?.let { RouterInfo(it, 0, null) })
+    val routers = routersFor(snap)
     val hasConfig = !sh?.configHosts.isNullOrEmpty()
     val shards = sh?.shards.orEmpty()
 
@@ -60,13 +148,22 @@ private fun ShardedDiagram(snap: ClusterSnapshot) {
         },
     ) { anchor ->
         Column(
-            modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(44.dp),
         ) {
             NodeRow {
                 routers.forEachIndexed { i, r ->
-                    Node(anchor("r$i")) {
+                    Node(
+                        anchor = anchor("r$i"),
+                        selected = selected == "r$i",
+                        onSelect = { onSelect("r$i") },
+                        menu = buildList {
+                            add(MenuEntry("Copy host") { copy(r.host) })
+                            actions.onDirectConnect?.let { dc ->
+                                add(MenuEntry("Connect directly") { dc(r.host) })
+                            }
+                        },
+                    ) {
                         NodeTitle("mongos", if (r.active) StatusTone.Good else StatusTone.Bad)
                         HostLine(r.host)
                         r.version?.let { Small(it) }
@@ -76,13 +173,31 @@ private fun ShardedDiagram(snap: ClusterSnapshot) {
             }
             NodeRow {
                 if (hasConfig) {
-                    Node(anchor("cfg"), tinted = true) {
+                    Node(
+                        anchor = anchor("cfg"),
+                        selected = selected == "cfg",
+                        onSelect = { onSelect("cfg") },
+                        menu = listOf(
+                            MenuEntry("Copy hosts") { copy(sh?.configHosts.orEmpty().joinToString(",")) },
+                        ),
+                        tinted = true,
+                    ) {
                         NodeTitle("config servers", StatusTone.Neutral, sh?.configRsName)
                         sh?.configHosts.orEmpty().forEach { HostLine(it) }
                     }
                 }
                 shards.forEachIndexed { i, s ->
-                    Node(anchor("s$i")) {
+                    Node(
+                        anchor = anchor("s$i"),
+                        selected = selected == "s$i",
+                        onSelect = { onSelect("s$i") },
+                        menu = buildList {
+                            add(MenuEntry("Copy hosts") { copy(s.hosts.joinToString(",")) })
+                            actions.onRemoveShard?.let { rm ->
+                                if (!s.draining) add(MenuEntry("Drain & remove…", danger = true) { rm(s) })
+                            }
+                        },
+                    ) {
                         NodeTitle(
                             s.name,
                             if (s.draining) StatusTone.Warn else StatusTone.Good,
@@ -101,43 +216,81 @@ private fun ShardedDiagram(snap: ClusterSnapshot) {
 }
 
 @Composable
-private fun ReplicaSetDiagram(members: List<MemberInfo>, primary: String?) {
-    val primaryMember = members.firstOrNull { it.state == "PRIMARY" }
-    val rest = members.filter { it !== primaryMember }
+private fun ReplicaSetDiagram(
+    snap: ClusterSnapshot,
+    actions: TopologyActions,
+    selected: String?,
+    onSelect: (String) -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    val copy: (String) -> Unit = { clipboard.setText(AnnotatedString(it)) }
+    val members = snap.topology.members
     if (members.isEmpty()) {
         Small("replSetGetStatus not readable with this user")
         return
     }
+    val cfgByHost = snap.rsConfig?.members?.associateBy { it.host }.orEmpty()
+    val primaryIdx = members.indexOfFirst { it.state == "PRIMARY" }
+    val restIdx = members.indices.filter { it != primaryIdx }
+
+    fun menuFor(m: MemberInfo): List<MenuEntry> = buildList {
+        val cfg = cfgByHost[m.name]
+        add(MenuEntry("Copy host") { copy(m.name) })
+        actions.onDirectConnect?.let { dc -> add(MenuEntry("Connect directly") { dc(m.name) }) }
+        if (m.state == "PRIMARY") {
+            actions.onStepDown?.let { add(MenuEntry("Step down…", danger = true) { it() }) }
+        }
+        if (m.state == "SECONDARY") {
+            actions.onFreeze?.let { fr -> add(MenuEntry("Freeze elections…") { fr(m.name) }) }
+        }
+        if (cfg != null && !cfg.arbiterOnly) {
+            actions.onEditMember?.let { ed -> add(MenuEntry("Edit member…") { ed(cfg) }) }
+        }
+        if (cfg != null && m.state != "PRIMARY") {
+            actions.onRemoveMember?.let { rm -> add(MenuEntry("Remove from set…", danger = true) { rm(cfg) }) }
+        }
+    }
 
     DiagramSurface(
-        sources = listOfNotNull(primaryMember?.let { "p" }),
-        targets = rest.indices.map { i ->
-            "m$i" to if (rest[i].state == "ARBITER") LinkStyle.Dashed else LinkStyle.Solid
+        sources = if (primaryIdx >= 0) listOf("m$primaryIdx") else emptyList(),
+        targets = restIdx.map { i ->
+            "m$i" to if (members[i].state == "ARBITER") LinkStyle.Dashed else LinkStyle.Solid
         },
         linkTone = { key ->
-            val m = rest[key.removePrefix("m").toInt()]
+            val m = members[key.removePrefix("m").toInt()]
             when {
                 m.health != 1 || m.state == "DOWN" -> StatusTone.Bad
                 (m.lagSeconds ?: 0) > 10 -> StatusTone.Warn
                 else -> StatusTone.Neutral
             }
         },
+        arrowsToTargets = true,
     ) { anchor ->
         Column(
-            modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(44.dp),
         ) {
-            primaryMember?.let { p ->
-                NodeRow { MemberNode(p, anchor("p")) }
+            if (primaryIdx >= 0) {
+                NodeRow {
+                    MemberNode(
+                        members[primaryIdx], cfgByHost[members[primaryIdx].name],
+                        anchor("m$primaryIdx"), selected == "m$primaryIdx",
+                        { onSelect("m$primaryIdx") }, menuFor(members[primaryIdx]),
+                    )
+                }
             }
             NodeRow {
-                rest.forEachIndexed { i, m -> MemberNode(m, anchor("m$i")) }
-                // Primary listed but unreachable: primaryMember is null yet the set knows one.
-                if (primaryMember == null && primary != null) {
+                restIdx.forEach { i ->
+                    MemberNode(
+                        members[i], cfgByHost[members[i].name],
+                        anchor("m$i"), selected == "m$i",
+                        { onSelect("m$i") }, menuFor(members[i]),
+                    )
+                }
+                if (primaryIdx < 0) {
                     Node({}, tinted = true) {
                         NodeTitle("no primary", StatusTone.Bad)
-                        Small("last known: $primary")
+                        snap.topology.primary?.let { Small("last known: $it") }
                     }
                 }
             }
@@ -146,33 +299,122 @@ private fun ReplicaSetDiagram(members: List<MemberInfo>, primary: String?) {
 }
 
 @Composable
-private fun StandaloneDiagram(endpoint: String?) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-        Node({}) {
-            NodeTitle("mongod", StatusTone.Good)
-            HostLine(endpoint ?: "standalone")
-            Small("standalone — no replication")
-        }
+private fun StandaloneDiagram(
+    endpoint: String?,
+    actions: TopologyActions,
+    selected: String?,
+    onSelect: (String) -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    Node(
+        anchor = {},
+        selected = selected == "solo",
+        onSelect = { onSelect("solo") },
+        menu = buildList {
+            endpoint?.let { e -> add(MenuEntry("Copy host") { clipboard.setText(AnnotatedString(e)) }) }
+        },
+    ) {
+        NodeTitle("mongod", StatusTone.Good)
+        HostLine(endpoint ?: "standalone")
+        Small("standalone — no replication")
     }
 }
 
 @Composable
-private fun MemberNode(m: MemberInfo, anchor: (LayoutCoordinates) -> Unit) {
+private fun MemberNode(
+    m: MemberInfo,
+    cfg: RsMemberConfig?,
+    anchor: (LayoutCoordinates) -> Unit,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    menu: List<MenuEntry>,
+) {
     val tone = when (m.state) {
         "PRIMARY" -> StatusTone.Good
         "SECONDARY" -> if ((m.lagSeconds ?: 0) > 10) StatusTone.Warn else StatusTone.Neutral
         "ARBITER" -> StatusTone.Neutral
         else -> StatusTone.Bad
     }
-    Node(anchor) {
+    Node(anchor, selected = selected, onSelect = onSelect, menu = menu) {
         NodeTitle(m.state.lowercase(), tone)
         HostLine(m.name)
         val detail = buildList {
             m.lagSeconds?.takeIf { m.state == "SECONDARY" }?.let { add("lag ${it}s") }
             m.pingMs?.let { add("$it ms") }
-            if (m.votes == 0 && m.state != "ARBITER") add("non-voting")
         }
         if (detail.isNotEmpty()) Small(detail.joinToString(" · "))
+        val flags = buildList {
+            if (cfg?.hidden == true) add("hidden" to Color(0xFFFACC15))
+            if ((cfg?.secondaryDelaySecs ?: 0) > 0) add("delayed" to Color(0xFF60A5FA))
+            if (cfg != null && cfg.votes == 0 && !cfg.arbiterOnly) add("non-voting" to Color(0xFFF87171))
+        }
+        if (flags.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                flags.forEach { (t, c) -> FlagBadge(t, c) }
+            }
+        }
+    }
+}
+
+/* ============================== detail strip ============================== */
+
+@Composable
+private fun DetailStrip(p: Payload) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        when (p) {
+            is Payload.Member -> {
+                KV("state", p.m.state)
+                KV("host", p.m.name)
+                KV("uptime", formatUptime(p.m.uptime))
+                p.m.pingMs?.let { KV("ping", "$it ms") }
+                p.m.lagSeconds?.let { KV("lag", "${it}s") }
+                KV("priority", formatPriority(p.cfg?.priority ?: p.m.priority))
+                KV("votes", "${p.cfg?.votes ?: p.m.votes}")
+                p.cfg?.let { c ->
+                    if (c.hidden) KV("hidden", "yes")
+                    if (c.secondaryDelaySecs > 0) KV("delay", "${c.secondaryDelaySecs}s")
+                    if (c.tags.isNotEmpty()) KV("tags", c.tags.entries.joinToString { "${it.key}=${it.value}" })
+                }
+            }
+            is Payload.Router -> {
+                KV("role", "mongos router")
+                KV("host", p.r.host)
+                p.r.version?.let { KV("version", it) }
+                KV("last ping", p.r.lastPingAgeSecs?.let { formatAge(it) } ?: "unknown")
+            }
+            is Payload.Shard -> {
+                KV("shard", p.s.name)
+                p.s.rsName?.let { KV("replica set", it) }
+                KV("members", "${p.s.hosts.size}")
+                KV("hosts", p.s.hosts.joinToString(", "))
+                if (p.s.draining) KV("status", "draining")
+            }
+            is Payload.ConfigSvr -> {
+                KV("role", "config server replica set (CSRS)")
+                p.rsName?.let { KV("replica set", it) }
+                KV("hosts", p.hosts.joinToString(", "))
+            }
+            is Payload.Single -> {
+                KV("role", "standalone mongod")
+                p.endpoint?.let { KV("host", it) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun KV(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            label.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(value, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -181,16 +423,12 @@ private fun MemberNode(m: MemberInfo, anchor: (LayoutCoordinates) -> Unit) {
 private enum class LinkStyle { Solid, Dashed }
 private enum class StatusTone { Good, Warn, Bad, Neutral }
 
-/**
- * Hosts the node rows and draws source→bus→target wires behind them. [sources]
- * hang from the top row, [targets] from the rows below; the bus sits in the gap
- * between the lowest source and the highest target.
- */
 @Composable
 private fun DiagramSurface(
     sources: List<String>,
     targets: List<Pair<String, LinkStyle>>,
     linkTone: (String) -> StatusTone = { StatusTone.Neutral },
+    arrowsToTargets: Boolean = false,
     content: @Composable ((String) -> (LayoutCoordinates) -> Unit) -> Unit,
 ) {
     val bounds = remember { mutableStateMapOf<String, Rect>() }
@@ -204,9 +442,9 @@ private fun DiagramSurface(
         StatusTone.Neutral to neutral,
     )
 
-    Box(modifier = Modifier.fillMaxWidth().onGloballyPositioned { root = it }) {
+    Box(modifier = Modifier.onGloballyPositioned { root = it }) {
         Canvas(modifier = Modifier.matchParentSize()) {
-            drawWires(bounds, sources, targets, linkTone, toneColors, neutral)
+            drawWires(bounds, sources, targets, linkTone, toneColors, neutral, arrowsToTargets)
         }
         content { key ->
             { coords ->
@@ -225,6 +463,7 @@ private fun DrawScope.drawWires(
     linkTone: (String) -> StatusTone,
     toneColors: Map<StatusTone, Color>,
     busColor: Color,
+    arrowsToTargets: Boolean,
 ) {
     val srcRects = sources.mapNotNull { bounds[it] }
     val tgtRects = targets.mapNotNull { (k, _) -> bounds[k] }
@@ -233,8 +472,6 @@ private fun DrawScope.drawWires(
     val stroke = 1.5.dp.toPx()
     val dash = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))
 
-    // The bus lives in the whitespace between the source block and target block;
-    // with no sources it hugs the targets so stubs stay short.
     val srcBottom = srcRects.maxOfOrNull { it.bottom }
     val tgtTop = tgtRects.minOf { it.top }
     val busY = if (srcBottom != null) (srcBottom + tgtTop) / 2f else tgtTop - 16.dp.toPx()
@@ -251,13 +488,27 @@ private fun DrawScope.drawWires(
     }
     targets.forEach { (key, style) ->
         val r = bounds[key] ?: return@forEach
+        val color = toneColors[linkTone(key)] ?: busColor
         drawLine(
-            color = toneColors[linkTone(key)] ?: busColor,
+            color = color,
             start = Offset(r.center.x, busY),
             end = Offset(r.center.x, r.top),
             strokeWidth = stroke,
             pathEffect = if (style == LinkStyle.Dashed) dash else null,
         )
+        if (arrowsToTargets) {
+            val w = 4.dp.toPx()
+            val h = 6.dp.toPx()
+            drawPath(
+                Path().apply {
+                    moveTo(r.center.x, r.top)
+                    lineTo(r.center.x - w, r.top - h)
+                    lineTo(r.center.x + w, r.top - h)
+                    close()
+                },
+                color,
+            )
+        }
     }
 }
 
@@ -275,23 +526,65 @@ private fun NodeRow(content: @Composable RowScope.() -> Unit) {
 @Composable
 private fun Node(
     anchor: (LayoutCoordinates) -> Unit,
+    selected: Boolean = false,
+    onSelect: (() -> Unit)? = null,
+    menu: List<MenuEntry> = emptyList(),
     tinted: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .onGloballyPositioned(anchor)
-            .background(
-                if (tinted) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                else MaterialTheme.colorScheme.surface,
-                RoundedCornerShape(10.dp),
-            )
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
-            .padding(horizontal = 14.dp, vertical = 10.dp)
-            .widthIn(min = 130.dp, max = 240.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp),
-        content = content,
-    )
+    var menuOpen by remember { mutableStateOf(false) }
+    val borderColor =
+        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+    Box {
+        Column(
+            modifier = Modifier
+                .onGloballyPositioned(anchor)
+                .background(
+                    if (tinted) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    else MaterialTheme.colorScheme.surface,
+                    RoundedCornerShape(10.dp),
+                )
+                .border(if (selected) 1.5.dp else 1.dp, borderColor, RoundedCornerShape(10.dp))
+                .then(if (onSelect != null) Modifier.clickable(onClick = onSelect) else Modifier)
+                .padding(start = 14.dp, end = if (menu.isEmpty()) 14.dp else 6.dp, top = 10.dp, bottom = 10.dp)
+                .widthIn(min = 130.dp, max = 250.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            if (menu.isEmpty()) {
+                content()
+            } else {
+                Row(verticalAlignment = Alignment.Top) {
+                    Column(
+                        modifier = Modifier.weight(1f, fill = false),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) { content() }
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "Node actions",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clickable { menuOpen = true },
+                    )
+                }
+            }
+        }
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            menu.forEach { entry ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            entry.label,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (entry.danger) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurface,
+                        )
+                    },
+                    onClick = { menuOpen = false; entry.onClick() },
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -340,9 +633,31 @@ private fun Small(text: String) {
     )
 }
 
+@Composable
+private fun FlagBadge(text: String, color: Color) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = color,
+        modifier = Modifier
+            .background(color.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
+}
+
 private fun formatAge(seconds: Long): String = when {
     seconds < 60 -> "${seconds}s ago"
     seconds < 3600 -> "${seconds / 60}m ago"
     seconds < 86400 -> "${seconds / 3600}h ago"
     else -> "${seconds / 86400}d ago"
+}
+
+private fun formatPriority(p: Double): String =
+    if (p == p.toLong().toDouble()) "${p.toLong()}" else "$p"
+
+private fun formatUptime(seconds: Long): String = when {
+    seconds < 60 -> "${seconds}s"
+    seconds < 3600 -> "${seconds / 60}m"
+    seconds < 86400 -> "${seconds / 3600}h"
+    else -> "${seconds / 86400}d"
 }

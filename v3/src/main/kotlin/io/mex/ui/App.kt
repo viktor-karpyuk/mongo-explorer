@@ -109,7 +109,8 @@ fun App(ctx: AppContext) {
                                 ProvisionHost(ctx, provisionUi, k8sUi, connectionsVm, selection)
                             Selection.Compare -> CompareView(ctx, registry)
                             Selection.Settings -> SettingsView(ctx, prefs)
-                            is Selection.ConnectionView -> ConnectionPanel(ctx, s.connectionId, registry)
+                            is Selection.ConnectionView ->
+                                ConnectionPanel(ctx, s.connectionId, registry, connectionsVm, selection)
                             is Selection.Database -> DbStatsPanel(s.connectionId, s.db, registry)
                             is Selection.Collection -> CollPanel(
                                 ctx = ctx,
