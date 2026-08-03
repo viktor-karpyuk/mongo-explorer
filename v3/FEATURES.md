@@ -54,6 +54,7 @@ minus heavy auth methods. ~80 features.
 - [x] Per-row Delete
 
 ## 7. Cluster ops
+- [x] Topology diagram — routers → config servers/shards (sharded), primary → members (replica set), wire colour/dash by health and role; balancer state
 - [x] Topology member cards (state / lag / ping)
 - [x] 0–100 health pill
 - [x] rs.conf() viewer

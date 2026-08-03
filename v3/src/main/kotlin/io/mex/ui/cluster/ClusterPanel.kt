@@ -92,6 +92,27 @@ fun ClusterPanel(connectionId: String, registry: MongoRegistry, readOnly: Boolea
                 }
             }
 
+            Text("Topology", style = MaterialTheme.typography.titleMedium)
+            Card(border = CardDefaults.outlinedCardBorder()) {
+                // Centered when the diagram fits, horizontally scrollable when it doesn't.
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
+                        ClusterTopologyDiagram(s)
+                    }
+                }
+                s.sharded?.balancerEnabled?.let { on ->
+                    Text(
+                        if (on) "balancer enabled" else "balancer disabled",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (on) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFFACC15),
+                        modifier = Modifier.padding(start = 20.dp, bottom = 12.dp),
+                    )
+                }
+            }
+
             if (s.topology.type == "replicaset") {
                 ReplicationSection(connectionId, registry)
             }
