@@ -67,6 +67,17 @@ fun resumeFilter(lastIdEjson: String?): Document {
     return Document("\$expr", Document("\$gt", listOf("\$_id", id)))
 }
 
+/**
+ * Explicit lower index bound to pair with [resumeFilter]. MongoDB 5.0+ derives tight
+ * `_id` bounds from the `$expr` itself, but 4.4 plans it as a full index scan with a
+ * residual filter — a resume at 90% of a 100M-doc collection re-fetched 90M documents.
+ * `min` is inclusive; the strict `$gt` in the filter drops the boundary doc itself.
+ */
+fun resumeMinBound(lastIdEjson: String?): Document? =
+    lastIdEjson
+        ?.let { runCatching { Document.parse(it)["_id"] }.getOrNull() }
+        ?.let { Document("_id", it) }
+
 data class BatchOutcome(val inserted: Int, val skipped: Int, val errors: Int, val samples: List<String>)
 
 /**
@@ -198,8 +209,10 @@ fun verifyNamespace(
     errorSamples: List<String>,
     indexesEnabled: Boolean,
 ): NsReport {
-    val s = source.getDatabase(ns.db).getCollection(ns.coll).countDocuments()
-    val t = target.getDatabase(ns.db).getCollection(ns.coll).countDocuments()
+    // Bounded: an unindexed exact count on a huge collection must not hang verification.
+    val countOpts = com.mongodb.client.model.CountOptions().maxTime(120, java.util.concurrent.TimeUnit.SECONDS)
+    val s = source.getDatabase(ns.db).getCollection(ns.coll).countDocuments(Document(), countOpts)
+    val t = target.getDatabase(ns.db).getCollection(ns.coll).countDocuments(Document(), countOpts)
     val countOk = when (policy) {
         ConflictPolicy.abort, ConflictPolicy.drop -> t == s
         ConflictPolicy.append -> t + skipped >= s
@@ -225,8 +238,15 @@ class MigrationRunner(
 
     fun isRunning(jobId: String): Boolean = active.containsKey(jobId)
 
-    fun pause(jobId: String) { active[jobId] = true }
-    fun cancel(jobId: String) { cancels[jobId] = true; active[jobId] = true }
+    // computeIfPresent: a click landing just after runLoop's cleanup used to insert a
+    // fresh entry that start() then treated as "already running" — forever.
+    fun pause(jobId: String) {
+        active.computeIfPresent(jobId) { _, _ -> true }
+    }
+
+    fun cancel(jobId: String) {
+        if (active.computeIfPresent(jobId) { _, _ -> true } != null) cancels[jobId] = true
+    }
 
     /** Clears the checkpoint so a resumable job starts over from the first namespace. */
     fun restart(jobId: String) {
@@ -333,25 +353,35 @@ class MigrationRunner(
                 }
 
                 val docLimit = spec.batchSize.coerceIn(1, 100_000)
-                val cursor = src.find(resumeFilter(cp.lastIdEjson)).sort(Document("_id", 1))
-                for (doc in cursor) {
-                    if (cancels[job.id] == true) throw CancelledException()
-                    if (active[job.id] == true) {
-                        flush()
-                        ctx.migrations.setStatus(job.id, MigrationStatus.paused)
-                        _progress.emit(
-                            progressOf(job.id, MigrationStatus.paused, ns, cp, estimated, MigrationPhase.copy,
-                                startedAt, copiedThisRun, namespaces.size),
-                        )
-                        return
+                var find = src.find(resumeFilter(cp.lastIdEjson)).sort(Document("_id", 1))
+                resumeMinBound(cp.lastIdEjson)?.let { bound ->
+                    find = find.hint(Document("_id", 1)).min(bound)
+                }
+                // Explicit cursor + use: pause's return and cancel's throw exited the loop
+                // without closing, stacking abandoned server-side cursors on the source.
+                find.cursor().use { cursor ->
+                    for (doc in cursor) {
+                        if (cancels[job.id] == true) throw CancelledException()
+                        if (active[job.id] == true) {
+                            flush()
+                            ctx.migrations.setStatus(job.id, MigrationStatus.paused)
+                            _progress.emit(
+                                progressOf(job.id, MigrationStatus.paused, ns, cp, estimated, MigrationPhase.copy,
+                                    startedAt, copiedThisRun, namespaces.size),
+                            )
+                            return
+                        }
+                        batch.add(doc)
+                        batchBytes += doc.byteBuffer.remaining()
+                        if (batch.size >= docLimit || batchBytes >= BATCH_BYTES) flush()
                     }
-                    batch.add(doc)
-                    batchBytes += doc.byteBuffer.remaining()
-                    if (batch.size >= docLimit || batchBytes >= BATCH_BYTES) flush()
                 }
                 flush()
 
-                // Post-copy phases for this namespace: indexes, then verification.
+                // Post-copy phases for this namespace: indexes, then verification. Cancel
+                // is honoured between phases — index builds and counts can run for
+                // minutes, and the flags were only polled inside the document loop.
+                if (cancels[job.id] == true) throw CancelledException()
                 var indexesCopied = 0
                 var missingIndexes = emptyList<String>()
                 if (spec.copyIndexes) {
@@ -364,6 +394,7 @@ class MigrationRunner(
                     missingIndexes = outcome.failures
                 }
 
+                if (cancels[job.id] == true) throw CancelledException()
                 val row = if (spec.verify) {
                     _progress.emit(
                         progressOf(job.id, MigrationStatus.running, ns, cp, estimated, MigrationPhase.verify,

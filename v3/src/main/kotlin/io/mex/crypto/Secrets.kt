@@ -28,7 +28,15 @@ object Secrets {
         Files.createDirectories(keyPath.parent)
         val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
         val raw = key.encoded
-        Files.write(keyPath, raw, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+        // Create the file already-restricted, then write — writing first left the key
+        // world-readable for the window before the chmod (and chmod can silently fail).
+        runCatching {
+            Files.createFile(
+                keyPath,
+                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")),
+            )
+        }.getOrElse { Files.createFile(keyPath) } // non-POSIX fallback (Windows)
+        Files.write(keyPath, raw, StandardOpenOption.WRITE)
         runCatching {
             Files.setPosixFilePermissions(keyPath, PosixFilePermissions.fromString("rw-------"))
         }

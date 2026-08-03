@@ -28,46 +28,70 @@ data class ImportResult(
 
 private const val BATCH = 1000
 
+/**
+ * Streaming: documents are parsed and inserted in [BATCH]-sized windows. The previous
+ * implementation materialised the whole file *and* every parsed Document before the
+ * first insert — a 1 GB NDJSON file needed several GB of heap and OOM'd; the working
+ * set is now one batch.
+ */
 fun runImport(client: MongoClient, req: ImportRequest): ImportResult {
     val t0 = System.nanoTime()
     return runCatching {
-        val docs = readDocs(req)
+        val coll = client.getDatabase(req.db).getCollection(req.collection)
+        var read = 0
         var inserted = 0
-        if (!req.dryRun && docs.isNotEmpty()) {
-            val coll = client.getDatabase(req.db).getCollection(req.collection)
-            docs.chunked(BATCH).forEach { batch ->
+        val batch = ArrayList<Document>(BATCH)
+        fun flush() {
+            if (batch.isEmpty()) return
+            if (!req.dryRun) {
                 val r = coll.insertMany(batch, InsertManyOptions().ordered(req.ordered))
                 inserted += r.insertedIds.size
             }
+            batch.clear()
         }
-        ImportResult(ok = true, read = docs.size, inserted = inserted, durationMs = (System.nanoTime() - t0) / 1_000_000)
+        forEachDoc(req) { doc ->
+            read++
+            batch += doc
+            if (batch.size >= BATCH) flush()
+        }
+        flush()
+        ImportResult(ok = true, read = read, inserted = inserted, durationMs = (System.nanoTime() - t0) / 1_000_000)
     }.getOrElse {
         ImportResult(ok = false, error = it.message, durationMs = (System.nanoTime() - t0) / 1_000_000)
     }
 }
 
-private fun readDocs(req: ImportRequest): List<Document> = when (req.format) {
-    ImportFormat.ndjson ->
-        Files.readAllLines(req.source).filter { it.isNotBlank() }
-            .map { Document.parse(expandShellSyntax(it)) }
-    ImportFormat.json -> {
-        val text = Files.readString(req.source).trim()
-        require(text.startsWith("[")) { "Top-level JSON must be an array." }
-        @Suppress("UNCHECKED_CAST")
-        val parsed = Document.parse("""{"_": $text}""")["_"] as List<Document>
-        parsed
-    }
-    ImportFormat.csv -> {
-        val lines = Files.readAllLines(req.source).filter { it.isNotBlank() }
-        if (lines.size < 2) emptyList() else {
-            val headers = parseCsvLine(lines[0])
-            lines.drop(1).map { line ->
-                val cells = parseCsvLine(line)
-                Document().apply {
-                    headers.forEachIndexed { i, h -> this[h] = cells.getOrNull(i) ?: "" }
+private fun forEachDoc(req: ImportRequest, emit: (Document) -> Unit) {
+    when (req.format) {
+        ImportFormat.ndjson ->
+            Files.newBufferedReader(req.source).useLines { lines ->
+                lines.filter { it.isNotBlank() }.forEach { emit(Document.parse(expandShellSyntax(it))) }
+            }
+        ImportFormat.json ->
+            // Incremental EJSON array reader — no whole-file string, no wrapper document.
+            Files.newBufferedReader(req.source).use { r ->
+                val reader = org.bson.json.JsonReader(r)
+                val codec = org.bson.codecs.DocumentCodec()
+                val ctx = org.bson.codecs.DecoderContext.builder().build()
+                reader.readStartArray()
+                while (reader.readBsonType() != org.bson.BsonType.END_OF_DOCUMENT) {
+                    emit(codec.decode(reader, ctx))
+                }
+                reader.readEndArray()
+            }
+        ImportFormat.csv ->
+            Files.newBufferedReader(req.source).useLines { lines ->
+                var headers: List<String>? = null
+                lines.filter { it.isNotBlank() }.forEach { line ->
+                    val h = headers
+                    if (h == null) {
+                        headers = parseCsvLine(line)
+                    } else {
+                        val cells = parseCsvLine(line)
+                        emit(Document().apply { h.forEachIndexed { i, k -> this[k] = cells.getOrNull(i) ?: "" } })
+                    }
                 }
             }
-        }
     }
 }
 

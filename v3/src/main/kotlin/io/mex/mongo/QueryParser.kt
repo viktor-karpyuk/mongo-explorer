@@ -40,7 +40,12 @@ fun expandShellSyntax(input: String): String {
         """{ "${'$'}timestamp": { "t": ${it.groupValues[1]}, "i": ${it.groupValues[2]} } }"""
     }
     s = UUID_CTOR.replace(s) {
-        """{ "${'$'}binary": { "base64": "${it.groupValues[1]}", "subType": "04" } }"""
+        // mongosh writes UUIDs as hyphenated hex; EJSON $binary wants the 16 raw bytes
+        // base64-encoded — passing the hex through verbatim made Document.parse throw.
+        val hex = it.groupValues[1].replace("-", "")
+        val bytes = ByteArray(16) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+        val b64 = java.util.Base64.getEncoder().encodeToString(bytes)
+        """{ "${'$'}binary": { "base64": "$b64", "subType": "04" } }"""
     }
     return s
 }

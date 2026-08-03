@@ -50,7 +50,10 @@ fun exportFind(client: MongoClient, req: ExportRequest): ExportResult {
             var headers: List<String>? = null
             if (req.format == ExportFormat.json) out.write("[\n")
 
-            for (doc in cursor) {
+            // Explicit cursor + use: a write failure (disk full) otherwise leaked the
+            // server-side cursor until its timeout.
+            cursor.cursor().use { cur ->
+                for (doc in cur) {
                 when (req.format) {
                     ExportFormat.ndjson -> { out.write(doc.toJson(EJSON)); out.write("\n") }
                     ExportFormat.json -> {
@@ -68,6 +71,7 @@ fun exportFind(client: MongoClient, req: ExportRequest): ExportResult {
                     }
                 }
                 written++
+                }
             }
             if (req.format == ExportFormat.json) out.write("\n]\n")
             ExportResult(ok = true, written = written, durationMs = (System.nanoTime() - t0) / 1_000_000)

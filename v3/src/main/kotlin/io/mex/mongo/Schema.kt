@@ -34,7 +34,9 @@ private class Stat {
 fun analyzeSchema(client: MongoClient, db: String, coll: String, sampleSize: Int = 1000): SchemaReport {
     val collection = client.getDatabase(db).getCollection(coll)
     val total = collection.estimatedDocumentCount()
-    val sz = minOf(sampleSize, maxOf(total.toInt(), 1))
+    // Compare as Long first: total.toInt() wraps negative past 2^31 docs, which collapsed
+    // the sample to a single document on exactly the collections that matter.
+    val sz = minOf(sampleSize.toLong(), maxOf(total, 1L)).toInt()
     val docs = collection.aggregate(listOf(Document("\$sample", Document("size", sz)))).toList()
     val stats = HashMap<String, Stat>()
     for (doc in docs) walk(doc, "", stats)

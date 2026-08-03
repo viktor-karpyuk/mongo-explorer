@@ -21,13 +21,27 @@ private val EJSON_SETTINGS: JsonWriterSettings = JsonWriterSettings.builder()
     .outputMode(JsonMode.EXTENDED)
     .build()
 
+/**
+ * Stage bodies are not always objects: `$limit: 10`, `$count: "total"`, `$unwind: "$tags"`
+ * are scalars — forcing Document.parse on them broke 4 of the 10 shipped templates.
+ */
+internal fun parseStageBody(body: String): Any? {
+    val trimmed = body.trim()
+    require(trimmed.isNotEmpty()) { "Stage body is empty" }
+    return if (trimmed.startsWith("{")) {
+        parseDocument(trimmed)
+    } else {
+        Document.parse("""{"v": ${expandShellSyntax(trimmed)}}""")["v"]
+    }
+}
+
 fun executeAggregate(client: MongoClient, req: AggregateRequest): FindResult {
     val t0 = System.nanoTime()
     return runCatching {
         val limit = req.limit.coerceAtLeast(1)
         val user = req.pipeline.map { (op, body) ->
             require(op.startsWith("$")) { "Stage operator must start with $: $op" }
-            Document(op, parseDocument(body))
+            Document(op, parseStageBody(body))
         }
         // Paging stages go after the user's pipeline so they window its output.
         val paging = buildList {

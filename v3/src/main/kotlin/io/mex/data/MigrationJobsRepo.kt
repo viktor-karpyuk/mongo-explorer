@@ -12,19 +12,15 @@ class MigrationJobsRepo(private val store: Store) {
     /**
      * Marks jobs that were mid-copy when the app died as failed so they aren't shown as running.
      *
-     * Only `running` is reconciled: `paused` is a deliberate at-rest state whose checkpoint must
-     * survive a restart, and orphaning it used to make the job unresumable from the UI.
+     * Unconditional over `running`: no other process can legitimately own a running job, and
+     * the old 60s-heartbeat guard left a crash-and-quick-relaunch job stuck "running" with no
+     * runner and no working buttons. `paused` stays untouched — it is a deliberate at-rest
+     * state whose checkpoint must survive a restart.
      */
     fun reconcileOrphans() {
         conn.prepareStatement(
-            """
-            UPDATE migration_jobs SET status = 'failed', error = 'interrupted — the app closed while this job was running'
-            WHERE status = 'running' AND heartbeat_at IS NOT NULL AND heartbeat_at < ?
-            """.trimIndent(),
-        ).use { ps ->
-            ps.setLong(1, System.currentTimeMillis() - 60_000)
-            ps.executeUpdate()
-        }
+            "UPDATE migration_jobs SET status = 'failed', error = 'interrupted — the app closed while this job was running' WHERE status = 'running'",
+        ).use { it.executeUpdate() }
     }
 
     fun list(): List<MigrationJob> {

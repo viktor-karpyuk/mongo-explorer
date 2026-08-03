@@ -51,7 +51,7 @@ fun listDatabases(client: MongoClient): List<DatabaseInfo> {
     return dbs.map {
         DatabaseInfo(
             name = it.getString("name"),
-            sizeOnDisk = it.get("sizeOnDisk") as? Long,
+            sizeOnDisk = (it.get("sizeOnDisk") as? Number)?.toLong(),
             empty = it["empty"] as? Boolean,
         )
     }

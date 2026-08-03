@@ -48,9 +48,31 @@ fun findTool(name: String, extraDirs: List<String> = emptyList()): ToolInfo? {
 
 /* ===================== argument builders (pure, tested) ===================== */
 
+/**
+ * Writes the connection URI into an owner-only YAML config consumed via `--config` —
+ * a URI in argv exposes credentials to every local process via `ps` for the whole
+ * dump/restore. Callers delete the file when the tool exits.
+ */
+fun writeToolConfig(uri: String, dir: java.nio.file.Path? = null): java.nio.file.Path {
+    val f = if (dir != null) {
+        java.nio.file.Files.createTempFile(dir, "tool-", ".yaml")
+    } else {
+        java.nio.file.Files.createTempFile("mex-tool-", ".yaml")
+    }
+    runCatching {
+        java.nio.file.Files.setPosixFilePermissions(
+            f,
+            java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"),
+        )
+    }
+    val escaped = uri.replace("\\", "\\\\").replace("\"", "\\\"")
+    java.nio.file.Files.writeString(f, "uri: \"$escaped\"\n")
+    return f
+}
+
 /** `mongodump` invocation for a scope. Layout under [outDir] is one directory per database. */
-fun dumpArgs(uri: String, scope: BackupScope, gzip: Boolean, outDir: String): List<String> = buildList {
-    add("--uri=$uri")
+fun dumpArgs(configPath: String, scope: BackupScope, gzip: Boolean, outDir: String): List<String> = buildList {
+    add("--config=$configPath")
     scope.db?.let { add("--db=$it") }
     scope.coll?.let { add("--collection=$it") }
     if (gzip) add("--gzip")
@@ -70,7 +92,7 @@ fun nsInclude(scope: BackupScope): String? = when {
  * writing. [renameDb] remaps the backup's database onto another name via nsFrom/nsTo.
  */
 fun restoreArgs(
-    uri: String,
+    configPath: String,
     scope: BackupScope,
     dir: String,
     gzip: Boolean,
@@ -78,7 +100,7 @@ fun restoreArgs(
     dryRun: Boolean,
     renameDb: String? = null,
 ): List<String> = buildList {
-    add("--uri=$uri")
+    add("--config=$configPath")
     nsInclude(scope)?.let { add("--nsInclude=$it") }
     if (renameDb != null && scope.db != null) {
         if (scope.coll == null) {

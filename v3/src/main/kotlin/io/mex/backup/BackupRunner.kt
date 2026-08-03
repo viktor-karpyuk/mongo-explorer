@@ -119,12 +119,16 @@ class BackupRunner(private val ctx: AppContext, private val backupsDir: Path) {
             ps.executeUpdate()
         }
 
+        // Credentials go via --config, never argv (world-readable in ps); the file is
+        // removed the moment the tool exits.
+        val config = writeToolConfig(record.uri, dir)
         val proc = ToolProcess(
             binary = tool.path,
-            args = dumpArgs(record.uri, scope, gzip, dir.toString()),
+            args = dumpArgs(config.toString(), scope, gzip, dir.toString()),
             scope = this.scope,
             onLine = { _events.tryEmit(BackupEvent.Log(entry.id, it)) },
             onExit = { code ->
+                runCatching { Files.deleteIfExists(config) }
                 val cancelled = running.remove(entry.id)?.cancelled == true
                 val status = when {
                     cancelled -> BackupStatus.cancelled
@@ -141,11 +145,9 @@ class BackupRunner(private val ctx: AppContext, private val backupsDir: Path) {
             },
         )
         running[entry.id] = proc
-        if (!proc.start()) {
-            running.remove(entry.id)
-            ctx.backups.finish(entry.id, BackupStatus.failed, "could not spawn mongodump")
-            return null
-        }
+        // A spawn failure already finished the row as failed via onExit(127) — a second
+        // finish() here used to overwrite the error and lie to the caller with null.
+        proc.start()
         return entry.id
     }
 

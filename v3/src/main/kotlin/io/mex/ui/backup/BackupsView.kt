@@ -388,8 +388,10 @@ private fun RestoreDialog(
         }
         log = emptyList()
         phase = if (dryRun) "dry" else "restoring"
+        // Credentials via --config, never argv (PRV-SEC doctrine, applied to restores too).
+        val config = io.mex.backup.writeToolConfig(record.uri)
         val args = restoreArgs(
-            uri = record.uri,
+            configPath = config.toString(),
             scope = entry.scope,
             dir = entry.path,
             gzip = entry.gzip,
@@ -403,6 +405,7 @@ private fun RestoreDialog(
             scope = procScope,
             onLine = { line -> log = (log + line).takeLast(LOG_TAIL) },
             onExit = { code ->
+                runCatching { java.nio.file.Files.deleteIfExists(config) }
                 phase = when {
                     dryRun && code == 0 -> "dryOk"
                     dryRun -> "failed"
