@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "io.mex"
-version = "0.1.0-alpha"
+version = "3.4.0-alpha"
 
 repositories {
     mavenCentral()
@@ -64,8 +64,8 @@ compose.desktop {
             // DNS lookups), jdk.crypto.ec (TLS handshakes), jdk.unsupported (Unsafe).
             modules("java.sql", "java.naming", "jdk.crypto.ec", "jdk.unsupported")
             packageName = "Mongo Explorer v3"
-            // Compose Desktop requires MAJOR >= 1 for the installer version.
-            packageVersion = "1.0.0"
+            // Tracks the milestone line (Compose Desktop requires MAJOR >= 1 anyway).
+            packageVersion = "3.4.0"
             description = "Mongo Explorer v3 — Kotlin + Compose Desktop rewrite"
             vendor = "io.mex"
             macOS {
