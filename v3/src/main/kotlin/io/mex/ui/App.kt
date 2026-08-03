@@ -24,7 +24,7 @@ import io.mex.ui.connections.ConnectionsViewModel
 import io.mex.ui.db.DbStatsPanel
 import io.mex.provision.ProvisionRunner
 import io.mex.ui.migration.MigrationsView
-import io.mex.ui.provision.ProvisionView
+import io.mex.ui.provision.ProvisionHost
 import io.mex.ui.query.QueryStore
 import io.mex.ui.settings.SettingsView
 import io.mex.ui.state.NamespacesStore
@@ -45,10 +45,13 @@ fun App(ctx: AppContext) {
     // Reconcile at construction so lab rows tell the truth even before the view is opened.
     val provisioner = remember { ProvisionRunner(ctx, registry).also { it.reconcile() } }
     val provisionUi = remember { io.mex.ui.provision.ProvisionUiState(provisioner) }
+    val deployRunner = remember { io.mex.provision.k8s.DeployRunner(ctx, registry) }
+    val k8sUi = remember { io.mex.ui.provision.k8s.K8sUiState(deployRunner) }
     val prefs = remember { PrefsStore(ctx.prefs) }
     val connectionsVm = remember { ConnectionsViewModel(ctx, registry) }
-    // App-lifetime collector: provision events must survive view switches (PRV-SEC-3).
+    // App-lifetime collectors: provision events must survive view switches (PRV-SEC-3).
     LaunchedEffect(Unit) { provisionUi.bind(connectionsVm) }
+    LaunchedEffect(Unit) { k8sUi.bind(connectionsVm) }
 
     val states by registry.states.collectAsState()
     LaunchedEffect(states) {
@@ -102,7 +105,8 @@ fun App(ctx: AppContext) {
                             Selection.Welcome -> ConnectionsView(ctx, registry, connectionsVm, selection)
                             Selection.Migrations -> MigrationsView(ctx, registry, migrations)
                             Selection.Backups -> BackupsView(ctx, registry, backups)
-                            Selection.Provision -> ProvisionView(ctx, provisionUi, connectionsVm, selection)
+                            Selection.Provision ->
+                                ProvisionHost(ctx, provisionUi, k8sUi, connectionsVm, selection)
                             Selection.Compare -> CompareView(ctx, registry)
                             Selection.Settings -> SettingsView(ctx, prefs)
                             is Selection.ConnectionView -> ConnectionPanel(ctx, s.connectionId, registry)

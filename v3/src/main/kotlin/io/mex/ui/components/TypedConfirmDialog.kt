@@ -42,6 +42,8 @@ fun TypedConfirmDialog(
     onCancel: () -> Unit,
     checkboxLabel: String? = null,
     checkboxDefault: Boolean = true,
+    /** Extra decisions that belong inside the confirmation itself (e.g. PVC release). */
+    extraContent: (@Composable () -> Unit)? = null,
 ) {
     var typed by remember { mutableStateOf("") }
     var checked by remember { mutableStateOf(checkboxDefault) }
@@ -60,6 +62,7 @@ fun TypedConfirmDialog(
         text = {
             Column(modifier = Modifier.width(440.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(consequence, style = MaterialTheme.typography.bodySmall)
+                extraContent?.invoke()
                 if (checkboxLabel != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = checked, onCheckedChange = { checked = it })

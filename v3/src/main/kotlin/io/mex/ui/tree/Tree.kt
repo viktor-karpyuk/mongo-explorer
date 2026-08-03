@@ -82,6 +82,7 @@ fun Tree(
     // a remember key on vm.list goes stale when a lab is destroyed but its connection kept
     // (equal list, different ownership), and the labs table is a trivial indexed read.
     val labConnIds = ctx.labs.connectionIds()
+    val k8sConnIds = ctx.k8sDeployments.connectionIds()
 
     var filter by remember { mutableStateOf("") }
     val current = selection.current
@@ -166,6 +167,7 @@ fun Tree(
                         selected = current is Selection.ConnectionView && current.connectionId == row.conn.id,
                         readOnly = row.conn.readOnly,
                         isLab = row.conn.id in labConnIds,
+                        isK8s = row.conn.id in k8sConnIds,
                         onToggle = { namespaces.toggleConnExpanded(row.conn.id) },
                         onSelect = { selection.select(Selection.ConnectionView(row.conn.id)) },
                         onDisconnect = { scope.launch { vm.close(row.conn.id) } },
@@ -361,6 +363,7 @@ private fun ConnRow(
     selected: Boolean,
     readOnly: Boolean,
     isLab: Boolean,
+    isK8s: Boolean,
     onToggle: () -> Unit,
     onSelect: () -> Unit,
     onDisconnect: () -> Unit,
@@ -402,6 +405,10 @@ private fun ConnRow(
         )
         if (isLab) {
             io.mex.ui.components.LabBadge()
+            Spacer(modifier = Modifier.width(4.dp))
+        }
+        if (isK8s) {
+            io.mex.ui.components.K8sBadge()
             Spacer(modifier = Modifier.width(4.dp))
         }
         if (readOnly) {

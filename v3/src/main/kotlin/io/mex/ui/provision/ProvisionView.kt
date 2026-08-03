@@ -38,6 +38,38 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * Provisioning host: local Docker labs (v3.4) and Kubernetes deployments (v3.5).
+ * Two substrates, one honest split — single-host labs are never labelled production.
+ */
+@Composable
+fun ProvisionHost(
+    ctx: AppContext,
+    ui: ProvisionUiState,
+    k8sUi: io.mex.ui.provision.k8s.K8sUiState,
+    connectionsVm: ConnectionsViewModel,
+    selection: SelectionStore,
+) {
+    var tab by remember { mutableStateOf(0) }
+    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Provision", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        TabRow(selectedTabIndex = tab, modifier = Modifier.fillMaxWidth()) {
+            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Local (Docker)") })
+            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Kubernetes") })
+        }
+        Spacer(modifier = Modifier.height(14.dp))
+        Box(modifier = Modifier.weight(1f)) {
+            when (tab) {
+                0 -> ProvisionView(ctx, ui, connectionsVm, selection)
+                else -> io.mex.ui.provision.k8s.K8sTab(ctx, k8sUi, connectionsVm, selection)
+            }
+        }
+    }
+}
+
 /** Local cluster provisioning — lab list, builder wizard, live pipeline log (PRV-UI-1..8). */
 @Composable
 fun ProvisionView(
@@ -89,19 +121,17 @@ fun ProvisionView(
         showWizard = true
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+    Column(modifier = Modifier.fillMaxSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Provision", style = MaterialTheme.typography.headlineSmall)
-                Text(
-                    dockerInfo.version.substringBefore(","),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            Text(
+                dockerInfo.version.substringBefore(","),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
             Button(onClick = { openWizard(null) }) { Text("+ New lab") }
         }
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         if (labs.isEmpty()) {
             EmptyState(onPreset = ::openWizard)
         }
