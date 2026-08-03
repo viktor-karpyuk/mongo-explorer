@@ -43,7 +43,7 @@ fun CollPanel(
         Box(modifier = Modifier.weight(1f)) {
             when (tab) {
                 CollTab.Query -> QueryView(ctx, registry, connectionId, db, collection, queries)
-                CollTab.Aggregate -> AggregationView(ctx, registry, connectionId, db, collection)
+                CollTab.Aggregate -> AggregationView(ctx, registry, connectionId, db, collection, queries)
                 CollTab.Schema -> SchemaPanel(connectionId, db, collection, registry)
                 CollTab.Indexes -> IndexesPanel(connectionId, db, collection, registry, readOnly)
                 CollTab.Validator -> ValidatorPanel(connectionId, db, collection, registry, readOnly)

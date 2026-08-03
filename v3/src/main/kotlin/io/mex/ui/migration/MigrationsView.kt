@@ -66,15 +66,18 @@ fun MigrationsView(ctx: AppContext, registry: MongoRegistry, runner: MigrationRu
             Button(onClick = { showNew = true }) { Text("+ New migration") }
         }
         Spacer(modifier = Modifier.height(12.dp))
+        // One id→name query per reload — JobRow used to run two full SELECTs per row per
+        // progress event (tens of UI-thread JDBC queries/second during a fast copy).
+        val connNames = remember(jobs) { ctx.connections.list().associate { it.id to it.name } }
         if (jobs.isEmpty()) {
             Text("No migrations yet. Migrate data between two open connections, collection-by-collection.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(jobs) { job ->
+                items(jobs, key = { it.id }) { job ->
                     JobRow(
                         job = job,
                         progress = progress[job.id],
-                        connections = ctx,
+                        names = connNames,
                         onStart = { runner.start(job.id); reload() },
                         onPause = { runner.pause(job.id) },
                         onCancel = { runner.cancel(job.id) },
@@ -138,7 +141,7 @@ fun MigrationsView(ctx: AppContext, registry: MongoRegistry, runner: MigrationRu
 private fun JobRow(
     job: MigrationJob,
     progress: MigrationProgress?,
-    connections: AppContext,
+    names: Map<String, String>,
     onStart: () -> Unit,
     onPause: () -> Unit,
     onCancel: () -> Unit,
@@ -146,8 +149,8 @@ private fun JobRow(
     onDelete: () -> Unit,
     onReport: () -> Unit,
 ) {
-    val sourceName = connections.connections.list().find { it.id == job.spec.sourceId }?.name ?: "?"
-    val targetName = connections.connections.list().find { it.id == job.spec.targetId }?.name ?: "?"
+    val sourceName = names[job.spec.sourceId] ?: "?"
+    val targetName = names[job.spec.targetId] ?: "?"
     val statusColor = when (job.status) {
         MigrationStatus.completed -> Color(0xFF4ADE80)
         MigrationStatus.running -> Color(0xFFFBBF24)
@@ -431,6 +434,12 @@ private fun NewMigrationDialog(
     val preflightStale = preflightResult != null && preflightFor != preflightKey
 
     LaunchedEffect(sourceId) {
+        // A different source invalidates everything loaded/ticked for the old one —
+        // otherwise the tree shows source A's collections under source B and the spec
+        // can name namespaces that don't exist there.
+        colls.clear()
+        selected.clear()
+        dbs = emptyList()
         val client = registry.client(sourceId) ?: return@LaunchedEffect
         dbs = withContext(Dispatchers.IO) { listDatabases(client).map { it.name } }
     }

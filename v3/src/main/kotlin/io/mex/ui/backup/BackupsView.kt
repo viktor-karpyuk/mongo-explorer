@@ -68,22 +68,32 @@ fun BackupsView(ctx: AppContext, registry: MongoRegistry, runner: BackupRunner) 
         }
     }
 
-    val tool = remember { findTool("mongodump") }
+    // Tool discovery spawns `--version` subprocesses — off the UI thread (it blocked the
+    // first composition of this view for hundreds of ms). Pair tracks probe completion so
+    // the "not found" guidance doesn't flash while the probe is still running.
+    val probe by produceState<Pair<Boolean, io.mex.backup.ToolInfo?>>(initialValue = false to null) {
+        value = true to withContext(Dispatchers.IO) { findTool("mongodump") }
+    }
+    val (probed, tool) = probe
 
     Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Backups", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
             Button(onClick = { showNew = true }, enabled = tool != null) { Text("+ New backup") }
         }
-        if (tool == null) {
-            Text(
+        when {
+            !probed -> Text(
+                "Locating mongodump…",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            tool == null -> Text(
                 "mongodump not found — install the MongoDB Database Tools " +
                     "(brew install mongodb-database-tools) and reopen this view.",
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall,
             )
-        } else {
-            Text(
+            else -> Text(
                 tool.version,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -360,14 +370,21 @@ private fun RestoreDialog(
     var phase by remember { mutableStateOf("idle") } // idle | dry | dryOk | confirm | restoring | done | failed
     val procScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
     var proc by remember { mutableStateOf<ToolProcess?>(null) }
-    DisposableEffect(Unit) { onDispose { proc?.cancel() } }
+    // Cancel the scope too — each opened dialog leaked its SupervisorJob otherwise.
+    DisposableEffect(Unit) {
+        onDispose {
+            proc?.cancel()
+            procScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+        }
+    }
 
-    fun run(dryRun: Boolean) {
-        val record = ctx.connections.get(targetId) ?: return
+    fun run(dryRun: Boolean) = procScope.launch {
+        // findTool spawns --version probes; keep the click handler off the UI thread.
+        val record = ctx.connections.get(targetId) ?: return@launch
         val tool = findTool("mongorestore") ?: run {
             log = log + "mongorestore not found — install the MongoDB Database Tools."
             phase = "failed"
-            return
+            return@launch
         }
         log = emptyList()
         phase = if (dryRun) "dry" else "restoring"

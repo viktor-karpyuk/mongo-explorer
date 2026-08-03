@@ -3,7 +3,7 @@ package io.mex.ui.shell
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -22,15 +22,35 @@ import io.mex.AppContext
 import io.mex.shell.MongoShellSession
 import io.mex.shell.ShellEvent
 
+private const val SHELL_MAX_LINES = 4000
+
 @Composable
 fun ShellPanel(ctx: AppContext, connectionId: String, readOnly: Boolean = false) {
     var session by remember(connectionId) { mutableStateOf<MongoShellSession?>(null) }
-    var output by remember(connectionId) { mutableStateOf("") }
+    // Output is kept as a capped line list, not one growing String — `db.big.find()`
+    // spewing megabytes made every 2KB chunk re-allocate and re-layout the full history.
+    val lines = remember(connectionId) { mutableStateListOf<String>() }
+    var tail by remember(connectionId) { mutableStateOf("") } // unterminated last line
     var input by remember(connectionId) { mutableStateOf("") }
     val history = remember(connectionId) { mutableStateListOf<String>() }
     var historyCursor by remember(connectionId) { mutableStateOf(-1) }
-    val scrollState = rememberScrollState()
+    val listState = rememberLazyListState()
     val clipboard = LocalClipboardManager.current
+    val hasOutput = lines.isNotEmpty() || tail.isNotEmpty()
+
+    fun append(text: String) {
+        val parts = (tail + text).split("\n")
+        tail = parts.last()
+        if (parts.size > 1) {
+            lines.addAll(parts.dropLast(1))
+            if (lines.size > SHELL_MAX_LINES) lines.removeRange(0, lines.size - SHELL_MAX_LINES)
+        }
+    }
+
+    fun clear() {
+        lines.clear()
+        tail = ""
+    }
 
     DisposableEffect(connectionId) { onDispose { session?.close() } }
 
@@ -38,27 +58,31 @@ fun ShellPanel(ctx: AppContext, connectionId: String, readOnly: Boolean = false)
         val s = session ?: return@LaunchedEffect
         s.events.collect { ev ->
             when (ev) {
-                is ShellEvent.Output -> output += ev.text
+                is ShellEvent.Output -> append(ev.text)
                 is ShellEvent.Exit -> {
-                    output += "\n[mongosh exited with code ${ev.code}]\n"
+                    append("\n[mongosh exited with code ${ev.code}]\n")
                     session = null
                 }
             }
         }
     }
-    LaunchedEffect(output) { scrollState.scrollTo(scrollState.maxValue) }
+    LaunchedEffect(lines.size, tail) {
+        if (lines.isNotEmpty()) listState.scrollToItem(lines.size) // tail row sits at index size
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Shell", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            if (output.isNotEmpty()) {
-                TextButton(onClick = { clipboard.setText(AnnotatedString(output)) }) { Text("Copy output") }
-                TextButton(onClick = { output = "" }) { Text("Clear") }
+            if (hasOutput) {
+                TextButton(onClick = {
+                    clipboard.setText(AnnotatedString((lines + tail).joinToString("\n").trimEnd()))
+                }) { Text("Copy output") }
+                TextButton(onClick = { clear() }) { Text("Clear") }
             }
             if (session == null) {
                 Button(onClick = {
                     val record = ctx.connections.get(connectionId) ?: return@Button
-                    output = ""
+                    clear()
                     val s = MongoShellSession(record.uri)
                     if (s.start()) session = s
                 }) { Text("Start mongosh") }
@@ -90,19 +114,45 @@ fun ShellPanel(ctx: AppContext, connectionId: String, readOnly: Boolean = false)
             modifier = Modifier.fillMaxWidth().weight(1f),
         ) {
             Box {
-                // Selectable so mongosh output can actually be copied out of the pane.
+                // Selectable so mongosh output can actually be copied out of the pane;
+                // virtualized so multi-MB result dumps don't re-layout as one giant Text.
                 SelectionContainer {
-                    Column(modifier = Modifier.fillMaxSize().padding(10.dp).verticalScroll(scrollState)) {
-                        Text(
-                            output.ifEmpty { "(no output yet — start a session)" },
-                            color = Color(0xFFD4D7DF),
-                            fontFamily = FontFamily.Monospace,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                    androidx.compose.foundation.lazy.LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize().padding(10.dp),
+                    ) {
+                        if (!hasOutput) {
+                            item {
+                                Text(
+                                    "(no output yet — start a session)",
+                                    color = Color(0xFFD4D7DF),
+                                    fontFamily = FontFamily.Monospace,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                        items(lines.size, key = { it }) { i ->
+                            Text(
+                                lines[i],
+                                color = Color(0xFFD4D7DF),
+                                fontFamily = FontFamily.Monospace,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        if (tail.isNotEmpty()) {
+                            item(key = "tail") {
+                                Text(
+                                    tail,
+                                    color = Color(0xFFD4D7DF),
+                                    fontFamily = FontFamily.Monospace,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
                     }
                 }
                 VerticalScrollbar(
-                    adapter = rememberScrollbarAdapter(scrollState),
+                    adapter = rememberScrollbarAdapter(listState),
                     modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
                 )
             }
@@ -117,7 +167,7 @@ fun ShellPanel(ctx: AppContext, connectionId: String, readOnly: Boolean = false)
                 when {
                     e.key == Key.Enter && !e.isShiftPressed -> {
                         if (input.isNotBlank() && session != null) {
-                            output += "> $input\n"
+                            append("> $input\n")
                             history.add(0, input); if (history.size > 100) history.removeAt(history.size - 1)
                             historyCursor = -1
                             session!!.send(input)

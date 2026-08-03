@@ -48,6 +48,13 @@ fun CompareView(ctx: AppContext, registry: MongoRegistry) {
     var comparing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var selectedNs by remember { mutableStateOf<CollectionDiff?>(null) }
+    // Changing either picker invalidates the displayed diff — keeping the old list while
+    // the detail pane samples the NEW pair showed two different comparisons at once.
+    LaunchedEffect(leftId, rightId) {
+        collections = emptyList()
+        selectedNs = null
+        error = null
+    }
     val scope = rememberCoroutineScope()
 
     fun compareCollections() {
@@ -219,11 +226,11 @@ private fun SideMark(side: DiffSide) {
 
 @Composable
 private fun NamespaceDetail(registry: MongoRegistry, leftId: String, rightId: String, ns: CollectionDiff) {
-    var comparison by remember(ns) { mutableStateOf<NamespaceComparison?>(null) }
-    var loading by remember(ns) { mutableStateOf(true) }
-    var error by remember(ns) { mutableStateOf<String?>(null) }
+    var comparison by remember(leftId, rightId, ns) { mutableStateOf<NamespaceComparison?>(null) }
+    var loading by remember(leftId, rightId, ns) { mutableStateOf(true) }
+    var error by remember(leftId, rightId, ns) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(ns) {
+    LaunchedEffect(leftId, rightId, ns) {
         val l = registry.client(leftId) ?: return@LaunchedEffect
         val r = registry.client(rightId) ?: return@LaunchedEffect
         loading = true

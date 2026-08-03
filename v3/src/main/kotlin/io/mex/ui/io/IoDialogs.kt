@@ -39,7 +39,7 @@ fun ExportDialog(
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    Dialog(onDismissRequest = onClose) {
+    Dialog(onDismissRequest = { if (!busy) onClose() }) {
         Surface(modifier = Modifier.width(520.dp), shape = MaterialTheme.shapes.medium, tonalElevation = 6.dp) {
             Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Export · $db.$collection", style = MaterialTheme.typography.titleMedium)
@@ -122,7 +122,7 @@ fun ImportDialog(
         }
     }
 
-    Dialog(onDismissRequest = onClose) {
+    Dialog(onDismissRequest = { if (!busy) onClose() }) {
         Surface(modifier = Modifier.width(520.dp), shape = MaterialTheme.shapes.medium, tonalElevation = 6.dp) {
             Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Import into $db.$collection", style = MaterialTheme.typography.titleMedium)

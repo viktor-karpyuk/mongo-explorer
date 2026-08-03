@@ -32,14 +32,30 @@ class QueryDraft {
     var maxTimeMs by mutableStateOf(30_000L)
 }
 
+/**
+ * Aggregation editor state, hoisted app-wide like [QueryDraft] — as view-local
+ * `remember`s, peeking at Schema/Indexes destroyed the pipeline being authored.
+ */
+class AggregationDraft {
+    val stages = androidx.compose.runtime.mutableStateListOf(io.mex.mongo.StageDraft())
+    var limit by mutableStateOf(50)
+    var maxTimeMs by mutableStateOf(60_000L)
+    var result by mutableStateOf<FindResult?>(null)
+    var running by mutableStateOf(false)
+    var skip by mutableStateOf(0)
+    var lastUpTo by mutableStateOf(-1)
+}
+
 class QueryStore(private val ctx: AppContext, private val registry: MongoRegistry) {
     private val drafts = mutableStateMapOf<String, QueryDraft>()
+    private val aggregations = mutableStateMapOf<String, AggregationDraft>()
     private val results = mutableStateMapOf<String, FindResult>()
     private val running = mutableStateMapOf<String, Boolean>()
     private val totals = mutableStateMapOf<String, Long>()
     private val schemas = mutableStateMapOf<String, List<SchemaField>>()
 
     fun draft(key: String): QueryDraft = drafts.getOrPut(key) { QueryDraft() }
+    fun aggregation(key: String): AggregationDraft = aggregations.getOrPut(key) { AggregationDraft() }
     fun result(key: String): FindResult? = results[key]
     fun running(key: String): Boolean = running[key] == true
     fun total(key: String): Long? = totals[key]
@@ -101,24 +117,28 @@ class QueryStore(private val ctx: AppContext, private val registry: MongoRegistr
                 )
             }
             results[key] = res
-            ctx.queryHistory.record(
-                QueryHistoryInput(
-                    connectionId = connectionId,
-                    database = db,
-                    collection = collection,
-                    kind = QueryKind.find,
-                    body = buildJsonObject {
-                        put("filter", d.filter)
-                        put("projection", d.projection)
-                        put("sort", d.sort)
-                        put("skip", d.skip)
-                        put("limit", d.limit)
-                    }.toString(),
-                    durationMs = if (res is FindResult.Ok) res.durationMs else (res as FindResult.Failed).durationMs,
-                    rowCount = if (res is FindResult.Ok) res.rows.size else null,
-                    error = if (res is FindResult.Failed) res.error else null,
-                ),
-            )
+            // JDBC INSERT + trim DELETE — keep it off the main dispatcher (it ran there
+            // after the find's withContext block ended, adding jank to every Run).
+            withContext(Dispatchers.IO) {
+                ctx.queryHistory.record(
+                    QueryHistoryInput(
+                        connectionId = connectionId,
+                        database = db,
+                        collection = collection,
+                        kind = QueryKind.find,
+                        body = buildJsonObject {
+                            put("filter", d.filter)
+                            put("projection", d.projection)
+                            put("sort", d.sort)
+                            put("skip", d.skip)
+                            put("limit", d.limit)
+                        }.toString(),
+                        durationMs = if (res is FindResult.Ok) res.durationMs else (res as FindResult.Failed).durationMs,
+                        rowCount = if (res is FindResult.Ok) res.rows.size else null,
+                        error = if (res is FindResult.Failed) res.error else null,
+                    ),
+                )
+            }
         } finally {
             running[key] = false
         }

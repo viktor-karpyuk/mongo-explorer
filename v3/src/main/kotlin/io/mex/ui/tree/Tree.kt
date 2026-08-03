@@ -104,7 +104,15 @@ fun Tree(
     var pendingDrop by remember { mutableStateOf<PendingDrop?>(null) }
     var creating by remember { mutableStateOf<CreateTarget?>(null) }
 
-    val rows = buildRows(visible, states, namespaces, current, filter, sortAsc)
+    // derivedStateOf: the flatten+filter+sort over every loaded namespace re-ran on every
+    // unrelated recomposition (ping ticks, selection clicks). All inputs are snapshot
+    // state read inside the block, so it recomputes exactly when one of them changes.
+    val rows by remember {
+        derivedStateOf {
+            val visibleNow = vm.list.filter { states[it.id] !is ConnectionState.Disconnected && states[it.id] != null }
+            buildRows(visibleNow, states, namespaces, selection.current, filter, sortAsc)
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         Row(
@@ -260,7 +268,7 @@ fun Tree(
     }
 }
 
-@Composable
+// Not @Composable: pure snapshot-state reads, evaluated inside derivedStateOf.
 private fun buildRows(
     connections: List<ConnectionSummary>,
     states: Map<String, ConnectionState>,

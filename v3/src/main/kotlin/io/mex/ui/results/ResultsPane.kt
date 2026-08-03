@@ -65,11 +65,14 @@ fun ResultsPane(
     var splitFraction by remember { mutableStateOf(0.62f) }
     var splitContainerHeightPx by remember { mutableStateOf(0) }
     val isError = result is FindResult.Failed
-    LaunchedEffect(isError) { if (isError) tab = ResultTab.Error }
+    // Switch back off the Error tab when a rerun succeeds — otherwise the pane sticks on
+    // "(no error)" and the user has to find the Table tab by hand.
+    LaunchedEffect(isError) {
+        if (isError) tab = ResultTab.Error else if (tab == ResultTab.Error) tab = ResultTab.Table
+    }
 
     val rows = (result as? FindResult.Ok)?.rows
     val listState = rememberLazyListState()
-    val treeScroll = rememberScrollState()
     val focusRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
 
@@ -119,7 +122,7 @@ fun ResultsPane(
                     result is FindResult.Failed && tab == ResultTab.Error -> ErrorBody(result.error)
                     result is FindResult.Ok -> when (tab) {
                         ResultTab.Table -> TableBody(result.rows, selectedIndex, listState, select)
-                        ResultTab.Tree -> TreeBody(result.rows, selectedIndex, treeScroll, select)
+                        ResultTab.Tree -> TreeBody(result.rows, selectedIndex, select)
                         ResultTab.Json -> JsonBody(result.rows)
                         ResultTab.Error -> ErrorBody("(no error)")
                     }
@@ -406,51 +409,59 @@ private fun RowScope.CellView(v: JsonElement?) {
     }
 }
 
+/**
+ * Virtualized: a plain Column composed all documents at once — a 500-row page of multi-KB
+ * documents froze for seconds on tab switch and re-paid the cost on every new result.
+ */
 @Composable
 private fun TreeBody(
     rows: List<String>,
     selectedIndex: Int,
-    scroll: ScrollState,
     onSelect: (Int) -> Unit,
 ) {
+    val listState = rememberLazyListState()
     Box(modifier = Modifier.fillMaxSize()) {
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(scroll).padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        rows.forEachIndexed { i, row ->
-            val parsed = remember(row) { parseRow(row) }
-            val isSelected = i == selectedIndex
-            Card(
-                border = CardDefaults.outlinedCardBorder(),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isSelected)
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
-                    else
-                        MaterialTheme.colorScheme.surface,
-                ),
-                modifier = Modifier.fillMaxWidth().clickable { onSelect(i) },
-            ) {
-                Column(modifier = Modifier.padding(10.dp)) {
-                    Text(
-                        "Document ${i + 1}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    SelectionContainer {
-                        if (parsed != null) {
-                            NodeView("", parsed, 0, root = true)
-                        } else {
-                            Text(row, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(rows.size, key = { it }) { i ->
+                val row = rows[i]
+                val parsed = remember(row) { parseRow(row) }
+                val isSelected = i == selectedIndex
+                Card(
+                    border = CardDefaults.outlinedCardBorder(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isSelected)
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                        else
+                            MaterialTheme.colorScheme.surface,
+                    ),
+                    modifier = Modifier.fillMaxWidth().clickable { onSelect(i) },
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            "Document ${i + 1}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        SelectionContainer {
+                            Column {
+                                if (parsed != null) {
+                                    NodeView("", parsed, 0, root = true)
+                                } else {
+                                    Text(row, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-    }
         VerticalScrollbar(
-            adapter = rememberScrollbarAdapter(scroll),
+            adapter = rememberScrollbarAdapter(listState),
             modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
         )
     }
@@ -517,9 +528,12 @@ private fun NodeView(label: String, value: JsonElement, depth: Int, root: Boolea
     }
 }
 
+/**
+ * Virtualized, and the copy-all string is built only when the button is clicked — the
+ * eager pretty-print + join of a whole page was a multi-second freeze on large results.
+ */
 @Composable
 private fun JsonBody(rows: List<String>) {
-    val text = remember(rows) { rows.joinToString("\n\n") { prettyPrint(it) } }
     Surface(color = MaterialTheme.colorScheme.surface) {
         Column(modifier = Modifier.fillMaxSize()) {
             Row(
@@ -532,24 +546,23 @@ private fun JsonBody(rows: List<String>) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
-                CopyButton({ text }, label = "Copy all")
+                CopyButton({ rows.joinToString("\n\n") { prettyPrint(it) } }, label = "Copy all")
             }
-            val scroll = rememberScrollState()
+            val listState = rememberLazyListState()
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 SelectionContainer {
-                    Column(
+                    LazyColumn(
+                        state = listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .verticalScroll(scroll)
-                            .padding(horizontal = 12.dp)
-                            .padding(bottom = 12.dp),
+                            .padding(horizontal = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        rows.forEach { row -> HighlightedJson(row) }
+                        items(rows.size, key = { it }) { i -> HighlightedJson(rows[i]) }
                     }
                 }
                 VerticalScrollbar(
-                    adapter = rememberScrollbarAdapter(scroll),
+                    adapter = rememberScrollbarAdapter(listState),
                     modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
                 )
             }

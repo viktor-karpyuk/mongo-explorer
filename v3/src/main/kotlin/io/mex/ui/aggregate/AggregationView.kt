@@ -20,6 +20,7 @@ import io.mex.mongo.StageDraft
 import io.mex.mongo.TEMPLATES
 import io.mex.mongo.executeAggregate
 import io.mex.ui.query.NumberField
+import io.mex.ui.query.QueryStore
 import io.mex.ui.results.ResultsPane
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -32,21 +33,23 @@ fun AggregationView(
     connectionId: String,
     db: String,
     collection: String,
+    queries: QueryStore,
 ) {
-    val stages = remember(connectionId, db, collection) {
-        mutableStateListOf(StageDraft())
-    }
-    var limit by remember(connectionId, db, collection) { mutableStateOf(50) }
-    var maxTimeMs by remember(connectionId, db, collection) { mutableStateOf(60_000L) }
-    var result by remember(connectionId, db, collection) { mutableStateOf<FindResult?>(null) }
-    var running by remember(connectionId, db, collection) { mutableStateOf(false) }
+    // Hoisted per-namespace: local remembers lost the whole pipeline when the user
+    // peeked at Schema/Indexes and came back.
+    val d = queries.aggregation("$connectionId/$db/$collection")
+    val stages = d.stages
+    var limit by d::limit
+    var maxTimeMs by d::maxTimeMs
+    var result by d::result
+    var running by d::running
     var templateMenu by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     // The pipeline the current result came from, so paging re-runs the same stages
     // even if the user has since edited the editor.
-    var skip by remember(connectionId, db, collection) { mutableStateOf(0) }
-    var lastUpTo by remember(connectionId, db, collection) { mutableStateOf(-1) }
+    var skip by d::skip
+    var lastUpTo by d::lastUpTo
 
     fun runUpTo(upTo: Int = stages.size - 1, atSkip: Int = 0) {
         scope.launch {
@@ -67,18 +70,20 @@ fun AggregationView(
                 )
                 val res = withContext(Dispatchers.IO) { executeAggregate(client, req) }
                 result = res
-                ctx.queryHistory.record(
-                    QueryHistoryInput(
-                        connectionId = connectionId,
-                        database = db,
-                        collection = collection,
-                        kind = QueryKind.aggregate,
-                        body = enabled.joinToString { "${it.operator} -> ${it.body}" },
-                        durationMs = if (res is FindResult.Ok) res.durationMs else (res as FindResult.Failed).durationMs,
-                        rowCount = if (res is FindResult.Ok) res.rows.size else null,
-                        error = if (res is FindResult.Failed) res.error else null,
-                    ),
-                )
+                withContext(Dispatchers.IO) {
+                    ctx.queryHistory.record(
+                        QueryHistoryInput(
+                            connectionId = connectionId,
+                            database = db,
+                            collection = collection,
+                            kind = QueryKind.aggregate,
+                            body = enabled.joinToString { "${it.operator} -> ${it.body}" },
+                            durationMs = if (res is FindResult.Ok) res.durationMs else (res as FindResult.Failed).durationMs,
+                            rowCount = if (res is FindResult.Ok) res.rows.size else null,
+                            error = if (res is FindResult.Failed) res.error else null,
+                        ),
+                    )
+                }
             } finally {
                 running = false
             }
