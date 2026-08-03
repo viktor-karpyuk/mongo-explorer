@@ -123,6 +123,18 @@ minus heavy auth methods. ~80 features.
 - [x] Lifecycle: stop/start (data kept, same ports), typed-confirm destroy (down -v + managed-dir + connection)
 - [x] Docker-truth reconciliation at boot/view-open; graceful no-Docker guidance panel; log redaction of credentials
 
+### 9f. Production provisioning — Kubernetes (v3.5 — `docs/v3/v3.5/`)
+- [x] Provision view is tabbed: Local (Docker) + Kubernetes; kubectl shell-out only, every call bounded
+- [x] Operator detection via CRDs (MCO + PSMDB) with capability gating — sharding disabled for MCO, inline explanation
+- [x] Dev preset vs strict-Prod profile: TLS, auth, members ≥ 3, StorageClass, requests=limits, PDB, zone+host anti-affinity, backups, deletion protection — enforced in the renderer, not just the UI
+- [x] Sharded topologies on PSMDB (shards × members + CSRS 3 + mongos), replica sets on both operators
+- [x] Preflight: reachability, RBAC verb sweep, operator + cert-manager presence, StorageClass, node inventory; k8s version matrix (1.32–1.34) and single-zone spread as warnings
+- [x] Preview-hash invariant: apply is authorized against the exact rendered bytes; any edit invalidates it, stale applies fail closed
+- [x] Typed-confirm apply; secrets applied via stdin (never argv), sqlite keeps fingerprints only (schema v7)
+- [x] Supervised `kubectl port-forward` with backoff → auto-registered `K8S`-badged connection (CA exported for TLS verification)
+- [x] Fixed teardown cascade (CR → PDB → TLS → secrets → PVCs → namespace), Prod keeps volumes by default, aborts on first failure
+- [x] Status mapped honestly from CR state (unknown → pending with the raw string), per-component readiness + namespace events
+
 ## 10. I/O
 - [x] Export JSON / NDJSON / CSV (streaming)
 - [x] Import JSON / NDJSON / CSV (dry-run + commit)
