@@ -1,5 +1,6 @@
 package io.mex
 
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.window.Window
@@ -15,6 +16,7 @@ fun main() {
         Window(
             onCloseRequest = ::exitApplication,
             title = "Mongo Explorer",
+            icon = painterResource("icon.png"),
             state = WindowState(size = DpSize(1400.dp, 900.dp)),
         ) {
             App(ctx)

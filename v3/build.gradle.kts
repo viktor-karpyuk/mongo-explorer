@@ -68,7 +68,12 @@ compose.desktop {
             packageVersion = "1.0.0"
             description = "Mongo Explorer v3 — Kotlin + Compose Desktop rewrite"
             vendor = "io.mex"
-            macOS { bundleID = "io.mex.explorer.v3" }
+            macOS {
+                bundleID = "io.mex.explorer.v3"
+                iconFile.set(project.file("icon/mex-icon.icns"))
+            }
+            windows { iconFile.set(project.file("icon/mex-icon.ico")) }
+            linux { iconFile.set(project.file("icon/mex-icon.png")) }
         }
     }
 }
