@@ -64,10 +64,39 @@ data class RsConfig(
     val delayedMembers: Int get() = members.count { it.secondaryDelaySecs > 0 }
 }
 
+/** One shard as reported by listShards; hosts come from its "rs/h1,h2" host string. */
+data class ShardInfo(
+    val name: String,
+    val rsName: String?,
+    val hosts: List<String>,
+    val draining: Boolean,
+)
+
+data class RouterInfo(
+    val host: String,
+    val lastPingAgeSecs: Long?,
+    val version: String?,
+) {
+    // config.mongos keeps every router that ever joined; only recently-pinging
+    // ones are alive. 60s would flap on a paused lab, 1h hides real departures.
+    val active: Boolean get() = lastPingAgeSecs != null && lastPingAgeSecs <= 300
+}
+
+data class ShardedTopology(
+    val routers: List<RouterInfo>,
+    val configRsName: String?,
+    val configHosts: List<String>,
+    val shards: List<ShardInfo>,
+    val balancerEnabled: Boolean?,
+)
+
 data class ClusterSnapshot(
     val topology: TopologyInfo,
     val health: HealthReport,
     val rsConfig: RsConfig?,
+    val sharded: ShardedTopology? = null,
+    /** The endpoint this client is talking to — the only node we can name on a standalone. */
+    val endpoint: String? = null,
 )
 
 private val STATE_BY_CODE = mapOf(
@@ -89,8 +118,10 @@ fun clusterSnapshot(client: MongoClient): ClusterSnapshot {
     val members = mutableListOf<MemberInfo>()
     var rsConfig: RsConfig? = null
 
+    var sharded: ShardedTopology? = null
     if (hello["msg"] == "isdbgrid") {
         type = "sharded"
+        sharded = shardedTopology(client)
     } else if (hello["setName"] is String) {
         type = "replicaset"
         setName = hello.getString("setName")
@@ -133,8 +164,67 @@ fun clusterSnapshot(client: MongoClient): ClusterSnapshot {
         type = "standalone"
     }
 
+    val endpoint = (hello["me"] as? String)
+        ?: runCatching {
+            client.clusterDescription.serverDescriptions.firstOrNull()?.address?.toString()
+        }.getOrNull()
+
     val topology = TopologyInfo(type, setName, primary, members)
-    return ClusterSnapshot(topology, scoreHealth(topology), rsConfig)
+    return ClusterSnapshot(topology, scoreHealth(topology), rsConfig, sharded, endpoint)
+}
+
+/**
+ * Everything here degrades independently: a user allowed to run listShards may
+ * still be denied config.mongos or balancerStatus, and a partial diagram beats none.
+ */
+private fun shardedTopology(client: MongoClient): ShardedTopology {
+    val admin = client.getDatabase("admin")
+
+    val shards = runCatching {
+        val res = admin.runCommand(Document("listShards", 1))
+        (res["shards"] as? List<*>).orEmpty().filterIsInstance<Document>().map { s ->
+            val (rs, hosts) = parseHostString(s.getString("host") ?: "")
+            ShardInfo(
+                name = s.getString("_id") ?: "?",
+                rsName = rs,
+                hosts = hosts,
+                draining = s["draining"] == true,
+            )
+        }
+    }.getOrElse { emptyList() }
+
+    val routers = runCatching {
+        val now = System.currentTimeMillis()
+        client.getDatabase("config").getCollection("mongos").find().limit(64).map { d ->
+            RouterInfo(
+                host = d.getString("_id") ?: "?",
+                lastPingAgeSecs = (d["ping"] as? java.util.Date)
+                    ?.let { ((now - it.time) / 1000).coerceAtLeast(0) },
+                version = d.getString("mongoVersion"),
+            )
+        }.toList()
+    }.getOrElse { emptyList() }
+
+    val (cfgRs, cfgHosts) = runCatching {
+        val ss = admin.runCommand(Document("serverStatus", 1))
+        val cs = (ss["sharding"] as? Document)?.get("configsvrConnectionString") as? String
+        parseHostString(cs ?: "")
+    }.getOrElse { null to emptyList() }
+
+    val balancer = runCatching {
+        admin.runCommand(Document("balancerStatus", 1)).getString("mode") == "full"
+    }.getOrNull()
+
+    return ShardedTopology(routers, cfgRs, cfgHosts, shards, balancer)
+}
+
+/** `"rs0/h1:27017,h2:27017"` → `("rs0", [h1:27017, h2:27017])`; without `/` the set name is null. */
+internal fun parseHostString(hostString: String): Pair<String?, List<String>> {
+    if (hostString.isBlank()) return null to emptyList()
+    val slash = hostString.indexOf('/')
+    val rs = if (slash >= 0) hostString.take(slash) else null
+    val hosts = hostString.substring(slash + 1).split(',').map { it.trim() }.filter { it.isNotEmpty() }
+    return rs to hosts
 }
 
 private fun parseRsConfig(cfg: Document): RsConfig {
