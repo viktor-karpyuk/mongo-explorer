@@ -52,11 +52,20 @@ fun LabWizard(
     ctx: AppContext,
     onClose: () -> Unit,
     onCreate: (name: String, topology: LabTopology, mongoTag: String, auth: Boolean) -> Unit,
+    initialPreset: WizardPreset? = null,
 ) {
     var name by remember { mutableStateOf("") }
     var tag by remember { mutableStateOf(MONGO_TAGS.first()) }
     var tagMenu by remember { mutableStateOf(false) }
-    var shape by remember { mutableStateOf("replicaSet") } // standalone | replicaSet | sharded
+    var shape by remember {
+        mutableStateOf(
+            when (initialPreset) {
+                WizardPreset.Standalone -> "standalone"
+                WizardPreset.Sharded -> "sharded"
+                else -> "replicaSet"
+            },
+        )
+    }
     var rsMembers by remember { mutableStateOf(3) }
     var shards by remember { mutableStateOf(2) }
     var perShard by remember { mutableStateOf(3) }
@@ -82,6 +91,9 @@ fun LabWizard(
     }
 
     LaunchedEffect(portCount) {
+        // Cleared first: Create must gate on THIS topology's preflight, not the last one's
+        // green result lingering while the re-check is in flight (PRV-UI-3).
+        preflight = null
         preflight = withContext(Dispatchers.IO) { dockerPreflight(portCount) }
     }
 
@@ -91,7 +103,9 @@ fun LabWizard(
         onDismissRequest = onClose,
         title = { Text("New lab", style = MaterialTheme.typography.titleMedium) },
         confirmButton = {
-            Button(enabled = ready, onClick = { onCreate(nameTrim, topology, tag, auth) }) { Text("Create") }
+            Button(enabled = ready, onClick = { onCreate(nameTrim, topology, tag, auth) }) {
+                Text("Create · ${f.containers} container${if (f.containers == 1) "" else "s"}")
+            }
         },
         dismissButton = { TextButton(onClick = onClose) { Text("Cancel") } },
         text = {
@@ -157,6 +171,9 @@ fun LabWizard(
                         Caption("The CSRS holds cluster metadata; 3 is the production shape.")
                     }
                 }
+
+                // The steppers are numbers; this is the shape they build.
+                TopologyDiagram(topology)
                 violations.forEach {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
                 }

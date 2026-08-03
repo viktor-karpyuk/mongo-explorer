@@ -20,7 +20,7 @@ class LabsRepo(private val store: Store) {
         val out = mutableListOf<Lab>()
         conn.prepareStatement("SELECT * FROM labs ORDER BY created_at DESC").use { ps ->
             ps.executeQuery().use { rs ->
-                while (rs.next()) out += parse(rs)
+                while (rs.next()) parse(rs)?.let { out += it }
             }
         }
         return out
@@ -109,20 +109,29 @@ class LabsRepo(private val store: Store) {
         return out
     }
 
-    private fun parse(rs: java.sql.ResultSet): Lab = Lab(
-        id = rs.getString("id"),
-        name = rs.getString("name"),
-        topology = json.decodeFromString(rs.getString("topology")),
-        status = LabStatus.valueOf(rs.getString("status")),
-        mongoTag = rs.getString("mongo_tag"),
-        auth = rs.getInt("auth") != 0,
-        portMap = rs.getString("port_map")?.let {
-            runCatching { json.decodeFromString<Map<String, Int>>(it) }.getOrNull()
-        } ?: emptyMap(),
-        connectionId = rs.getString("connection_id"),
-        dir = rs.getString("dir"),
-        appMajor = rs.getInt("app_major"),
-        error = rs.getString("error"),
-        createdAt = rs.getLong("created_at"),
-    )
+    /**
+     * Null when the topology JSON is unreadable (a lab written by a future app version
+     * with a new shape) — one such row must not take down the whole Provision view.
+     */
+    private fun parse(rs: java.sql.ResultSet): Lab? {
+        val topology = rs.getString("topology").let {
+            runCatching { json.decodeFromString<LabTopology>(it) }.getOrNull()
+        } ?: return null
+        return Lab(
+            id = rs.getString("id"),
+            name = rs.getString("name"),
+            topology = topology,
+            status = LabStatus.valueOf(rs.getString("status")),
+            mongoTag = rs.getString("mongo_tag"),
+            auth = rs.getInt("auth") != 0,
+            portMap = rs.getString("port_map")?.let {
+                runCatching { json.decodeFromString<Map<String, Int>>(it) }.getOrNull()
+            } ?: emptyMap(),
+            connectionId = rs.getString("connection_id"),
+            dir = rs.getString("dir"),
+            appMajor = rs.getInt("app_major"),
+            error = rs.getString("error"),
+            createdAt = rs.getLong("created_at"),
+        )
+    }
 }

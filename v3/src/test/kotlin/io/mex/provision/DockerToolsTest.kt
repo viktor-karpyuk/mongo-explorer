@@ -38,6 +38,13 @@ class ArgBuildersTest {
     fun `compose v2 container naming`() {
         assertEquals("mex-lab-abcdefgh-rs-n1-1", containerName("mex-lab-abcdefgh", "rs-n1"))
     }
+
+    @Test
+    fun `ps status args scope one lab and render name plus status`() {
+        val args = psStatusArgs("01JX")
+        assertTrue("label=mex.lab.id=01JX" in args)
+        assertTrue("{{.Names}} {{.Status}}" in args)
+    }
 }
 
 class DockerVersionTest {

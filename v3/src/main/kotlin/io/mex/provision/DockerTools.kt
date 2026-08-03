@@ -12,9 +12,19 @@ import kotlinx.serialization.json.jsonPrimitive
 /** Label stamped on every container/volume/network a lab owns (PRV-DOCKER-5). */
 const val LAB_LABEL = "mex.lab.id"
 
-/** Docker Desktop installs its CLI under `~/.docker/bin` on macOS (PRV-DOCKER-1). */
-fun findDocker(): ToolInfo? =
-    findTool("docker", extraDirs = listOf("${System.getProperty("user.home")}/.docker/bin"))
+@Volatile
+private var cachedDocker: ToolInfo? = null
+
+/**
+ * Docker Desktop installs its CLI under `~/.docker/bin` on macOS (PRV-DOCKER-1).
+ * Discovery spawns up to 6 `--version` probes, so a successful result is cached for the
+ * app's lifetime; [refresh] (the guidance panel's Retry) re-probes after an install.
+ */
+fun findDocker(refresh: Boolean = false): ToolInfo? {
+    if (!refresh) cachedDocker?.let { return it }
+    return findTool("docker", extraDirs = listOf("${System.getProperty("user.home")}/.docker/bin"))
+        .also { cachedDocker = it }
+}
 
 /** PRV-DOCKER-2 — `Docker version 28.1.1, build …` → true when ≥ 20.10. */
 fun dockerVersionOk(versionLine: String): Boolean {
@@ -37,6 +47,15 @@ fun psArgs(labId: String? = null): List<String> = listOf(
 
 fun inspectHealthArgs(container: String): List<String> =
     listOf("inspect", "--format", "{{.State.Health.Status}}", container)
+
+/**
+ * One-spawn health snapshot of a whole lab: `Status` renders as e.g.
+ * `Up 13 seconds (healthy)`. Polling per-service `inspect` would spawn N processes
+ * per tick (24 for the largest sharded shape).
+ */
+fun psStatusArgs(labId: String): List<String> = listOf(
+    "ps", "-a", "--filter", "label=$LAB_LABEL=$labId", "--format", "{{.Names}} {{.Status}}",
+)
 
 /** The script is a single argv element — no shell is involved, so no quoting hazards. */
 fun execMongoshArgs(container: String, script: String): List<String> =

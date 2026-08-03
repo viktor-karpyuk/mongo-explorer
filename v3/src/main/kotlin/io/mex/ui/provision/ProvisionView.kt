@@ -1,15 +1,14 @@
 package io.mex.ui.provision
 
 import androidx.compose.foundation.VerticalScrollbar
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollbarAdapter
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,10 +22,13 @@ import androidx.compose.ui.unit.dp
 import io.mex.AppContext
 import io.mex.data.Lab
 import io.mex.data.LabStatus
+import io.mex.data.LabTopology
 import io.mex.data.ProvisionPhase
 import io.mex.provision.findDocker
 import io.mex.provision.plan
 import io.mex.provision.summary
+import io.mex.ui.components.CopyChip
+import io.mex.ui.components.StatusPill
 import io.mex.ui.components.TypedConfirmDialog
 import io.mex.ui.connections.ConnectionsViewModel
 import io.mex.ui.state.Selection
@@ -47,6 +49,7 @@ fun ProvisionView(
     val runner = ui.runner
     var labs by remember { mutableStateOf<List<Lab>>(emptyList()) }
     var showWizard by remember { mutableStateOf(false) }
+    var wizardPreset by remember { mutableStateOf<WizardPreset?>(null) }
     var expandedLog by remember { mutableStateOf<String?>(null) }
     var details by remember { mutableStateOf<Lab?>(null) }
     var destroying by remember { mutableStateOf<Lab?>(null) }
@@ -62,9 +65,10 @@ fun ProvisionView(
         runner.reconcile()
     }
     // Probing spawns `docker --version` processes — never on the UI thread (PRV-NFR-3).
+    // Cached after the first success; Retry forces a re-probe.
     LaunchedEffect(dockerProbe) {
         dockerProbed = false
-        docker = withContext(Dispatchers.IO) { findDocker() }
+        docker = withContext(Dispatchers.IO) { findDocker(refresh = dockerProbe > 0) }
         dockerProbed = true
     }
 
@@ -80,33 +84,35 @@ fun ProvisionView(
         return
     }
 
+    fun openWizard(preset: WizardPreset?) {
+        wizardPreset = preset
+        showWizard = true
+    }
+
     Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Provision", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-            Button(onClick = { showWizard = true }) { Text("+ New lab") }
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Provision", style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    dockerInfo.version.substringBefore(","),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Button(onClick = { openWizard(null) }) { Text("+ New lab") }
         }
-        Text(
-            dockerInfo.version.substringBefore(","),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(14.dp))
         if (labs.isEmpty()) {
-            Text(
-                "No labs yet. Build a standalone, replica set or sharded cluster on your own Docker " +
-                    "— it lands in the sidebar as a ready-to-use connection.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-            )
+            EmptyState(onPreset = ::openWizard)
         }
         val listState = rememberLazyListState()
         Box(modifier = Modifier.weight(1f)) {
-            LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(labs, key = { it.id }) { lab ->
                     LabRow(
                         ctx = ctx,
                         lab = lab,
-                        busy = runner.isBusy(lab.id),
+                        busy = ui.busy.containsKey(lab.id) || runner.isBusy(lab.id),
                         phase = ui.phases[lab.id],
                         log = ui.logs[lab.id].orEmpty(),
                         logExpanded = expandedLog == lab.id,
@@ -142,6 +148,7 @@ fun ProvisionView(
     if (showWizard) {
         LabWizard(
             ctx = ctx,
+            initialPreset = wizardPreset,
             onClose = { showWizard = false },
             onCreate = { name, topology, tag, auth ->
                 showWizard = false
@@ -151,13 +158,15 @@ fun ProvisionView(
         )
     }
     details?.let { lab -> LabDetailsDialog(ctx, lab, onClose = { details = null }) }
-    ui.pendingResult?.let { done -> ProvisionResultBanner(done, labs, onOpen = { connId ->
-        ui.consumeResult()
-        scope.launch {
-            connectionsVm.open(connId)
-            selection.select(Selection.ConnectionView(connId))
-        }
-    }, onClose = { ui.consumeResult() }) }
+    ui.pendingResult?.let { done ->
+        ProvisionResultBanner(done, onOpen = { connId ->
+            ui.consumeResult()
+            scope.launch {
+                connectionsVm.open(connId)
+                selection.select(Selection.ConnectionView(connId))
+            }
+        }, onClose = { ui.consumeResult() })
+    }
     destroying?.let { lab ->
         val connName = lab.connectionId?.let { ctx.connections.get(it)?.name }
         val f = io.mex.provision.footprint(lab.topology)
@@ -175,6 +184,33 @@ fun ProvisionView(
             },
             onCancel = { destroying = null },
         )
+    }
+}
+
+/* ============================ empty state ============================ */
+
+enum class WizardPreset { Standalone, Rs3, Sharded }
+
+@Composable
+private fun EmptyState(onPreset: (WizardPreset?) -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Spin up a MongoDB cluster in one click", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Standalone, replica sets or a full sharded cluster — built on your own Docker,\n" +
+                "auth enabled, registered in the sidebar and ready to break.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = { onPreset(WizardPreset.Standalone) }) { Text("Standalone") }
+            OutlinedButton(onClick = { onPreset(WizardPreset.Rs3) }) { Text("Replica set ×3") }
+            Button(onClick = { onPreset(WizardPreset.Sharded) }) { Text("Sharded cluster") }
+        }
     }
 }
 
@@ -206,56 +242,56 @@ private fun LabRow(
         LabStatus.missing -> Color(0xFFB45309)
     }
     val statusLabel = when (lab.status) {
-        LabStatus.stopped -> "STOPPED · data kept"
-        LabStatus.missing -> "MISSING"
-        else -> lab.status.name.uppercase()
+        LabStatus.stopped -> "stopped · data kept"
+        else -> lab.status.name
     }
+    // plan() + port lookup only when the lab identity or ports change, not per log flush.
+    val ports = remember(lab.id, lab.portMap) {
+        plan(lab).clientServices.mapNotNull { svc -> lab.portMap[svc]?.let { svc to it } }
+    }
+
     Card(border = CardDefaults.outlinedCardBorder()) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(statusLabel, color = statusColor, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(130.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(lab.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(lab.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        StatusPill(statusLabel, statusColor, pulsing = busy)
+                    }
                     Text(
-                        buildString {
-                            append(lab.mongoTag)
-                            append(" · ${summary(lab.topology)}")
-                            append(if (lab.auth) " · auth" else " · no auth")
-                        },
+                        "${lab.mongoTag} · ${summary(lab.topology)} · ${if (lab.auth) "auth" else "no auth"}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontFamily = FontFamily.Monospace,
                     )
-                    if (lab.portMap.isNotEmpty()) {
-                        val ports = plan(lab).clientServices.mapNotNull { lab.portMap[it] }
-                        Text(
-                            "127.0.0.1 → ${ports.joinToString(", ")}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontFamily = FontFamily.Monospace,
-                        )
-                    }
-                    lab.error?.let {
-                        Text("Error: $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
-                    }
-                    if (lab.status == LabStatus.failed && !busy) {
-                        Text(
-                            "Containers are kept for inspection — Destroy cleans everything up.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    if (ports.isNotEmpty() && lab.status != LabStatus.missing) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            for ((svc, port) in ports.take(7)) {
+                                CopyChip(label = "$svc :$port", copyText = "127.0.0.1:$port")
+                            }
+                            if (ports.size > 7) {
+                                Text(
+                                    "+${ports.size - 7}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                     }
                 }
                 when {
                     busy && lab.status == LabStatus.provisioning -> TextButton(onClick = onCancel) { Text("Cancel") }
                     busy -> CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    else -> {
+                    else -> Row(verticalAlignment = Alignment.CenterVertically) {
                         when (lab.status) {
                             LabStatus.running -> {
                                 if (lab.connectionId != null) Button(onClick = onOpen) { Text("Open") }
                                 TextButton(onClick = onStop) { Text("Stop") }
                             }
-                            LabStatus.stopped -> TextButton(onClick = onStart, enabled = lab.appMajor <= io.mex.data.LAB_APP_MAJOR) { Text("Start") }
+                            LabStatus.stopped -> Button(
+                                onClick = onStart,
+                                enabled = lab.appMajor <= io.mex.data.LAB_APP_MAJOR,
+                            ) { Text("Start") }
                             else -> Unit
                         }
                         TextButton(onClick = onDestroy) { Text("Destroy") }
@@ -282,8 +318,26 @@ private fun LabRow(
                     }
                 }
             }
+            lab.error?.let { err ->
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                        Text(err, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                        if (lab.status == LabStatus.failed && !busy) {
+                            Text(
+                                "Containers are kept for inspection — Destroy cleans everything up.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
             if (busy && lab.status == LabStatus.provisioning) {
-                PhaseStrip(lab, phase)
+                PhaseStepper(lab, phase)
             }
             if (busy || logExpanded) {
                 if (log.isNotEmpty()) LogPane(log)
@@ -292,58 +346,82 @@ private fun LabRow(
     }
 }
 
-/** `render → up → wait → …` with the active phase highlighted (PRV-UI-4). */
+/** Stepper chips: done ✓ green, active pulsing amber, upcoming muted (PRV-UI-4). */
 @Composable
-private fun PhaseStrip(lab: Lab, current: ProvisionPhase?) {
-    val relevant = ProvisionPhase.entries.filter { p ->
-        when (p) {
-            ProvisionPhase.shards -> lab.topology is io.mex.data.LabTopology.Sharded
-            ProvisionPhase.auth -> lab.auth
-            ProvisionPhase.initiate -> lab.topology !is io.mex.data.LabTopology.Standalone
-            else -> true
+private fun PhaseStepper(lab: Lab, current: ProvisionPhase?) {
+    val relevant = remember(lab.id) {
+        ProvisionPhase.entries.filter { p ->
+            when (p) {
+                ProvisionPhase.shards -> lab.topology is LabTopology.Sharded
+                ProvisionPhase.auth -> lab.auth
+                ProvisionPhase.initiate -> lab.topology !is LabTopology.Standalone
+                else -> true
+            }
         }
     }
-    Row(modifier = Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    val activeIdx = current?.let { relevant.indexOf(it) } ?: -1
+    Row(
+        modifier = Modifier.padding(top = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
         relevant.forEachIndexed { i, p ->
-            val active = p == current
-            val done = current != null && relevant.indexOf(current) > i
-            Text(
-                p.name,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                color = when {
-                    active -> Color(0xFFFBBF24)
-                    done -> Color(0xFF4ADE80)
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            )
-            if (i < relevant.lastIndex) {
-                Text(" → ", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val (bg, fg, label) = when {
+                i < activeIdx -> Triple(Color(0xFF4ADE80).copy(alpha = 0.12f), Color(0xFF4ADE80), "✓ ${p.name}")
+                i == activeIdx -> Triple(Color(0xFFFBBF24).copy(alpha = 0.16f), Color(0xFFFBBF24), p.name)
+                else -> Triple(
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    MaterialTheme.colorScheme.onSurfaceVariant,
+                    p.name,
+                )
             }
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = if (i == activeIdx) FontWeight.SemiBold else FontWeight.Normal,
+                color = fg,
+                modifier = Modifier
+                    .background(bg, RoundedCornerShape(999.dp))
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            )
         }
     }
 }
 
+/**
+ * Virtualized log: per-line items instead of one giant re-measured Text — pull-progress
+ * bursts would otherwise rebuild a 40 KB string and re-layout it per line batch.
+ */
 @Composable
 internal fun LogPane(lines: List<String>) {
-    val scroll = rememberScrollState()
-    // Keyed on the list itself: once the ring buffer is full, size stays constant while
-    // content keeps changing — a size key would freeze autoscroll mid-provision.
-    LaunchedEffect(lines) { scroll.scrollTo(scroll.maxValue) }
+    val clipboard = LocalClipboardManager.current
+    val listState = rememberLazyListState()
+    LaunchedEffect(lines) {
+        if (lines.isNotEmpty()) listState.scrollToItem(lines.lastIndex)
+    }
     Surface(
         color = Color(0xFF0A0C10),
-        shape = RoundedCornerShape(4.dp),
-        modifier = Modifier.fillMaxWidth().heightIn(max = 180.dp).padding(top = 6.dp),
+        shape = RoundedCornerShape(6.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(max = 190.dp).padding(top = 8.dp),
     ) {
-        SelectionContainer {
-            Column(modifier = Modifier.padding(8.dp).verticalScroll(scroll)) {
-                Text(
-                    lines.joinToString("\n"),
-                    color = Color(0xFFD4D7DF),
-                    fontFamily = FontFamily.Monospace,
-                    style = MaterialTheme.typography.labelSmall,
-                )
+        Box {
+            SelectionContainer {
+                LazyColumn(state = listState, modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                    items(lines.size) { i ->
+                        Text(
+                            lines[i],
+                            color = Color(0xFFD4D7DF),
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
             }
+            TextButton(
+                onClick = { clipboard.setText(AnnotatedString(lines.joinToString("\n"))) },
+                modifier = Modifier.align(Alignment.TopEnd),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            ) { Text("copy", style = MaterialTheme.typography.labelSmall, color = Color(0xFF8B93A7)) }
         }
     }
 }
