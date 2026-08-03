@@ -70,6 +70,8 @@ data class ShardInfo(
     val rsName: String?,
     val hosts: List<String>,
     val draining: Boolean,
+    /** Chunks currently owned, from config.chunks — null when that collection isn't readable. */
+    val chunks: Long? = null,
 )
 
 data class RouterInfo(
@@ -180,15 +182,26 @@ fun clusterSnapshot(client: MongoClient): ClusterSnapshot {
 private fun shardedTopology(client: MongoClient): ShardedTopology {
     val admin = client.getDatabase("admin")
 
+    // Grouped server-side so a million-chunk cluster costs one small result set.
+    val chunkCounts = runCatching {
+        chunkCountsByShard(
+            client.getDatabase("config").getCollection("chunks")
+                .aggregate(listOf(Document("\$group", Document("_id", "\$shard").append("n", Document("\$sum", 1)))))
+                .toList(),
+        )
+    }.getOrElse { emptyMap() }
+
     val shards = runCatching {
         val res = admin.runCommand(Document("listShards", 1))
         (res["shards"] as? List<*>).orEmpty().filterIsInstance<Document>().map { s ->
+            val name = s.getString("_id") ?: "?"
             val (rs, hosts) = parseHostString(s.getString("host") ?: "")
             ShardInfo(
-                name = s.getString("_id") ?: "?",
+                name = name,
                 rsName = rs,
                 hosts = hosts,
                 draining = s["draining"] == true,
+                chunks = chunkCounts[name],
             )
         }
     }.getOrElse { emptyList() }
@@ -217,6 +230,14 @@ private fun shardedTopology(client: MongoClient): ShardedTopology {
 
     return ShardedTopology(routers, cfgRs, cfgHosts, shards, balancer)
 }
+
+/** `{_id: shardName, n: count}` group rows → shard→count; malformed rows are skipped. */
+internal fun chunkCountsByShard(rows: List<Document>): Map<String, Long> =
+    rows.mapNotNull { d ->
+        val shard = d["_id"] as? String ?: return@mapNotNull null
+        val n = (d["n"] as? Number)?.toLong() ?: return@mapNotNull null
+        shard to n
+    }.toMap()
 
 /** `"rs0/h1:27017,h2:27017"` → `("rs0", [h1:27017, h2:27017])`; without `/` the set name is null. */
 internal fun parseHostString(hostString: String): Pair<String?, List<String>> {

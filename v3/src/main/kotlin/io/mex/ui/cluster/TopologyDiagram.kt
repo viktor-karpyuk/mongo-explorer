@@ -60,7 +60,7 @@ private data class MenuEntry(val label: String, val danger: Boolean = false, val
 private sealed class Payload {
     class Member(val m: MemberInfo, val cfg: RsMemberConfig?) : Payload()
     class Router(val r: RouterInfo) : Payload()
-    class Shard(val s: ShardInfo) : Payload()
+    class Shard(val s: ShardInfo, val total: Long?) : Payload()
     class ConfigSvr(val rsName: String?, val hosts: List<String>) : Payload()
     class Single(val endpoint: String?) : Payload()
 }
@@ -112,7 +112,9 @@ private fun payloadsFor(snap: ClusterSnapshot): Map<String, Payload> = buildMap 
             if (!sh?.configHosts.isNullOrEmpty()) {
                 put("cfg", Payload.ConfigSvr(sh?.configRsName, sh?.configHosts.orEmpty()))
             }
-            sh?.shards.orEmpty().forEachIndexed { i, s -> put("s$i", Payload.Shard(s)) }
+            val shards = sh?.shards.orEmpty()
+            val total = shards.mapNotNull { it.chunks }.sum().takeIf { it > 0 }
+            shards.forEachIndexed { i, s -> put("s$i", Payload.Shard(s, total)) }
         }
         "replicaset" -> {
             val cfgByHost = snap.rsConfig?.members?.associateBy { it.host }.orEmpty()
@@ -186,6 +188,7 @@ private fun ShardedDiagram(
                         sh?.configHosts.orEmpty().forEach { HostLine(it) }
                     }
                 }
+                val totalChunks = shards.mapNotNull { it.chunks }.sum()
                 shards.forEachIndexed { i, s ->
                     Node(
                         anchor = anchor("s$i"),
@@ -205,6 +208,10 @@ private fun ShardedDiagram(
                         )
                         if (s.draining) Small("draining")
                         s.hosts.forEach { HostLine(it) }
+                        s.chunks?.let { n ->
+                            Small("$n chunk${if (n == 1L) "" else "s"}")
+                            if (totalChunks > 0) ChunkBar(n.toFloat() / totalChunks)
+                        }
                     }
                 }
                 if (shards.isEmpty() && !hasConfig) {
@@ -391,6 +398,10 @@ private fun DetailStrip(p: Payload) {
                 p.s.rsName?.let { KV("replica set", it) }
                 KV("members", "${p.s.hosts.size}")
                 KV("hosts", p.s.hosts.joinToString(", "))
+                p.s.chunks?.let { n ->
+                    KV("chunks", "$n")
+                    p.total?.takeIf { it > 0 }?.let { t -> KV("share", "${(n * 100 / t)}%") }
+                }
                 if (p.s.draining) KV("status", "draining")
             }
             is Payload.ConfigSvr -> {
@@ -631,6 +642,24 @@ private fun Small(text: String) {
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/** Thin proportional bar: this shard's slice of all chunks. Imbalance shows at a glance. */
+@Composable
+private fun ChunkBar(fraction: Float) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(4.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), RoundedCornerShape(2.dp)),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                .height(4.dp)
+                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp)),
+        )
+    }
 }
 
 @Composable

@@ -31,6 +31,17 @@ class ClusterParseTest {
     }
 
     @Test
+    fun `chunk group rows map to counts and skip malformed rows`() {
+        val rows = listOf(
+            org.bson.Document("_id", "shard0").append("n", 120),
+            org.bson.Document("_id", "shard1").append("n", 80L),
+            org.bson.Document("_id", null).append("n", 5),
+            org.bson.Document("_id", "shard2"),
+        )
+        assertEquals(mapOf("shard0" to 120L, "shard1" to 80L), chunkCountsByShard(rows))
+    }
+
+    @Test
     fun `router is active only with a recent ping`() {
         assertTrue(RouterInfo("r1:27017", 4, "8.0.4").active)
         assertFalse(RouterInfo("r1:27017", 301, null).active)
