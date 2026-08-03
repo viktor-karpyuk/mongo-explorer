@@ -33,12 +33,17 @@ fun runBounded(cmd: List<String>, timeoutSec: Long): Pair<Int, List<String>>? = 
  * Locates an external binary (mongodump/mongorestore, docker, …). PATH first, then the
  * usual install prefixes; callers with tool-specific locations pass them via [extraDirs].
  */
-fun findTool(name: String, extraDirs: List<String> = emptyList()): ToolInfo? {
+fun findTool(
+    name: String,
+    extraDirs: List<String> = emptyList(),
+    /** Probe argv; kubectl rejects `--version` and needs `version --client` instead. */
+    versionArgs: List<String> = listOf("--version"),
+): ToolInfo? {
     val home = System.getProperty("user.home")
     val dirs = listOf("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "$home/bin") + extraDirs
     val candidates = listOf(name) + dirs.map { "$it/$name" }
     for (candidate in candidates) {
-        val result = runBounded(listOf(candidate, "--version"), timeoutSec = 5)
+        val result = runBounded(listOf(candidate) + versionArgs, timeoutSec = 5)
         if (result != null && result.first == 0) {
             result.second.firstOrNull()?.takeIf { it.isNotBlank() }?.let { return ToolInfo(candidate, it) }
         }

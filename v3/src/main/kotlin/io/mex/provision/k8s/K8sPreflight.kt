@@ -49,7 +49,15 @@ fun preflightVerdict(spec: K8sDeploySpec, facts: ProbeFacts): PreflightResult {
         val detail = facts.unreachableDetail
             ?: (facts.versionVerdict as? VersionVerdict.Unknown)?.message
             ?: "unreachable"
-        PreflightCheck("Context ${spec.context} reachable", false, detail)
+        checks += PreflightCheck("Context ${spec.context} reachable", false, detail)
+        // Nothing else was probed — reporting "✓ RBAC" for a check that never ran would
+        // be a lie the user pays for later.
+        checks += PreflightCheck(
+            "Remaining checks",
+            false,
+            "not run — the cluster must be reachable first",
+        )
+        return PreflightResult(false, checks)
     }
     // Version is a WARN, never a block (K8P-CTX-4/K8P-PRE-2).
     (facts.versionVerdict as? VersionVerdict.Warn)?.let {

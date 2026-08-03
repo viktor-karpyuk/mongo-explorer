@@ -12,11 +12,26 @@ import io.mex.backup.runBounded
 @Volatile
 private var cachedKubectl: ToolInfo? = null
 
-/** Rancher Desktop uses `~/.rd/bin`; Docker Desktop `~/.docker/bin`. Cached like docker. */
+/**
+ * Rancher Desktop uses `~/.rd/bin`; Docker Desktop `~/.docker/bin`. Cached like docker.
+ * kubectl has no `--version` flag — probing with it makes discovery fail on every host.
+ */
 fun findKubectl(refresh: Boolean = false): ToolInfo? {
     if (!refresh) cachedKubectl?.let { return it }
     val home = System.getProperty("user.home")
-    return findTool("kubectl", extraDirs = listOf("$home/.docker/bin", "$home/.rd/bin"))
+    val found = findTool(
+        "kubectl",
+        extraDirs = listOf("$home/.docker/bin", "$home/.rd/bin"),
+        versionArgs = listOf("version", "--client", "-o", "yaml"),
+    ) ?: return null.also { cachedKubectl = null }
+    // The probe's first line is the YAML header; pull the real client version for display.
+    val display = runBounded(
+        listOf(found.path, "version", "--client", "-o", "yaml"),
+        timeoutSec = 5,
+    )?.second?.firstNotNullOfOrNull { line ->
+        line.trim().removePrefix("gitVersion:").trim().takeIf { line.trim().startsWith("gitVersion:") }
+    }
+    return ToolInfo(found.path, display?.let { "kubectl $it" } ?: found.version)
         .also { cachedKubectl = it }
 }
 

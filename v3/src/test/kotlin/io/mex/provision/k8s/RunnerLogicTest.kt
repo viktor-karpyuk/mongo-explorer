@@ -47,13 +47,17 @@ class PreflightVerdictTest {
     }
 
     @Test
-    fun `unreachable context blocks and skips the rest`() {
+    fun `unreachable context blocks and reports the rest as not run`() {
         val r = preflightVerdict(
             spec(),
             facts(reachable = false, version = VersionVerdict.Unknown("connection refused")),
         )
         assertFalse(r.ok)
         assertTrue(r.checks.first().detail!!.contains("connection refused"))
+        // Never claim a check passed when it was never executed.
+        assertEquals(2, r.checks.size)
+        assertTrue(r.checks.none { it.ok })
+        assertTrue(r.checks.last().detail!!.contains("not run"))
     }
 
     @Test
