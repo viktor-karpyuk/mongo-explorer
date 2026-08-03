@@ -1,8 +1,11 @@
 package io.mex.ui.provision.k8s
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -143,6 +146,10 @@ fun DeployWizard(
     val violations = validate(spec)
     val nameTaken = spec.name.isNotBlank() &&
         ctx.k8sDeployments.nameExists(spec.context, spec.namespace, spec.name)
+    // Preflight certified a specific spec; with free back-navigation it would otherwise
+    // keep authorizing an Apply after the user went back and changed the deployment.
+    // (Name is excluded — it doesn't affect any preflight check.)
+    LaunchedEffect(spec.copy(name = "")) { preflight = null }
     val docs = remember(spec) { if (violations.isEmpty()) runCatching { render(spec) }.getOrNull() else null }
     val hash = remember(docs) { docs?.let { bundleHash(it) } }
     // Any edit re-renders and re-hashes; the previous confirmation dies with it.
@@ -152,12 +159,7 @@ fun DeployWizard(
 
     AlertDialog(
         onDismissRequest = onClose,
-        title = {
-            Text(
-                "New deployment — ${STEP_TITLES[step]} (${step + 1}/${STEP_TITLES.size})",
-                style = MaterialTheme.typography.titleMedium,
-            )
-        },
+        title = { Text("New deployment", style = MaterialTheme.typography.titleMedium) },
         confirmButton = {
             if (step < STEP_TITLES.lastIndex) {
                 Button(onClick = { step++ }, enabled = stepReady(step, context, namespace, name, operator, violations)) {
@@ -174,12 +176,23 @@ fun DeployWizard(
             }
         },
         text = {
-            Column(
-                modifier = Modifier.width(660.dp).heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
+            // Fixed frame: the dialog is the same size on every step, so the window
+            // never jumps while stepping and the stepper always sits in the same place.
+            Column(modifier = Modifier.width(660.dp).height(540.dp)) {
+                StepperHeader(step, onJump = { step = it })
+                HorizontalDivider(modifier = Modifier.padding(top = 10.dp))
                 if (probing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                when (step) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        // Fresh scroll per step — carrying one position across steps
+                        // opened each new step mid-scroll.
+                        .verticalScroll(remember(step) { ScrollState(0) })
+                        .padding(top = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    when (step) {
                     0 -> ContextStep(
                         contexts, context, { context = it },
                         namespaces, namespace, { namespace = it; namespaceCreated = it !in namespaces },
@@ -222,8 +235,11 @@ fun DeployWizard(
                         },
                     )
                     8 -> PreviewStep(docs, hash, violations, nameTaken)
+                    }
                 }
+                // Pinned below the scroll area so problems stay visible on every step.
                 if (violations.isNotEmpty() && step >= 3) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
                     violations.forEach {
                         Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
                     }
@@ -264,6 +280,65 @@ private val STEP_TITLES = listOf(
     "Context & namespace", "Operator", "Profile", "Topology",
     "Storage & resources", "Security", "Backups", "Preflight", "Preview",
 )
+
+/**
+ * Dots-and-connectors progress header. Completed dots are clickable and jump straight
+ * back to that step — forward movement stays gated by each step's Continue validation.
+ */
+@Composable
+private fun StepperHeader(current: Int, onJump: (Int) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            STEP_TITLES.indices.forEach { i ->
+                if (i > 0) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(2.dp)
+                            .background(
+                                if (i <= current) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outlineVariant,
+                            ),
+                    )
+                }
+                StepDot(
+                    index = i,
+                    done = i < current,
+                    active = i == current,
+                    onClick = if (i < current) ({ onJump(i) }) else null,
+                )
+            }
+        }
+        Text(
+            "Step ${current + 1} of ${STEP_TITLES.size} — ${STEP_TITLES[current]}",
+            style = MaterialTheme.typography.titleSmall,
+        )
+    }
+}
+
+@Composable
+private fun StepDot(index: Int, done: Boolean, active: Boolean, onClick: (() -> Unit)?) {
+    val bg = if (done || active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+    val fg = if (done || active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    Box(
+        modifier = Modifier
+            .size(26.dp)
+            .then(
+                if (active) Modifier.border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f), CircleShape)
+                else Modifier,
+            )
+            .padding(2.dp)
+            .background(bg, CircleShape)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            if (done) "✓" else "${index + 1}",
+            style = MaterialTheme.typography.labelSmall,
+            color = fg,
+        )
+    }
+}
 
 private fun stepReady(
     step: Int,
