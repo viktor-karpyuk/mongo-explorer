@@ -54,10 +54,6 @@ fun addShardScript(rsName: String, members: List<String>): String {
     """.trimIndent()
 }
 
-/** Prints the number of registered shards, asserted against the topology (PRV-BOOT-4). */
-fun shardCountScript(): String =
-    "print('SHARDS=' + db.getSiblingDB('config').shards.countDocuments({}));"
-
 /**
  * Creates the root user via the localhost exception (PRV-BOOT-5). Prints NOT_PRIMARY on
  * a secondary so the runner can walk the member list until it lands on the primary.

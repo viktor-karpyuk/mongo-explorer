@@ -56,10 +56,6 @@ class AddShardScriptTest {
         assertTrue("print('ADDED')" in script)
     }
 
-    @Test
-    fun `shard count script prints an assertable sentinel`() {
-        assertTrue("SHARDS=" in shardCountScript())
-    }
 }
 
 class CreateRootScriptTest {

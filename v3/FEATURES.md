@@ -112,6 +112,16 @@ minus heavy auth methods. ~80 features.
 - [x] Compare view: collection + sampled-schema + index diff between two open connections (DBA-DIFF)
 - [x] Security posture check (CIS-style): auth/TLS/binding/version/superuser/JS/cluster-auth/audit with 0–100 score (DBA-CIS)
 
+### 9e. Local cluster provisioning (v3.4 — `docs/v3/v3.4/`)
+- [x] Provision view (top bar): build standalone / replica set ×1-7 / sharded clusters on local Docker
+- [x] Custom topology builder: shards 1–6 × members 1|3, mongos 1–3 (default 2), config servers 1|3 (default 3)
+- [x] Deterministic compose rendering — loopback-only ports, lab labels, WT cache caps, healthchecks (schema v6 `labs` catalog)
+- [x] Auth default-on: per-lab keyfile (staged for mongod's permission rules) + generated root user, shown once
+- [x] App-driven phased bootstrap: up → wait-healthy → rs.initiate → sh.addShard → createUser → host-side verify
+- [x] Auto-registered connection (directConnection for RS labs, all-mongos URI for sharded) with LAB badge
+- [x] Lifecycle: stop/start (data kept, same ports), typed-confirm destroy (down -v + managed-dir + connection)
+- [x] Docker-truth reconciliation at boot/view-open; graceful no-Docker guidance panel; log redaction of credentials
+
 ## 10. I/O
 - [x] Export JSON / NDJSON / CSV (streaming)
 - [x] Import JSON / NDJSON / CSV (dry-run + commit)

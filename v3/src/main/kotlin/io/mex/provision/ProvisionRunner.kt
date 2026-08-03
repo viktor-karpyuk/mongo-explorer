@@ -174,9 +174,8 @@ class ProvisionRunner(private val ctx: AppContext, private val registry: MongoRe
                     val out = mongosh(lab.id, docker, mongos, addShardScript(rs.name, rs.members))
                     if ("ADDED" !in out) throw PhaseError(phase, "addShard ${rs.name} failed — see log")
                 }
-                val count = mongosh(lab.id, docker, mongos, shardCountScript())
-                val expected = "SHARDS=${(lab.topology as LabTopology.Sharded).shards}"
-                if (expected !in count) throw PhaseError(phase, "expected $expected, saw ${count.trim()}")
+                // The shard count is asserted host-side in `verify` (as root): the localhost
+                // exception authorizes addShard but not reading config.shards.
             }
 
             /* auth — root user via localhost exception (PRV-BOOT-5) */
