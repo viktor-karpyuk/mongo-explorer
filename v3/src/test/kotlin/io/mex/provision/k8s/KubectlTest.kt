@@ -120,3 +120,25 @@ class RbacTest {
         assertEquals(3, reqs.size)
     }
 }
+
+class ShortContextTest {
+    @Test
+    fun `eks arns collapse to the cluster name`() {
+        assertEquals(
+            "kubrik-k8s",
+            shortContext("arn:aws:eks:sa-east-1:532465846520:cluster/kubrik-k8s"),
+        )
+    }
+
+    @Test
+    fun `gke underscore soup collapses to the cluster name`() {
+        assertEquals("prod-eu", shortContext("gke_my-project_us-central1_prod-eu"))
+    }
+
+    @Test
+    fun `plain context names pass through untouched`() {
+        assertEquals("do-sfo3-fng", shortContext("do-sfo3-fng"))
+        assertEquals("docker-desktop", shortContext("docker-desktop"))
+        assertEquals("kind-mex-k8s-it", shortContext("kind-mex-k8s-it"))
+    }
+}

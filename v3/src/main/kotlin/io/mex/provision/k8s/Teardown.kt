@@ -56,7 +56,7 @@ fun teardownConsequence(spec: K8sDeploySpec, releasePvcs: Boolean, connectionNam
         add("credentials Secret")
     }
     append(owned.joinToString(", "))
-    append(" in context \"${spec.context}\", namespace \"${spec.namespace}\", and stops the port-forward. ")
+    append(" in cluster \"${shortContext(spec.context)}\", namespace \"${spec.namespace}\", and stops the port-forward. ")
     if (releasePvcs) {
         append("Data volumes WILL be deleted — this cannot be undone. ")
     } else {

@@ -35,6 +35,19 @@ fun parseServerVersion(versionJson: String): Pair<String?, String?> = runCatchin
     o["major"]?.jsonPrimitive?.content to o["minor"]?.jsonPrimitive?.content
 }.getOrDefault(null to null)
 
+/**
+ * Display name for a kubeconfig context. EKS contexts are full ARNs
+ * (`arn:aws:eks:sa-east-1:532465846520:cluster/kubrik-k8s`) and GKE contexts are
+ * underscore-packed (`gke_project_zone_name`); showing those verbatim in cards and
+ * dialogs buries the one part a human reads. The full value stays available wherever
+ * precision matters.
+ */
+fun shortContext(context: String): String = when {
+    context.startsWith("arn:") && "/" in context -> context.substringAfterLast('/')
+    context.startsWith("gke_") -> context.substringAfterLast('_')
+    else -> context
+}
+
 fun listContexts(tool: ToolInfo, kubeconfig: String? = null): List<String> =
     kubectlRead(tool, contextsArgs(kubeconfig))
         ?.takeIf { it.first == 0 }

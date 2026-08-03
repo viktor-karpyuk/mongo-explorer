@@ -30,6 +30,7 @@ import io.mex.backup.ToolProcess
 import io.mex.provision.k8s.InstallPlan
 import io.mex.provision.k8s.KubeTarget
 import io.mex.provision.k8s.previewCommands
+import io.mex.provision.k8s.shortContext
 import io.mex.ui.components.TypedConfirmDialog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -117,11 +118,18 @@ fun OperatorInstallDialog(
                     Text("• $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Text(
-                    "Target: ${target.context}",
-                    style = MaterialTheme.typography.labelSmall,
+                    "Target: ${shortContext(target.context)}",
+                    style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (shortContext(target.context) != target.context) {
+                    Text(
+                        target.context,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Text(
                     if (phase == "running") "Running step ${stepIndex + 1} of ${plan.steps.size}…"
                     else "These ${plan.steps.size} commands will run, in order:",
@@ -163,12 +171,15 @@ fun OperatorInstallDialog(
     )
 
     if (phase == "confirm") {
+        // Installing an operator is additive, not destructive — the friction should be
+        // proportional. Typing a 60-character EKS ARN only teaches people to paste.
         TypedConfirmDialog(
-            title = "Install into ${target.context}?",
-            consequence = "This applies ${plan.steps.size} manifests to the cluster \"${target.context}\", " +
-                "including cluster-wide CustomResourceDefinitions. It affects every namespace, " +
-                "not just the one you are deploying into.",
-            requiredText = target.context,
+            title = "Install into ${shortContext(target.context)}?",
+            consequence = "This applies ${plan.steps.size} manifests to cluster " +
+                "\"${shortContext(target.context)}\" (${target.context}), including cluster-wide " +
+                "CustomResourceDefinitions. It affects every namespace, not just the one you are " +
+                "deploying into.",
+            requiredText = "confirm",
             confirmLabel = "Install",
             onConfirm = { phase = "idle"; run() },
             onCancel = { phase = "idle" },

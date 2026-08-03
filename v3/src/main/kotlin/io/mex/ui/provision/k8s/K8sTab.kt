@@ -23,6 +23,7 @@ import io.mex.data.K8sProfile
 import io.mex.provision.k8s.ForwardState
 import io.mex.provision.k8s.findKubectl
 import io.mex.provision.k8s.k8sSummary
+import io.mex.provision.k8s.shortContext
 import io.mex.provision.k8s.shortHash
 import io.mex.provision.k8s.teardownConsequence
 import io.mex.ui.components.CopyChip
@@ -249,7 +250,7 @@ private fun DeploymentCard(
                         ProfileChip(d.spec.profile)
                     }
                     Text(
-                        "${d.spec.context} · ${d.spec.namespace}",
+                        "${shortContext(d.spec.context)} · ${d.spec.namespace}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontFamily = FontFamily.Monospace,

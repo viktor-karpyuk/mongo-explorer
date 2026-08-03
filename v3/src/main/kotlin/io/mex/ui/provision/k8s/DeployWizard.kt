@@ -38,6 +38,7 @@ import io.mex.provision.k8s.listNamespaces
 import io.mex.provision.k8s.listStorageClasses
 import io.mex.provision.k8s.render
 import io.mex.provision.k8s.runK8sPreflight
+import io.mex.provision.k8s.shortContext
 import io.mex.provision.k8s.shortHash
 import io.mex.provision.k8s.validate
 import io.mex.ui.components.TypedConfirmDialog
@@ -243,8 +244,9 @@ fun DeployWizard(
 
     if (confirming && hash != null) {
         TypedConfirmDialog(
-            title = "Apply to ${spec.context}?",
-            consequence = "This applies ${docs?.size ?: 0} documents to context \"${spec.context}\", " +
+            title = "Apply to ${shortContext(spec.context)}?",
+            consequence = "This applies ${docs?.size ?: 0} documents to cluster " +
+                "\"${shortContext(spec.context)}\", " +
                 "namespace \"${spec.namespace}\"" +
                 (if (spec.profile == K8sProfile.prod) ". Deletion protection will be ON." else "."),
             requiredText = spec.name,
@@ -290,7 +292,17 @@ private fun ContextStep(
     willCreate: Boolean,
 ) {
     Caption("The app never changes your current-context or edits kubeconfig.")
-    Picker("Context", contexts, context, onContext)
+    // EKS/GKE context names are ARNs and underscore soup — show the cluster name, keep
+    // the full value on the line below so there is no ambiguity about the target.
+    Picker("Context", contexts, context, onContext, label2 = ::shortContext)
+    if (context.isNotBlank() && shortContext(context) != context) {
+        Text(
+            context,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
     OutlinedTextField(
         value = namespace,
         onValueChange = onNamespace,
@@ -658,17 +670,24 @@ private fun Caption(text: String) {
 }
 
 @Composable
-private fun Picker(label: String, options: List<String>, selected: String, onSelect: (String) -> Unit) {
+private fun Picker(
+    label: String,
+    options: List<String>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    /** Display transform; the underlying value is always the real one. */
+    label2: (String) -> String = { it },
+) {
     var open by remember { mutableStateOf(false) }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(140.dp))
         Box {
             OutlinedButton(onClick = { open = true }) {
-                Text(selected.ifBlank { "(none)" }, style = MaterialTheme.typography.labelMedium)
+                Text(selected.ifBlank { "(none)" }.let(label2), style = MaterialTheme.typography.labelMedium)
             }
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 options.forEach { o ->
-                    DropdownMenuItem(text = { Text(o) }, onClick = { open = false; onSelect(o) })
+                    DropdownMenuItem(text = { Text(label2(o)) }, onClick = { open = false; onSelect(o) })
                 }
             }
         }
