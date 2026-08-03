@@ -197,7 +197,8 @@ private fun ShardedDiagram(
                         menu = buildList {
                             add(MenuEntry("Copy hosts") { copy(s.hosts.joinToString(",")) })
                             actions.onRemoveShard?.let { rm ->
-                                if (!s.draining) add(MenuEntry("Drain & remove…", danger = true) { rm(s) })
+                                if (s.draining) add(MenuEntry("Drain status…") { rm(s) })
+                                else add(MenuEntry("Drain & remove…", danger = true) { rm(s) })
                             }
                         },
                     ) {

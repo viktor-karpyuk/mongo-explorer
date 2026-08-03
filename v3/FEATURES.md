@@ -55,6 +55,9 @@ minus heavy auth methods. ~80 features.
 
 ## 7. Cluster ops
 - [x] Topology diagram — routers → config servers/shards (sharded), primary → members (replica set), wire colour/dash by health and role; balancer state
+- [x] Interactive topology (TOPO-1..5): selectable nodes + detail strip, 5 s auto-refresh, replication arrows, hidden/delayed/non-voting badges
+- [x] Node actions: copy host, direct-connect twin (directConnection URI, srv→tls/authSource preserved), step down, edit member, rs.freeze, remove member (typed confirm + majority preview)
+- [x] Sharded actions: balancer pause/resume, per-shard chunk counts + distribution bars, drain & remove shard with live drain status (typed confirm)
 - [x] Topology member cards (state / lag / ping)
 - [x] 0–100 health pill
 - [x] rs.conf() viewer

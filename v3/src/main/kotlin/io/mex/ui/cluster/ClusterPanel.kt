@@ -29,6 +29,7 @@ import io.mex.mongo.MongoRegistry
 import io.mex.mongo.RsConfig
 import io.mex.mongo.RsMemberConfig
 import io.mex.mongo.RsSetting
+import io.mex.mongo.ShardInfo
 import io.mex.mongo.clusterSnapshot
 import io.mex.mongo.directNodeUri
 import io.mex.mongo.freezeMember
@@ -57,6 +58,8 @@ fun ClusterPanel(
     var editingMember by remember(connectionId) { mutableStateOf<RsMemberConfig?>(null) }
     var freezingHost by remember(connectionId) { mutableStateOf<String?>(null) }
     var balancerTarget by remember(connectionId) { mutableStateOf<Boolean?>(null) }
+    var removingMember by remember(connectionId) { mutableStateOf<RsMemberConfig?>(null) }
+    var removingShard by remember(connectionId) { mutableStateOf<ShardInfo?>(null) }
     val scope = rememberCoroutineScope()
 
     suspend fun fetch() {
@@ -166,6 +169,12 @@ fun ClusterPanel(
                     onFreeze = if (!readOnly) {
                         { host -> freezingHost = host }
                     } else null,
+                    onRemoveMember = if (!readOnly) {
+                        { m -> removingMember = m }
+                    } else null,
+                    onRemoveShard = if (!readOnly) {
+                        { sh -> removingShard = sh }
+                    } else null,
                 )
                 ClusterTopologyDiagram(s, actions)
                 s.sharded?.balancerEnabled?.let { on ->
@@ -242,6 +251,26 @@ fun ClusterPanel(
                 }
             },
             onClose = { freezingHost = null },
+        )
+    }
+    removingMember?.let { m ->
+        RemoveMemberDialog(
+            connectionId = connectionId,
+            registry = registry,
+            member = m,
+            allMembers = snap?.rsConfig?.members.orEmpty(),
+            onClose = { removingMember = null },
+            onDone = { reload() },
+        )
+    }
+    removingShard?.let { sh ->
+        RemoveShardDialog(
+            connectionId = connectionId,
+            registry = registry,
+            shard = sh,
+            shardCount = snap?.sharded?.shards?.size ?: 0,
+            onClose = { removingShard = null },
+            onDone = { reload() },
         )
     }
     balancerTarget?.let { enable ->

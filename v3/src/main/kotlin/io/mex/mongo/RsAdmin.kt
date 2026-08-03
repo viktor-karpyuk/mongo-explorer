@@ -88,6 +88,25 @@ fun majorityShift(members: List<RsMemberConfig>, patch: MemberPatch): Pair<Int, 
     return (before / 2 + 1) to (after / 2 + 1)
 }
 
+/* ============================ member removal ============================ */
+
+/** Drops member [memberId] from a fresh raw config, bumping the version (TOPO-5). */
+fun buildRemoveMember(rawConfig: Document, memberId: Int): Document {
+    val next = Document(rawConfig)
+    next["version"] = ((rawConfig["version"] as? Number)?.toInt() ?: 1) + 1
+    next["members"] = (rawConfig["members"] as? List<*>).orEmpty().filterIsInstance<Document>()
+        .filter { (it["_id"] as? Number)?.toInt() != memberId }
+        .map { Document(it) }
+    return next
+}
+
+/** Voting majority before → after removing [memberId]; the preview must show this. */
+fun removalMajorityShift(members: List<RsMemberConfig>, memberId: Int): Pair<Int, Int> {
+    val before = members.count { it.votes > 0 }
+    val after = members.count { it.id != memberId && it.votes > 0 }
+    return (before / 2 + 1) to (after / 2 + 1)
+}
+
 fun fetchRawRsConfig(client: MongoClient): Document {
     val res = client.getDatabase("admin").runCommand(Document("replSetGetConfig", 1))
     return (res["config"] as? Document) ?: res
