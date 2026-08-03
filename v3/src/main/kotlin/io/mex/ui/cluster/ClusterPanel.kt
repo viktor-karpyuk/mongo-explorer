@@ -53,6 +53,9 @@ fun ClusterPanel(
 ) {
     var snap by remember(connectionId) { mutableStateOf<ClusterSnapshot?>(null) }
     var error by remember(connectionId) { mutableStateOf<String?>(null) }
+    // Kept apart from [error]: the poll clears that one on every success, which wiped
+    // action failures (freeze, balancer, direct connect) off the screen within 5 s.
+    var actionError by remember(connectionId) { mutableStateOf<String?>(null) }
     var auto by remember(connectionId) { mutableStateOf(true) }
     var steppingDown by remember(connectionId) { mutableStateOf(false) }
     var editingMember by remember(connectionId) { mutableStateOf<RsMemberConfig?>(null) }
@@ -99,7 +102,7 @@ fun ClusterPanel(
                 }.also { connectionsVm.reload() }
                 connectionsVm.open(id)
                 selection.select(Selection.ConnectionView(id))
-            }.onFailure { error = "Direct connect failed: ${it.message}" }
+            }.onFailure { actionError = "Direct connect failed: ${it.message}" }
         }
     }
     // Elections, lag and drains move on their own; poll while auto is on so the
@@ -130,6 +133,12 @@ fun ClusterPanel(
             OutlinedButton(onClick = { reload() }) { Text("Refresh") }
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        actionError?.let { msg ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(msg, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+                TextButton(onClick = { actionError = null }) { Text("Dismiss") }
+            }
+        }
 
         snap?.let { s ->
             Card(border = CardDefaults.outlinedCardBorder()) {
@@ -246,7 +255,7 @@ fun ClusterPanel(
                         val record = withContext(Dispatchers.IO) { ctx.connections.get(connectionId) }
                             ?: error("connection record missing")
                         withContext(Dispatchers.IO) { freezeMember(record.uri, host, secs) }
-                    }.onFailure { error = "Freeze failed: ${it.message}" }
+                    }.onFailure { actionError = "Freeze failed: ${it.message}" }
                     fetch()
                 }
             },
@@ -269,6 +278,7 @@ fun ClusterPanel(
             registry = registry,
             shard = sh,
             shardCount = snap?.sharded?.shards?.size ?: 0,
+            balancerPaused = snap?.sharded?.balancerEnabled == false,
             onClose = { removingShard = null },
             onDone = { reload() },
         )
@@ -282,7 +292,7 @@ fun ClusterPanel(
                     runCatching {
                         val client = registry.client(connectionId) ?: error("not connected")
                         withContext(Dispatchers.IO) { setBalancer(client, enable) }
-                    }.onFailure { error = "Balancer change failed: ${it.message}" }
+                    }.onFailure { actionError = "Balancer change failed: ${it.message}" }
                     fetch()
                 }
             },

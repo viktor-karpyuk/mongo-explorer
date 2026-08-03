@@ -196,6 +196,7 @@ fun RemoveShardDialog(
     registry: MongoRegistry,
     shard: ShardInfo,
     shardCount: Int,
+    balancerPaused: Boolean,
     onClose: () -> Unit,
     onDone: () -> Unit,
 ) {
@@ -216,7 +217,18 @@ fun RemoveShardDialog(
                 status = it
                 errText = null
                 onDone()
-            }.onFailure { errText = it.message ?: "removeShard failed" }
+            }.onFailure { e ->
+                val msg = e.message.orEmpty()
+                // A drain that finished between polls removes the shard, and the status
+                // probe then errors — that outcome is a success, not a failure.
+                errText = if (msg.contains("ShardNotFound", ignoreCase = true) ||
+                    msg.contains("does not exist", ignoreCase = true)
+                ) {
+                    "Shard is no longer part of the cluster — the drain completed and it was removed."
+                } else {
+                    msg.ifEmpty { "removeShard failed" }
+                }
+            }
             running = false
         }
     }
@@ -230,6 +242,14 @@ fun RemoveShardDialog(
         text = {
             Column(modifier = Modifier.width(460.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(shard.name, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                if (balancerPaused) {
+                    Text(
+                        "The balancer is paused — chunks only migrate while it runs, so the " +
+                            "drain will not make progress until the balancer is resumed.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 if (status == null && !shard.draining) {
                     Text(
                         "Every chunk on this shard migrates to the remaining shards, then the " +

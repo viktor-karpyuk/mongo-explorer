@@ -10,6 +10,7 @@ package io.mex.mongo
  *   the SRV defaults, so `tls=true` and `authSource=admin` are added unless the query
  *   already pins them — silently downgrading Atlas to plaintext would be worse than wrong.
  * - SRV-only options (`srvMaxHosts`, `srvServiceName`) are dropped with the scheme.
+ * - `loadBalanced` is dropped — the driver rejects it combined with `directConnection`.
  * - Credentials, auth db path and every other option round-trip untouched.
  */
 fun directNodeUri(baseUri: String, host: String): String {
@@ -23,7 +24,8 @@ fun directNodeUri(baseUri: String, host: String): String {
         .filter { it.isNotBlank() }
         .filterNot {
             val k = it.substringBefore('=').lowercase()
-            k == "replicaset" || k == "directconnection" || k == "srvmaxhosts" || k == "srvservicename"
+            k == "replicaset" || k == "directconnection" || k == "srvmaxhosts" ||
+                k == "srvservicename" || k == "loadbalanced"
         }
         .toMutableList()
     fun has(key: String) = params.any { it.substringBefore('=').equals(key, ignoreCase = true) }

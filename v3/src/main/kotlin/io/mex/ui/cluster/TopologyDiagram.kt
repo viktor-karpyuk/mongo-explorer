@@ -74,7 +74,9 @@ private sealed class Payload {
  */
 @Composable
 fun ClusterTopologyDiagram(snap: ClusterSnapshot, actions: TopologyActions = TopologyActions()) {
-    var selected by remember { mutableStateOf<String?>(null) }
+    // Keyed on cluster identity: selection survives the 5 s polls (same cluster) but
+    // resets when the panel is re-pointed at a different connection.
+    var selected by remember(snap.topology.setName, snap.endpoint) { mutableStateOf<String?>(null) }
     val payloads = payloadsFor(snap)
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -104,22 +106,27 @@ private fun routersFor(snap: ClusterSnapshot): List<RouterInfo> =
     snap.sharded?.routers?.takeIf { it.isNotEmpty() }
         ?: listOfNotNull(snap.endpoint?.let { RouterInfo(it, 0, null) })
 
+/*
+ * Node keys are identity-based ("m:<host>", "s:<name>", "r:<host>") — positional keys
+ * made the selection and wire colours silently jump to a different node whenever an
+ * election or a shard removal reordered the underlying lists between polls.
+ */
 private fun payloadsFor(snap: ClusterSnapshot): Map<String, Payload> = buildMap {
     when (snap.topology.type) {
         "sharded" -> {
-            routersFor(snap).forEachIndexed { i, r -> put("r$i", Payload.Router(r)) }
+            routersFor(snap).forEach { r -> put("r:${r.host}", Payload.Router(r)) }
             val sh = snap.sharded
             if (!sh?.configHosts.isNullOrEmpty()) {
                 put("cfg", Payload.ConfigSvr(sh?.configRsName, sh?.configHosts.orEmpty()))
             }
             val shards = sh?.shards.orEmpty()
             val total = shards.mapNotNull { it.chunks }.sum().takeIf { it > 0 }
-            shards.forEachIndexed { i, s -> put("s$i", Payload.Shard(s, total)) }
+            shards.forEach { s -> put("s:${s.name}", Payload.Shard(s, total)) }
         }
         "replicaset" -> {
             val cfgByHost = snap.rsConfig?.members?.associateBy { it.host }.orEmpty()
-            snap.topology.members.forEachIndexed { i, m ->
-                put("m$i", Payload.Member(m, cfgByHost[m.name]))
+            snap.topology.members.forEach { m ->
+                put("m:${m.name}", Payload.Member(m, cfgByHost[m.name]))
             }
         }
         else -> put("solo", Payload.Single(snap.endpoint))
@@ -143,10 +150,10 @@ private fun ShardedDiagram(
     val shards = sh?.shards.orEmpty()
 
     DiagramSurface(
-        sources = routers.indices.map { "r$it" },
+        sources = routers.map { "r:${it.host}" },
         targets = buildList {
             if (hasConfig) add("cfg" to LinkStyle.Dashed)
-            shards.indices.forEach { add("s$it" to LinkStyle.Solid) }
+            shards.forEach { add("s:${it.name}" to LinkStyle.Solid) }
         },
     ) { anchor ->
         Column(
@@ -154,11 +161,12 @@ private fun ShardedDiagram(
             verticalArrangement = Arrangement.spacedBy(44.dp),
         ) {
             NodeRow {
-                routers.forEachIndexed { i, r ->
+                routers.forEach { r ->
+                    val key = "r:${r.host}"
                     Node(
-                        anchor = anchor("r$i"),
-                        selected = selected == "r$i",
-                        onSelect = { onSelect("r$i") },
+                        anchor = anchor(key),
+                        selected = selected == key,
+                        onSelect = { onSelect(key) },
                         menu = buildList {
                             add(MenuEntry("Copy host") { copy(r.host) })
                             actions.onDirectConnect?.let { dc ->
@@ -189,11 +197,12 @@ private fun ShardedDiagram(
                     }
                 }
                 val totalChunks = shards.mapNotNull { it.chunks }.sum()
-                shards.forEachIndexed { i, s ->
+                shards.forEach { s ->
+                    val key = "s:${s.name}"
                     Node(
-                        anchor = anchor("s$i"),
-                        selected = selected == "s$i",
-                        onSelect = { onSelect("s$i") },
+                        anchor = anchor(key),
+                        selected = selected == key,
+                        onSelect = { onSelect(key) },
                         menu = buildList {
                             add(MenuEntry("Copy hosts") { copy(s.hosts.joinToString(",")) })
                             actions.onRemoveShard?.let { rm ->
@@ -238,8 +247,8 @@ private fun ReplicaSetDiagram(
         return
     }
     val cfgByHost = snap.rsConfig?.members?.associateBy { it.host }.orEmpty()
-    val primaryIdx = members.indexOfFirst { it.state == "PRIMARY" }
-    val restIdx = members.indices.filter { it != primaryIdx }
+    val primaryMember = members.firstOrNull { it.state == "PRIMARY" }
+    val rest = members.filter { it !== primaryMember }
 
     fun menuFor(m: MemberInfo): List<MenuEntry> = buildList {
         val cfg = cfgByHost[m.name]
@@ -260,13 +269,14 @@ private fun ReplicaSetDiagram(
     }
 
     DiagramSurface(
-        sources = if (primaryIdx >= 0) listOf("m$primaryIdx") else emptyList(),
-        targets = restIdx.map { i ->
-            "m$i" to if (members[i].state == "ARBITER") LinkStyle.Dashed else LinkStyle.Solid
+        sources = listOfNotNull(primaryMember?.let { "m:${it.name}" }),
+        targets = rest.map { m ->
+            "m:${m.name}" to if (m.state == "ARBITER") LinkStyle.Dashed else LinkStyle.Solid
         },
         linkTone = { key ->
-            val m = members[key.removePrefix("m").toInt()]
+            val m = members.firstOrNull { "m:${it.name}" == key }
             when {
+                m == null -> StatusTone.Neutral
                 m.health != 1 || m.state == "DOWN" -> StatusTone.Bad
                 (m.lagSeconds ?: 0) > 10 -> StatusTone.Warn
                 else -> StatusTone.Neutral
@@ -278,24 +288,26 @@ private fun ReplicaSetDiagram(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(44.dp),
         ) {
-            if (primaryIdx >= 0) {
+            primaryMember?.let { p ->
+                val key = "m:${p.name}"
                 NodeRow {
                     MemberNode(
-                        members[primaryIdx], cfgByHost[members[primaryIdx].name],
-                        anchor("m$primaryIdx"), selected == "m$primaryIdx",
-                        { onSelect("m$primaryIdx") }, menuFor(members[primaryIdx]),
+                        p, cfgByHost[p.name],
+                        anchor(key), selected == key,
+                        { onSelect(key) }, menuFor(p),
                     )
                 }
             }
             NodeRow {
-                restIdx.forEach { i ->
+                rest.forEach { m ->
+                    val key = "m:${m.name}"
                     MemberNode(
-                        members[i], cfgByHost[members[i].name],
-                        anchor("m$i"), selected == "m$i",
-                        { onSelect("m$i") }, menuFor(members[i]),
+                        m, cfgByHost[m.name],
+                        anchor(key), selected == key,
+                        { onSelect(key) }, menuFor(m),
                     )
                 }
-                if (primaryIdx < 0) {
+                if (primaryMember == null) {
                     Node({}, tinted = true) {
                         NodeTitle("no primary", StatusTone.Bad)
                         snap.topology.primary?.let { Small("last known: $it") }
@@ -645,12 +657,15 @@ private fun Small(text: String) {
     )
 }
 
-/** Thin proportional bar: this shard's slice of all chunks. Imbalance shows at a glance. */
+/**
+ * Thin proportional bar: this shard's slice of all chunks. Fixed width — fillMaxWidth
+ * inside the node's widthIn(max) column inflated every shard node to maximum width.
+ */
 @Composable
 private fun ChunkBar(fraction: Float) {
     Box(
         modifier = Modifier
-            .fillMaxWidth()
+            .width(120.dp)
             .height(4.dp)
             .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), RoundedCornerShape(2.dp)),
     ) {

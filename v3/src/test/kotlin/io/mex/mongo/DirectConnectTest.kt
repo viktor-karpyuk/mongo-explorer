@@ -63,6 +63,14 @@ class DirectConnectTest {
     }
 
     @Test
+    fun `loadBalanced is dropped — it conflicts with directConnection`() {
+        assertEquals(
+            "mongodb://u:p@n:1/?tls=true&authSource=admin&directConnection=true",
+            directNodeUri("mongodb+srv://u:p@c.x.net/?loadBalanced=true", "n:1"),
+        )
+    }
+
+    @Test
     fun `garbage is rejected`() {
         assertFailsWith<IllegalArgumentException> { directNodeUri("postgres://x", "h:1") }
     }
