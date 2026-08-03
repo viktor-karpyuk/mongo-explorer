@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "io.mex"
-version = "3.4.0-alpha"
+version = "3.5.0-alpha"
 
 repositories {
     mavenCentral()
@@ -65,7 +65,7 @@ compose.desktop {
             modules("java.sql", "java.naming", "jdk.crypto.ec", "jdk.unsupported")
             packageName = "Mongo Explorer v3"
             // Tracks the milestone line (Compose Desktop requires MAJOR >= 1 anyway).
-            packageVersion = "3.4.0"
+            packageVersion = "3.5.0"
             description = "Mongo Explorer v3 — Kotlin + Compose Desktop rewrite"
             vendor = "io.mex"
             macOS {
