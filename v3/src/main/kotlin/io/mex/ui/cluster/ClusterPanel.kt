@@ -22,6 +22,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.mex.AppContext
+import io.mex.data.ConnectionInput
 import io.mex.mongo.ClusterSnapshot
 import io.mex.mongo.MemberInfo
 import io.mex.mongo.MongoRegistry
@@ -29,7 +30,9 @@ import io.mex.mongo.RsConfig
 import io.mex.mongo.RsMemberConfig
 import io.mex.mongo.RsSetting
 import io.mex.mongo.clusterSnapshot
+import io.mex.mongo.directNodeUri
 import io.mex.ui.connections.ConnectionsViewModel
+import io.mex.ui.state.Selection
 import io.mex.ui.state.SelectionStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -64,6 +67,34 @@ fun ClusterPanel(
         }
     }
     fun reload() { scope.launch { fetch() } }
+
+    /**
+     * Registers (or reuses, by name) a directConnection=true twin of this connection
+     * aimed at [host], connects it and navigates there — the whole app scoped to one
+     * node. Wrong-credential nodes surface as a normal error pill on the new record.
+     */
+    fun directConnect(host: String) {
+        scope.launch {
+            runCatching {
+                val record = withContext(Dispatchers.IO) { ctx.connections.get(connectionId) }
+                    ?: return@launch
+                val name = "${record.name} → $host"
+                val existingId = connectionsVm.list.firstOrNull { it.name == name }?.id
+                val id = existingId ?: withContext(Dispatchers.IO) {
+                    ctx.connections.create(
+                        ConnectionInput(
+                            name = name,
+                            uri = directNodeUri(record.uri, host),
+                            notes = "Direct connection to $host (created from the topology diagram)",
+                            readOnly = record.readOnly,
+                        ),
+                    ).id
+                }.also { connectionsVm.reload() }
+                connectionsVm.open(id)
+                selection.select(Selection.ConnectionView(id))
+            }.onFailure { error = "Direct connect failed: ${it.message}" }
+        }
+    }
     // Elections, lag and drains move on their own; poll while auto is on so the
     // diagram tells the truth without the user hammering Refresh.
     LaunchedEffect(connectionId, auto) {
@@ -125,6 +156,9 @@ fun ClusterPanel(
                     onEditMember = if (!readOnly) {
                         { m -> editingMember = m }
                     } else null,
+                    // Navigation, not mutation — available on read-only connections too;
+                    // the twin record inherits the read-only flag.
+                    onDirectConnect = { host -> directConnect(host) },
                 )
                 ClusterTopologyDiagram(s, actions)
                 s.sharded?.balancerEnabled?.let { on ->
