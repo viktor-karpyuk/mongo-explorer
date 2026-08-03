@@ -2,6 +2,7 @@ package io.mex
 
 import io.mex.data.BackupsRepo
 import io.mex.data.ConnectionsRepo
+import io.mex.data.K8sDeploymentsRepo
 import io.mex.data.LabsRepo
 import io.mex.data.MigrationJobsRepo
 import io.mex.data.PrefsRepo
@@ -20,6 +21,7 @@ class AppContext(
     val migrations: MigrationJobsRepo,
     val backups: BackupsRepo,
     val labs: LabsRepo,
+    val k8sDeployments: K8sDeploymentsRepo,
     val dataDir: Path,
 ) : AutoCloseable {
     /** Managed location for mongodump output; every catalog row's path lives under it. */
@@ -37,6 +39,7 @@ class AppContext(
             val migrations = MigrationJobsRepo(store).also { it.reconcileOrphans() }
             val backups = BackupsRepo(store).also { it.reconcileOrphans() }
             val labs = LabsRepo(store).also { it.reconcileOrphans() }
+            val k8sDeployments = K8sDeploymentsRepo(store).also { it.reconcileOrphans() }
             return AppContext(
                 store = store,
                 connections = ConnectionsRepo(store),
@@ -46,6 +49,7 @@ class AppContext(
                 migrations = migrations,
                 backups = backups,
                 labs = labs,
+                k8sDeployments = k8sDeployments,
                 dataDir = dir,
             )
         }

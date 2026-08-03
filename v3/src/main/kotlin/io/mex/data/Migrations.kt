@@ -161,4 +161,29 @@ internal val MIGRATIONS: List<Migration> = listOf(
             CREATE INDEX idx_labs_created ON labs(created_at DESC)
         """.trimIndent(),
     ),
+    // v3.5 — Kubernetes production provisioning catalog (K8P-CR-3). connection_id is
+    // deliberately not a FK (K8P-CONN-5); secret material never lands here (K8P-SEC).
+    Migration(
+        version = 7,
+        sql = """
+            CREATE TABLE k8s_deployments (
+              id            TEXT PRIMARY KEY,
+              name          TEXT NOT NULL,
+              context       TEXT NOT NULL,
+              namespace     TEXT NOT NULL,
+              spec          TEXT NOT NULL,
+              status        TEXT NOT NULL CHECK (status IN
+                              ('applying','pending','ready','degraded','failed','deleting','missing')),
+              status_detail TEXT,
+              bundle_hash   TEXT,
+              connection_id TEXT,
+              error         TEXT,
+              created_at    INTEGER NOT NULL,
+              applied_at    INTEGER,
+              UNIQUE (context, namespace, name)
+            );
+
+            CREATE INDEX idx_k8s_deployments_created ON k8s_deployments(created_at DESC)
+        """.trimIndent(),
+    ),
 )

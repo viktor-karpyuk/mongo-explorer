@@ -19,11 +19,11 @@ class LabsRepoTest {
     }
 
     @Test
-    fun `fresh store reaches schema version 6`() {
+    fun `fresh store reaches at least schema version 6`() {
         store.conn.createStatement().use { st ->
             st.executeQuery("SELECT MAX(version) FROM schema_version").use { rs ->
                 rs.next()
-                assertEquals(6, rs.getInt(1))
+                assertTrue(rs.getInt(1) >= 6)
             }
         }
     }

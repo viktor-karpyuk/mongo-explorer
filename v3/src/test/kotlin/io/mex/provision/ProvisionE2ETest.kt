@@ -50,6 +50,7 @@ class ProvisionE2ETest {
             migrations = MigrationJobsRepo(store),
             backups = BackupsRepo(store),
             labs = LabsRepo(store),
+            k8sDeployments = io.mex.data.K8sDeploymentsRepo(store),
             dataDir = dir,
         )
     }
