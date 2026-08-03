@@ -273,7 +273,9 @@ private fun psmdbCr(spec: K8sDeploySpec): String {
         sb.appendLine("    - delete-psmdb-pods-in-order")
     }
     sb.appendLine("spec:")
-    sb.appendLine("  crVersion: 1.16.0")
+    // Must track the operator the installer deploys — a crVersion ahead of the running
+    // operator is rejected outright.
+    sb.appendLine("  crVersion: $PSMDB_VERSION")
     sb.appendLine("  image: percona/percona-server-mongodb:${spec.mongoVersion}")
     sb.appendLine("  allowUnsafeConfigurations: ${!prod}")
     sb.appendLine("  updateStrategy: SmartUpdate")

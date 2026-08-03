@@ -23,13 +23,16 @@ import io.mex.data.K8sTopology
 import io.mex.data.PreflightResult
 import io.mex.data.TlsChoice
 import io.mex.provision.k8s.DetectedOperator
+import io.mex.provision.k8s.InstallComponent
 import io.mex.provision.k8s.K8S_MONGO_VERSIONS
 import io.mex.provision.k8s.KubeTarget
 import io.mex.provision.k8s.OperatorCapability
 import io.mex.provision.k8s.bundleHash
 import io.mex.provision.k8s.bundleText
 import io.mex.provision.k8s.capabilities
+import io.mex.provision.k8s.certManagerPresent
 import io.mex.provision.k8s.detectOperators
+import io.mex.provision.k8s.installPlan
 import io.mex.provision.k8s.listContexts
 import io.mex.provision.k8s.listNamespaces
 import io.mex.provision.k8s.listStorageClasses
@@ -82,7 +85,10 @@ fun DeployWizard(
     var namespaces by remember { mutableStateOf<List<String>>(emptyList()) }
     var storageClasses by remember { mutableStateOf<List<String>>(emptyList()) }
     var detected by remember { mutableStateOf<List<DetectedOperator>>(emptyList()) }
+    var certManager by remember { mutableStateOf(false) }
     var probing by remember { mutableStateOf(false) }
+    var installing by remember { mutableStateOf<InstallComponent?>(null) }
+    var reprobe by remember { mutableStateOf(0) }
     var preflight by remember { mutableStateOf<PreflightResult?>(null) }
     var preflighting by remember { mutableStateOf(false) }
     var confirming by remember { mutableStateOf(false) }
@@ -91,14 +97,18 @@ fun DeployWizard(
         contexts = withContext(Dispatchers.IO) { listContexts(tool) }
         context = contexts.firstOrNull().orEmpty()
     }
-    LaunchedEffect(context) {
+    LaunchedEffect(context, reprobe) {
         if (context.isBlank()) return@LaunchedEffect
         probing = true
         val target = KubeTarget(context)
         namespaces = withContext(Dispatchers.IO) { listNamespaces(tool, target) }
         detected = withContext(Dispatchers.IO) { detectOperators(tool, target) }
         storageClasses = withContext(Dispatchers.IO) { listStorageClasses(tool, target) }
-        operator = detected.firstOrNull()?.operator
+        certManager = withContext(Dispatchers.IO) { certManagerPresent(tool, target) }
+        // Keep the user's pick when a re-probe finds it; otherwise fall back.
+        if (operator == null || detected.none { it.operator == operator }) {
+            operator = detected.firstOrNull()?.operator
+        }
         probing = false
     }
 
@@ -174,7 +184,13 @@ fun DeployWizard(
                         namespaces, namespace, { namespace = it; namespaceCreated = it !in namespaces },
                         namespaceCreated,
                     )
-                    1 -> OperatorStep(detected, operator) { operator = it }
+                    1 -> OperatorStep(
+                        detected = detected,
+                        selected = operator,
+                        onSelect = { operator = it },
+                        certManager = certManager,
+                        onInstall = { installing = it },
+                    )
                     2 -> ProfileStep(profile) { profile = it }
                     3 -> TopologyStep(
                         operator, profile, shape, { shape = it },
@@ -214,6 +230,16 @@ fun DeployWizard(
             }
         },
     )
+
+    installing?.let { component ->
+        OperatorInstallDialog(
+            tool = tool,
+            target = KubeTarget(context),
+            plan = installPlan(component, KubeTarget(context)),
+            onClose = { installing = null },
+            onInstalled = { reprobe++ },
+        )
+    }
 
     if (confirming && hash != null) {
         TypedConfirmDialog(
@@ -289,36 +315,78 @@ private fun ContextStep(
 }
 
 @Composable
-private fun OperatorStep(detected: List<DetectedOperator>, selected: K8sOperator?, onSelect: (K8sOperator) -> Unit) {
+private fun OperatorStep(
+    detected: List<DetectedOperator>,
+    selected: K8sOperator?,
+    onSelect: (K8sOperator) -> Unit,
+    certManager: Boolean,
+    onInstall: (InstallComponent) -> Unit,
+) {
     if (detected.isEmpty()) {
         Text(
-            "No supported operator detected in this cluster.",
-            color = MaterialTheme.colorScheme.error,
-            style = MaterialTheme.typography.bodySmall,
+            "No MongoDB operator is installed in this cluster.",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
         )
-        Caption("Install the MongoDB Community Operator or the Percona Server for MongoDB Operator, then re-open this wizard. This app detects operators; it never installs them.")
-        return
+        Caption(
+            "An operator is the thing that turns a CR into running MongoDB pods. Pick one and " +
+                "this app will install it for you — you'll see the exact commands first.",
+        )
+    } else {
+        detected.forEach { d ->
+            val caps = capabilities(d.operator)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RadioButton(selected = selected == d.operator, onClick = { onSelect(d.operator) })
+                Column {
+                    Text(
+                        "${d.operator.name.uppercase()} ${d.version ?: "(version unknown)"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        caps.joinToString(" · ") { it.name.lowercase().replace('_', ' ') },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
     }
-    detected.forEach { d ->
-        val caps = capabilities(d.operator)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            RadioButton(selected = selected == d.operator, onClick = { onSelect(d.operator) })
-            Column {
-                Text(
-                    "${d.operator.name.uppercase()} ${d.version ?: "(version unknown)"}",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Text(
-                    caps.joinToString(" · ") { it.name.lowercase().replace('_', ' ') },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+
+    // Anything missing gets an install offer, whether or not something else is present.
+    val missing = buildList {
+        if (detected.none { it.operator == K8sOperator.psmdb }) add(InstallComponent.psmdb)
+        if (detected.none { it.operator == K8sOperator.mco }) add(InstallComponent.mco)
+        if (!certManager) add(InstallComponent.certManager)
+    }
+    if (missing.isNotEmpty()) {
+        Text(
+            "Available to install",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        missing.forEach { c ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = { onInstall(c) }) { Text("Install ${installLabel(c)}") }
+                Text(installHint(c), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
     if (detected.none { it.operator == K8sOperator.psmdb }) {
         Caption("Sharded clusters need the Percona operator — MCO cannot express sharding.")
     }
+}
+
+private fun installLabel(c: InstallComponent): String = when (c) {
+    InstallComponent.psmdb -> "Percona operator"
+    InstallComponent.mco -> "MongoDB Community Operator"
+    InstallComponent.certManager -> "cert-manager"
+}
+
+private fun installHint(c: InstallComponent): String = when (c) {
+    InstallComponent.psmdb -> "replica sets + sharding + PBM backups"
+    InstallComponent.mco -> "replica sets only, smaller footprint"
+    InstallComponent.certManager -> "needed for the cert-manager TLS path (Prod)"
 }
 
 @Composable
