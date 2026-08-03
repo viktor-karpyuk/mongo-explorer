@@ -73,7 +73,13 @@ class ProvisionRunner(private val ctx: AppContext, private val registry: MongoRe
         return lab.id
     }
 
-    fun start(labId: String) = launchOp(labId, "start") { runStart(ctx.labs.get(labId) ?: return@launchOp) }
+    fun start(labId: String) {
+        // Belt-and-braces for PRV-LIFE-5 — the UI disables Start, but flipping a stopped
+        // lab to failed from inside the op would be worse than silently refusing.
+        val lab = ctx.labs.get(labId) ?: return
+        if (lab.appMajor > io.mex.data.LAB_APP_MAJOR) return
+        launchOp(labId, "start") { runStart(ctx.labs.get(labId) ?: return@launchOp) }
+    }
 
     fun stop(labId: String) = launchOp(labId, "stop") { runStop(ctx.labs.get(labId) ?: return@launchOp) }
 
@@ -105,23 +111,56 @@ class ProvisionRunner(private val ctx: AppContext, private val registry: MongoRe
     /* ===================== operations ===================== */
 
     private fun launchOp(labId: String, opName: String, body: suspend () -> Unit) {
-        if (ops.containsKey(labId)) return
-        val job = scope.launch {
+        // Lazy start closes two races: an op finishing before its map insert would leave a
+        // completed job stuck in `ops` (lab busy forever), and reconcile() could observe the
+        // row between create and insert and flip a live provision to failed.
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 body()
             } catch (e: CancellationException) {
-                ctx.labs.setStatus(labId, LabStatus.failed, "cancelled during $opName")
-                _events.tryEmit(LabEvent.Done(labId, LabStatus.failed, "cancelled during $opName"))
+                recordFailure(labId, opName, "cancelled during $opName")
                 throw e
             } catch (e: Exception) {
-                ctx.labs.setStatus(labId, LabStatus.failed, e.message)
-                _events.tryEmit(LabEvent.Done(labId, LabStatus.failed, e.message))
+                recordFailure(labId, opName, e.message)
             }
         }
-        ops[labId] = job
+        if (ops.putIfAbsent(labId, job) != null) {
+            job.cancel()
+            return
+        }
         job.invokeOnCompletion {
             ops.remove(labId)
             secrets.remove(labId)
+        }
+        job.start()
+    }
+
+    /**
+     * `failed` is reserved for provisions (whose containers are kept for diagnosis and
+     * whose only exit is Destroy). A stop/start hiccup — Docker Desktop restarting, an
+     * app quit mid-op — must not funnel a healthy lab into that Destroy-only dead end,
+     * so lifecycle failures resolve to the status Docker actually reports, with the
+     * error message kept on the row.
+     */
+    private fun recordFailure(labId: String, opName: String, message: String?) {
+        val status = if (opName == "stop" || opName == "start") {
+            dockerTruth(labId) ?: LabStatus.failed
+        } else {
+            LabStatus.failed
+        }
+        ctx.labs.setStatus(labId, status, message)
+        _events.tryEmit(LabEvent.Done(labId, status, message))
+    }
+
+    private fun dockerTruth(labId: String): LabStatus? {
+        val docker = findDocker() ?: return null
+        val (code, lines) = capture(docker.path, psArgs(labId)) ?: return null
+        if (code != 0) return null
+        val states = lines.mapNotNull(::parsePsLine).map { it.state }
+        return when {
+            states.any { it == "running" || it == "restarting" } -> LabStatus.running
+            states.isNotEmpty() -> LabStatus.stopped
+            else -> LabStatus.missing
         }
     }
 
@@ -135,7 +174,7 @@ class ProvisionRunner(private val ctx: AppContext, private val registry: MongoRe
             /* render — managed dir, ports, keyfile, compose.yaml (PRV-RENDER-1..4) */
             emitPhase(lab.id, ProvisionPhase.render)
             val p = plan(lab)
-            val ports = allocatePorts(p.clientServices)
+            var ports = allocatePorts(p.clientServices)
             ctx.labs.setPorts(lab.id, ports)
             val dir = Path.of(lab.dir)
             Files.createDirectories(dir)
@@ -143,11 +182,25 @@ class ProvisionRunner(private val ctx: AppContext, private val registry: MongoRe
             if (needsKeyfile(lab)) writeOwnerOnly(dir.resolve("keyfile"), generateKeyfile())
             Files.writeString(dir.resolve("compose.yaml"), renderCompose(lab, ports))
 
-            /* up */
+            /* up — reserved ports are released before compose binds them, so another process
+               can win the race; a conflict re-allocates and retries (PRV-RENDER-3). */
             phase = ProvisionPhase.up
             emitPhase(lab.id, ProvisionPhase.up)
-            if (runDocker(lab.id, docker, composeArgs(lab.dir, "up", "-d")) != 0) {
-                throw PhaseError(phase, "docker compose up failed — see log")
+            var upAttempt = 1
+            while (true) {
+                val out = StringBuilder()
+                val code = runDocker(lab.id, docker, composeArgs(lab.dir, "up", "-d")) { out.appendLine(it) }
+                if (code == 0) break
+                val conflict = "port is already allocated" in out.toString() ||
+                    "address already in use" in out.toString()
+                if (!conflict || upAttempt >= 3) {
+                    throw PhaseError(phase, "docker compose up failed — see log")
+                }
+                upAttempt++
+                _events.tryEmit(LabEvent.Log(lab.id, "port conflict — reallocating (attempt $upAttempt/3)"))
+                ports = allocatePorts(p.clientServices)
+                ctx.labs.setPorts(lab.id, ports)
+                Files.writeString(dir.resolve("compose.yaml"), renderCompose(lab, ports))
             }
 
             /* wait — every mongod healthy; mongos needs an initiated CSRS first (PRV-BOOT-2) */
@@ -217,9 +270,6 @@ class ProvisionRunner(private val ctx: AppContext, private val registry: MongoRe
 
     private suspend fun runStart(lab: Lab) {
         val docker = requireDocker()
-        if (lab.appMajor > io.mex.data.LAB_APP_MAJOR) {
-            throw RuntimeException("lab was created by a newer app version — Start is disabled (PRV-LIFE-5)")
-        }
         if (runDocker(lab.id, docker, composeArgs(lab.dir, "start")) != 0) {
             throw RuntimeException("docker compose start failed — a lab port may be taken; see log")
         }
@@ -244,10 +294,19 @@ class ProvisionRunner(private val ctx: AppContext, private val registry: MongoRe
 
     private suspend fun runDestroy(lab: Lab, alsoConnection: Boolean) {
         val docker = findDocker()
-        if (docker != null) {
-            // Best-effort: destroy must succeed even when containers are already gone (PRV-LIFE-4).
-            runDocker(lab.id, docker, composeArgs(lab.dir, "down", "-v"))
-        } else {
+        val composeFile = File(lab.dir, "compose.yaml")
+        if (docker != null && composeFile.exists()) {
+            // `down -v` tolerates already-gone containers (exit 0), so a non-zero exit means
+            // the teardown genuinely did not run (daemon down). Deleting the row and compose
+            // file anyway would orphan labelled containers/volumes with no record left to
+            // destroy them by — keep everything and let the user retry.
+            if (runDocker(lab.id, docker, composeArgs(lab.dir, "down", "-v")) != 0) {
+                val msg = "destroy failed — is the Docker daemon running? Try again."
+                ctx.labs.setStatus(lab.id, LabStatus.failed, msg)
+                _events.tryEmit(LabEvent.Done(lab.id, LabStatus.failed, msg))
+                return
+            }
+        } else if (docker == null) {
             _events.tryEmit(LabEvent.Log(lab.id, "docker unavailable — removing records only"))
         }
         val dir = File(lab.dir)
@@ -277,6 +336,7 @@ class ProvisionRunner(private val ctx: AppContext, private val registry: MongoRe
         labId: String,
         docker: io.mex.backup.ToolInfo,
         args: List<String>,
+        stdin: String? = null,
         sink: ((String) -> Unit)? = null,
     ): Int = suspendCancellableCoroutine { cont ->
         val secretList = listOfNotNull(secrets[labId])
@@ -289,20 +349,29 @@ class ProvisionRunner(private val ctx: AppContext, private val registry: MongoRe
                 _events.tryEmit(LabEvent.Log(labId, redact(line, secretList)))
             },
             onExit = { code -> if (cont.isActive) cont.resume(code) },
+            stdin = stdin,
         )
         cont.invokeOnCancellation { proc.cancel() }
         proc.start()
     }
 
-    /** Runs a mongosh script in a container and returns its full output for sentinel checks. */
+    /**
+     * Runs a mongosh script in a container and returns its full output for sentinel
+     * checks. [viaStdin] keeps secret-bearing scripts out of world-readable argv.
+     */
     private suspend fun mongosh(
         labId: String,
         docker: io.mex.backup.ToolInfo,
         container: String,
         script: String,
+        viaStdin: Boolean = false,
     ): String {
         val out = StringBuilder()
-        runDocker(labId, docker, execMongoshArgs(container, script)) { out.appendLine(it) }
+        if (viaStdin) {
+            runDocker(labId, docker, execMongoshStdinArgs(container), stdin = script) { out.appendLine(it) }
+        } else {
+            runDocker(labId, docker, execMongoshArgs(container, script)) { out.appendLine(it) }
+        }
         return out.toString()
     }
 
@@ -333,7 +402,7 @@ class ProvisionRunner(private val ctx: AppContext, private val registry: MongoRe
         password: String,
     ) {
         for (svc in services) {
-            val out = mongosh(labId, docker, containerName(project, svc), createRootScript(password))
+            val out = mongosh(labId, docker, containerName(project, svc), createRootScript(password), viaStdin = true)
             if ("CREATED" in out) return
             if ("NOT_PRIMARY" !in out) {
                 throw PhaseError(ProvisionPhase.auth, "createUser on $svc failed — see log")
@@ -392,15 +461,8 @@ class ProvisionRunner(private val ctx: AppContext, private val registry: MongoRe
             .build(),
     )
 
-    private fun capture(binary: String, args: List<String>): Pair<Int, List<String>>? = runCatching {
-        val p = ProcessBuilder(listOf(binary) + args).redirectErrorStream(true).start()
-        val lines = p.inputStream.bufferedReader().readLines()
-        if (!p.waitFor(10, TimeUnit.SECONDS)) {
-            p.destroy()
-            return@runCatching null
-        }
-        p.exitValue() to lines
-    }.getOrNull()
+    private fun capture(binary: String, args: List<String>): Pair<Int, List<String>>? =
+        io.mex.backup.runBounded(listOf(binary) + args, timeoutSec = 10)
 
     private fun writeOwnerOnly(path: Path, content: String) {
         Files.writeString(path, content)

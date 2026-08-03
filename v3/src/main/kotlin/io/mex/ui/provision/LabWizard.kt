@@ -73,6 +73,9 @@ fun LabWizard(
     val violations = validate(topology)
     val f = footprint(topology)
     val nameTrim = name.trim()
+    // Pasted text can smuggle control chars past a singleLine field; they would land in
+    // the rendered YAML, the connection name and the typed-confirm text (PRV-RENDER-5).
+    val nameClean = nameTrim.none { it.isISOControl() } && nameTrim.length <= 64
     val nameTaken = nameTrim.isNotEmpty() && ctx.labs.nameExists(nameTrim)
     val portCount = remember(topology) {
         plan(labStub(topology, tag, auth)).clientServices.size
@@ -82,7 +85,7 @@ fun LabWizard(
         preflight = withContext(Dispatchers.IO) { dockerPreflight(portCount) }
     }
 
-    val ready = violations.isEmpty() && nameTrim.isNotEmpty() && !nameTaken && preflight?.ok == true
+    val ready = violations.isEmpty() && nameTrim.isNotEmpty() && nameClean && !nameTaken && preflight?.ok == true
 
     AlertDialog(
         onDismissRequest = onClose,
@@ -114,6 +117,9 @@ fun LabWizard(
                 }
                 if (nameTaken) {
                     Text("A lab with this name already exists.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                }
+                if (nameTrim.isNotEmpty() && !nameClean) {
+                    Text("Name must be at most 64 printable characters.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
                 }
 
                 // Presets — just prefilled builder states (PRV-TOPO-2).

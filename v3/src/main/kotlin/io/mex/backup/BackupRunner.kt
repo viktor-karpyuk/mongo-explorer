@@ -22,13 +22,19 @@ sealed class BackupEvent {
     data class Done(override val backupId: String, val status: BackupStatus) : BackupEvent()
 }
 
-/** One spawned tool process whose output streams line-by-line to [onLine]. */
+/**
+ * One spawned tool process whose output streams line-by-line to [onLine]. [onExit] fires
+ * only after the reader has drained the pipe — callers that assert on output (the
+ * provisioning sentinels) must never observe the exit code before the last line.
+ * [stdin] is written and closed after spawn, for scripts that must not appear in argv.
+ */
 class ToolProcess(
     private val binary: String,
     private val args: List<String>,
     private val scope: CoroutineScope,
     private val onLine: (String) -> Unit,
     private val onExit: (Int) -> Unit,
+    private val stdin: String? = null,
 ) {
     @Volatile
     private var process: Process? = null
@@ -37,20 +43,39 @@ class ToolProcess(
     var cancelled = false
         private set
 
-    fun start(): Boolean = runCatching {
-        val p = ProcessBuilder(listOf(binary) + args).redirectErrorStream(true).start()
-        process = p
-        scope.launch {
-            p.inputStream.bufferedReader().useLines { lines ->
-                lines.forEach(onLine)
-            }
+    fun start(): Boolean {
+        // A cancel that lands before start must not spawn an unmonitored process.
+        if (cancelled) {
+            onExit(130)
+            return false
         }
-        scope.launch { onExit(p.waitFor()) }
-        true
-    }.getOrElse {
-        onLine("failed to spawn $binary: ${it.message}")
-        onExit(127)
-        false
+        return runCatching {
+            val p = ProcessBuilder(listOf(binary) + args).redirectErrorStream(true).start()
+            process = p
+            if (cancelled) {
+                p.destroy()
+            }
+            if (stdin != null) {
+                scope.launch {
+                    runCatching { p.outputStream.bufferedWriter().use { it.write(stdin) } }
+                }
+            }
+            val reader = scope.launch {
+                p.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach(onLine)
+                }
+            }
+            scope.launch {
+                val code = p.waitFor()
+                reader.join()
+                onExit(code)
+            }
+            true
+        }.getOrElse {
+            onLine("failed to spawn $binary: ${it.message}")
+            onExit(127)
+            false
+        }
     }
 
     fun cancel() {

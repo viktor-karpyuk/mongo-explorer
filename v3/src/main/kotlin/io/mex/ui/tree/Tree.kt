@@ -78,9 +78,10 @@ fun Tree(
     // dropped cluster vanish from the sidebar with no explanation.
     val visible = vm.list.filter { states[it.id] !is ConnectionState.Disconnected && states[it.id] != null }
     val connectedIds = visible.filter { states[it.id] is ConnectionState.Connected }.map { it.id }
-    // Lab-owned connections carry the LAB badge (PRV-CONN-4); keyed on the connection list
-    // so a freshly registered lab connection picks its badge up on the same reload.
-    val labConnIds = remember(vm.list) { ctx.labs.connectionIds() }
+    // Lab-owned connections carry the LAB badge (PRV-CONN-4). Queried per recomposition:
+    // a remember key on vm.list goes stale when a lab is destroyed but its connection kept
+    // (equal list, different ownership), and the labs table is a trivial indexed read.
+    val labConnIds = ctx.labs.connectionIds()
 
     var filter by remember { mutableStateOf("") }
     val current = selection.current

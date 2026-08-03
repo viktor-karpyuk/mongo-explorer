@@ -42,9 +42,13 @@ fun App(ctx: AppContext) {
     val queries = remember { QueryStore(ctx, registry) }
     val migrations = remember { MigrationRunner(ctx, registry) }
     val backups = remember { BackupRunner(ctx, ctx.backupsDir) }
-    val provisioner = remember { ProvisionRunner(ctx, registry) }
+    // Reconcile at construction so lab rows tell the truth even before the view is opened.
+    val provisioner = remember { ProvisionRunner(ctx, registry).also { it.reconcile() } }
+    val provisionUi = remember { io.mex.ui.provision.ProvisionUiState(provisioner) }
     val prefs = remember { PrefsStore(ctx.prefs) }
     val connectionsVm = remember { ConnectionsViewModel(ctx, registry) }
+    // App-lifetime collector: provision events must survive view switches (PRV-SEC-3).
+    LaunchedEffect(Unit) { provisionUi.bind(connectionsVm) }
 
     val states by registry.states.collectAsState()
     LaunchedEffect(states) {
@@ -98,7 +102,7 @@ fun App(ctx: AppContext) {
                             Selection.Welcome -> ConnectionsView(ctx, registry, connectionsVm, selection)
                             Selection.Migrations -> MigrationsView(ctx, registry, migrations)
                             Selection.Backups -> BackupsView(ctx, registry, backups)
-                            Selection.Provision -> ProvisionView(ctx, provisioner, connectionsVm, selection)
+                            Selection.Provision -> ProvisionView(ctx, provisionUi, connectionsVm, selection)
                             Selection.Compare -> CompareView(ctx, registry)
                             Selection.Settings -> SettingsView(ctx, prefs)
                             is Selection.ConnectionView -> ConnectionPanel(ctx, s.connectionId, registry)

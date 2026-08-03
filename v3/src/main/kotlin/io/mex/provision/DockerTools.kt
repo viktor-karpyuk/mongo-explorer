@@ -8,7 +8,6 @@ import io.mex.data.PreflightResult
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import java.util.concurrent.TimeUnit
 
 /** Label stamped on every container/volume/network a lab owns (PRV-DOCKER-5). */
 const val LAB_LABEL = "mex.lab.id"
@@ -43,6 +42,13 @@ fun inspectHealthArgs(container: String): List<String> =
 fun execMongoshArgs(container: String, script: String): List<String> =
     listOf("exec", container, "mongosh", "--quiet", "--eval", script)
 
+/**
+ * mongosh reading its script from stdin — for scripts carrying secrets (PRV-SEC-3):
+ * argv is world-readable via `ps`/procfs for the lifetime of the exec.
+ */
+fun execMongoshStdinArgs(container: String): List<String> =
+    listOf("exec", "-i", container, "mongosh", "--quiet")
+
 /** Compose v2 default container name for a service (no `container_name` is rendered). */
 fun containerName(project: String, service: String): String = "$project-$service-1"
 
@@ -67,7 +73,9 @@ fun parsePsLine(line: String): PsRow? = runCatching {
  * only reconciled at boot (the caller excludes labs with a live operation).
  */
 fun reconcileStatus(current: LabStatus, containerStates: List<String>): LabStatus? {
-    val anyRunning = containerStates.any { it == "running" }
+    // "restarting" is a live container in a crash loop — treating it as stopped would
+    // let a Start be issued against containers Docker is still supervising.
+    val anyRunning = containerStates.any { it == "running" || it == "restarting" }
     return when {
         current == LabStatus.provisioning -> LabStatus.failed
         current == LabStatus.running && containerStates.isEmpty() -> LabStatus.missing
@@ -118,12 +126,6 @@ fun dockerPreflight(portCount: Int): PreflightResult {
 
 /** Runs a short-lived command; (exitCode, firstOutputLine), or null on spawn failure/timeout. */
 private fun runQuick(binary: String, args: List<String>, timeoutSec: Long = 5): Pair<Int, String>? =
-    runCatching {
-        val p = ProcessBuilder(listOf(binary) + args).redirectErrorStream(true).start()
-        val out = p.inputStream.bufferedReader().readLine().orEmpty()
-        if (!p.waitFor(timeoutSec, TimeUnit.SECONDS)) {
-            p.destroy()
-            return@runCatching null
-        }
-        p.exitValue() to out
-    }.getOrNull()
+    io.mex.backup.runBounded(listOf(binary) + args, timeoutSec)?.let { (code, lines) ->
+        code to lines.firstOrNull().orEmpty()
+    }

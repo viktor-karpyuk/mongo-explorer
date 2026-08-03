@@ -24,8 +24,6 @@ import io.mex.AppContext
 import io.mex.data.Lab
 import io.mex.data.LabStatus
 import io.mex.data.ProvisionPhase
-import io.mex.provision.LabEvent
-import io.mex.provision.ProvisionRunner
 import io.mex.provision.findDocker
 import io.mex.provision.plan
 import io.mex.provision.summary
@@ -34,52 +32,50 @@ import io.mex.ui.connections.ConnectionsViewModel
 import io.mex.ui.state.Selection
 import io.mex.ui.state.SelectionStore
 import io.mex.util.redactCredentials
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-
-private const val LOG_TAIL = 400
+import kotlinx.coroutines.withContext
 
 /** Local cluster provisioning — lab list, builder wizard, live pipeline log (PRV-UI-1..8). */
 @Composable
 fun ProvisionView(
     ctx: AppContext,
-    runner: ProvisionRunner,
+    ui: ProvisionUiState,
     connectionsVm: ConnectionsViewModel,
     selection: SelectionStore,
 ) {
+    val runner = ui.runner
     var labs by remember { mutableStateOf<List<Lab>>(emptyList()) }
-    val logs = remember { mutableStateMapOf<String, List<String>>() }
-    val phases = remember { mutableStateMapOf<String, ProvisionPhase>() }
     var showWizard by remember { mutableStateOf(false) }
     var expandedLog by remember { mutableStateOf<String?>(null) }
     var details by remember { mutableStateOf<Lab?>(null) }
     var destroying by remember { mutableStateOf<Lab?>(null) }
-    var banner by remember { mutableStateOf<LabEvent.Done?>(null) }
     var dockerProbe by remember { mutableStateOf(0) }
-    val docker = remember(dockerProbe) { findDocker() }
+    var dockerProbed by remember { mutableStateOf(false) }
+    var docker by remember { mutableStateOf<io.mex.backup.ToolInfo?>(null) }
     val scope = rememberCoroutineScope()
 
     fun reload() { labs = ctx.labs.list() }
-    LaunchedEffect(Unit) {
+    // Reload on open and on every terminal runner event, wherever it happened (PRV-LIFE-1).
+    LaunchedEffect(ui.epoch) {
         reload()
         runner.reconcile()
     }
-    LaunchedEffect(Unit) {
-        runner.events.collect { ev ->
-            when (ev) {
-                is LabEvent.Phase -> phases[ev.labId] = ev.phase
-                is LabEvent.Log ->
-                    logs[ev.labId] = (logs[ev.labId].orEmpty() + ev.line).takeLast(LOG_TAIL)
-                is LabEvent.Done -> {
-                    phases.remove(ev.labId)
-                    reload()
-                    connectionsVm.reload()
-                    if (ev.status == LabStatus.running && ev.uri != null) banner = ev
-                }
-            }
-        }
+    // Probing spawns `docker --version` processes — never on the UI thread (PRV-NFR-3).
+    LaunchedEffect(dockerProbe) {
+        dockerProbed = false
+        docker = withContext(Dispatchers.IO) { findDocker() }
+        dockerProbed = true
     }
 
-    if (docker == null) {
+    if (!dockerProbed) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+        }
+        return
+    }
+    val dockerInfo = docker
+    if (dockerInfo == null) {
         NoDockerPanel(onRetry = { dockerProbe++ })
         return
     }
@@ -90,7 +86,7 @@ fun ProvisionView(
             Button(onClick = { showWizard = true }) { Text("+ New lab") }
         }
         Text(
-            docker.version.substringBefore(","),
+            dockerInfo.version.substringBefore(","),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -111,8 +107,8 @@ fun ProvisionView(
                         ctx = ctx,
                         lab = lab,
                         busy = runner.isBusy(lab.id),
-                        phase = phases[lab.id],
-                        log = logs[lab.id].orEmpty(),
+                        phase = ui.phases[lab.id],
+                        log = ui.logs[lab.id].orEmpty(),
                         logExpanded = expandedLog == lab.id,
                         onToggleLog = { expandedLog = if (expandedLog == lab.id) null else lab.id },
                         onOpen = {
@@ -155,13 +151,13 @@ fun ProvisionView(
         )
     }
     details?.let { lab -> LabDetailsDialog(ctx, lab, onClose = { details = null }) }
-    banner?.let { done -> ProvisionResultBanner(done, labs, onOpen = { connId ->
-        banner = null
+    ui.pendingResult?.let { done -> ProvisionResultBanner(done, labs, onOpen = { connId ->
+        ui.consumeResult()
         scope.launch {
             connectionsVm.open(connId)
             selection.select(Selection.ConnectionView(connId))
         }
-    }, onClose = { banner = null }) }
+    }, onClose = { ui.consumeResult() }) }
     destroying?.let { lab ->
         val connName = lab.connectionId?.let { ctx.connections.get(it)?.name }
         val f = io.mex.provision.footprint(lab.topology)
@@ -331,7 +327,9 @@ private fun PhaseStrip(lab: Lab, current: ProvisionPhase?) {
 @Composable
 internal fun LogPane(lines: List<String>) {
     val scroll = rememberScrollState()
-    LaunchedEffect(lines.size) { scroll.scrollTo(scroll.maxValue) }
+    // Keyed on the list itself: once the ring buffer is full, size stays constant while
+    // content keeps changing — a size key would freeze autoscroll mid-provision.
+    LaunchedEffect(lines) { scroll.scrollTo(scroll.maxValue) }
     Surface(
         color = Color(0xFF0A0C10),
         shape = RoundedCornerShape(4.dp),

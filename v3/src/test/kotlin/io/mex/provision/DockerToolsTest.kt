@@ -100,4 +100,10 @@ class ReconcileStatusTest {
         // One member crashed: still "running" from the row's perspective — not stopped.
         assertNull(reconcileStatus(LabStatus.running, listOf("running", "exited")))
     }
+
+    @Test
+    fun `restarting containers are live, not stopped`() {
+        assertNull(reconcileStatus(LabStatus.running, listOf("restarting", "restarting")))
+        assertEquals(LabStatus.running, reconcileStatus(LabStatus.stopped, listOf("restarting")))
+    }
 }

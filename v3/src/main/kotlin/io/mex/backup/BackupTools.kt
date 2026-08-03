@@ -8,6 +8,28 @@ import java.util.concurrent.TimeUnit
 data class ToolInfo(val path: String, val version: String)
 
 /**
+ * Runs a short-lived command with a hard deadline: (exitCode, output lines), or null on
+ * spawn failure or timeout. Output is drained on a daemon thread so the deadline holds
+ * even when the pipe never produces a line — a read-before-waitFor would block forever
+ * on a wedged daemon and defeat every caller's timeout.
+ */
+fun runBounded(cmd: List<String>, timeoutSec: Long): Pair<Int, List<String>>? = runCatching {
+    val p = ProcessBuilder(cmd).redirectErrorStream(true).start()
+    val lines = mutableListOf<String>()
+    val reader = Thread {
+        runCatching {
+            p.inputStream.bufferedReader().forEachLine { synchronized(lines) { lines.add(it) } }
+        }
+    }.apply { isDaemon = true; start() }
+    if (!p.waitFor(timeoutSec, TimeUnit.SECONDS)) {
+        p.destroyForcibly()
+        return@runCatching null
+    }
+    reader.join(2_000)
+    p.exitValue() to synchronized(lines) { lines.toList() }
+}.getOrNull()
+
+/**
  * Locates an external binary (mongodump/mongorestore, docker, …). PATH first, then the
  * usual install prefixes; callers with tool-specific locations pass them via [extraDirs].
  */
@@ -16,13 +38,10 @@ fun findTool(name: String, extraDirs: List<String> = emptyList()): ToolInfo? {
     val dirs = listOf("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "$home/bin") + extraDirs
     val candidates = listOf(name) + dirs.map { "$it/$name" }
     for (candidate in candidates) {
-        val version = runCatching {
-            val p = ProcessBuilder(candidate, "--version").redirectErrorStream(true).start()
-            val out = p.inputStream.bufferedReader().readLine().orEmpty()
-            if (!p.waitFor(5, TimeUnit.SECONDS)) { p.destroy(); return@runCatching null }
-            if (p.exitValue() == 0) out else null
-        }.getOrNull()
-        if (version != null) return ToolInfo(candidate, version)
+        val result = runBounded(listOf(candidate, "--version"), timeoutSec = 5)
+        if (result != null && result.first == 0) {
+            result.second.firstOrNull()?.takeIf { it.isNotBlank() }?.let { return ToolInfo(candidate, it) }
+        }
     }
     return null
 }
